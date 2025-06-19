@@ -45,5 +45,5 @@ Manage crontab for running processes on device:
 systemctl status cron.service 
 
 # kill processes with the process number from the overview
-sudo kill 888
+sudo kill 887 
 ```
