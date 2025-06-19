@@ -41,8 +41,8 @@ Manage crontab for running processes on device:
 
 ```bash
 #!/bin/bash
-# open crontab
-sudo crontab -e
+# open systemctl to check processes running on device
+systemctl status cron.service 
 
 # kill processes with the process number from the overview
 sudo kill 888
