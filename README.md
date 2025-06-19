@@ -37,13 +37,22 @@ Crontab file `crontab -e`:
 30 13 * * * /home/sg/sensing-garden/update_and_reboot.sh >> /home/sg/sensing-garden-log/update_log.txt 2>&1
 ```
 
-Manage crontab for running processes on device:
+Manage crontab for running user processes on device:
 
 ```bash
 #!/bin/bash
-# open systemctl to check processes running on device
-systemctl status cron.service 
+# read the cronjob file
+crontab -l
 
-# kill processes with the process number from the overview
-sudo kill 887 
+# edit the cronjob file
+crontab -e
+
+# find the PID of current running jobs
+ps aux | grep your_script_name # in the example above, the script would be run_sensing_garden_tl.sh
+
+# kill processes with the PID from the overview
+kill 887
+
+# double check that the process is turned off by running this command again
+ps aux | grep your_script_name
 ```
