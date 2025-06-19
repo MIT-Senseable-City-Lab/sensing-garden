@@ -75,7 +75,7 @@ To have the system start on reboot / when powered, you need to setup a cron job:
 
 ```bash
 # open crontab for editing - using sudo for reboot access
-sudo crontab -e
+crontab -e
 ```
 
 Then in the botton of the file, add the shell script you want to run when powered. In this repo, we have two options. Make sure to have the files and models available before running the script. 
