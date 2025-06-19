@@ -24,7 +24,7 @@ if ! git diff --quiet HEAD origin/prod; then
 fi
 ```
 
-Crontab file `sudo crontab -e`:  
+Crontab file `crontab -e`:  
 
 ```bash
 #!/bin/bash
