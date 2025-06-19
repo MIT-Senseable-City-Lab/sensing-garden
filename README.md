@@ -44,6 +44,6 @@ Manage crontab for running processes on device:
 # open crontab
 sudo crontab -e
 
-# kill processes with the process number 
+# kill processes with the process number from the overview
 sudo kill 888
 ```
