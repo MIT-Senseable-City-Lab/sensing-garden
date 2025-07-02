@@ -45,7 +45,7 @@ if [ "$cpu_temp_c" -lt 80 ]; then
     # Set device ID based on base directory
     if [[ "$BASE_DIR" == *"A476-B58D"* ]]; then
         DEVICE_ID="edge-sgsca1"
-    elif [[ "$BASE_DIR" == *"92A9-FB171"* ]]; then
+    elif [[ "$BASE_DIR" == *"92A9-FBA17"* ]]; then
         DEVICE_ID="edge-sgsca2"
     else
         DEVICE_ID="edge-sgsc-unknown"
@@ -55,14 +55,15 @@ if [ "$cpu_temp_c" -lt 80 ]; then
     echo "Using video directory: $VIDEO_DIR"
     echo "Using device ID: $DEVICE_ID"
 
-    # Run the Python script with parsed arguments and log output/errors
-    python3 edge/run.py \
+    # Change to edge directory and run the Python script with parsed arguments and log output/errors
+    cd edge
+    python3 run.py \
         --video-dir "$VIDEO_DIR" \
         --duration 600 \
         --upload-percentage 10 \
         --device-id "$DEVICE_ID" \
         --fps 10 \
-        >> "$EDGE_LOG_FILE" 2>&1
+        >> "../$EDGE_LOG_FILE" 2>&1
 
 else
     echo "CPU temperature is $cpu_temp_c°C, which is above the safe threshold. Script will not run."
