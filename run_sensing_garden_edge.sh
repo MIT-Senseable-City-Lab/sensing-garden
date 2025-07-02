@@ -45,7 +45,7 @@ if [ "$cpu_temp_c" -lt 80 ]; then
     # Set device ID based on base directory
     if [[ "$BASE_DIR" == *"A476-B58D"* ]]; then
         DEVICE_ID="edge-sgsca1"
-    elif [[ "$BASE_DIR" == *"92A9-FBA17"* ]]; then
+    elif [[ "$BASE_DIR" == *"92A9-FB17"* ]]; then
         DEVICE_ID="edge-sgsca2"
     else
         DEVICE_ID="edge-sgsc-unknown"
