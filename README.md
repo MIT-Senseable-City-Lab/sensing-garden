@@ -16,6 +16,7 @@ To get the system up and running, you need to:
 # 2. [Connect the active cooler and AI HAT](https://www.raspberrypi.com/documentation/accessories/ai-hat-plus.html)(external website)
 # 3. [Clone this repo and setup the environment](documentation/environment_setup.md)
 
+## Troubleshooting with no internet connection to the device? [Set up a Raspberry Pi hotspot (offline Wi-Fi access point)](documentation/hotspot_setup.md)
 
 
 
