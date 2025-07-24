@@ -1,0 +1,5 @@
+(export pt to onnx)
+yolo export model=/path/to/.pt imgsz=640 format=onnx opset=11 
+
+(parse, optimise, compile)
+hailomz compile yolov8s --ckpt=/path/tp/.onnx --hw-arch hailo8 --calib-path /path/to/images/ --classes 1 --performance 
