@@ -28,10 +28,22 @@ HAILO_PYTHON_SCRIPT="./basic_pipelines/detection.py"
 # Log file for output and errors
 HAILO_LOG_FILE="./log-files/hailort.log"
 
-# Source the environment
-source "./setup_env.sh"
+# Read CPU temperature in millidegrees Celsius and convert to degrees
+cpu_temp=$(cat /sys/class/thermal/thermal_zone0/temp)
+cpu_temp_c=$((cpu_temp / 1000))
 
-# Run the Python script with parsed arguments and log output/errors
-python3 "$HAILO_PYTHON_SCRIPT" --input "$INPUT" --hef-path "$HEF_PATH" >> "$HAILO_LOG_FILE" 2>&1
+# Only run script if temperature is below 80 degrees Celsius to prevent overheating
+if [ "$cpu_temp_c" -lt 80 ]; then
+    # Source the environment
+    source "./setup_env.sh"
 
-#sleep 540 # does not work in shells cript - ADD IN PYTHON SCRIPT
+    # Run the Python script with parsed arguments and log output/errors
+    python3 "$HAILO_PYTHON_SCRIPT" --input "$INPUT" --hef-path "$HEF_PATH" >> "$HAILO_LOG_FILE" 2>&1
+
+    #sleep 540 # does not work in shells cript - ADD IN PYTHON SCRIPT
+
+else
+    echo "CPU temperature is $cpu_temp_c°C, which is above the safe threshold. Script will not run."
+fi
+
+
