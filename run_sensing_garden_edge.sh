@@ -63,7 +63,10 @@ if [ "$cpu_temp_c" -lt 80 ]; then
         --upload-percentage 10 \
         --device-id "$DEVICE_ID" \
         --fps 10 \
-        >> "../$EDGE_LOG_FILE" 2>&1
+        >> "../$EDGE_LOG_FILE" 2>&1 & # run the compiled file in paralell with run.py
+        
+    # Run the C executable in parallel - takes measurements every 30 sec
+    ../sensing_garden_sen55_collection 
 
 else
     echo "CPU temperature is $cpu_temp_c°C, which is above the safe threshold. Script will not run."

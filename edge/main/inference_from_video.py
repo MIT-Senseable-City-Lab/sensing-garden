@@ -8,7 +8,7 @@ import numpy as np
 import threading
 import queue
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from pathlib import Path
 from models.object_detection_utils import ObjectDetectionUtils
@@ -135,7 +135,33 @@ class VideoInferenceProcessor:
         norm_height = (y2 - y) / height
         return [x_center, y_center, norm_width, norm_height]
     
-    def store_detection(self, frame, detection_data, timestamp, frame_time_seconds):
+    def find_closest_sen55_record(self, jsonl_path, target_ts):
+        # Handles timestamps like "2025-08-01T09:08:51Z"
+        target_dt = datetime.strptime(target_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        min_diff = None
+        closest_record = None
+
+        with open(jsonl_path, "r") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                    record_ts = datetime.strptime((obj["timestamp"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                    diff = abs((record_ts - target_dt).total_seconds())
+                    if (min_diff is None) or (diff < min_diff):
+                        min_diff = diff
+                        closest_record = obj
+                except Exception as e:
+                    continue  # skip malformed lines
+
+        return closest_record
+
+    # Example usage:
+    #image_ts = "2025-08-01T09:25:48Z"  # timestamp of the image
+    #match = find_closest_sen55_record("/home/sg/sensing-garden/sen55/env_data.jsonl", image_ts)
+    #print(json.dumps(match, indent=2))
+
+    
+    def store_detection(self, frame, detection_data, timestamp, frame_time_seconds, sen55):
         """Stores detection for batch upload."""
         if not self.enable_uploads:
             print(f"📷 Detected (uploads disabled): {detection_data.get('species', 'N/A')} at {frame_time_seconds:.2f}s")
@@ -152,7 +178,8 @@ class VideoInferenceProcessor:
                 "image_data": image_data,
                 "timestamp": timestamp,
                 "frame_time_seconds": frame_time_seconds,
-                **detection_data  # Unpacks family, genus, species, confidences, bbox, track_id
+                **detection_data,  # Unpacks family, genus, species, confidences, bbox, track_id
+                "sen55": sen55
             }
             
             self.all_detections.append(payload)
@@ -325,7 +352,11 @@ class VideoInferenceProcessor:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
             
             timestamp = datetime.now().isoformat()
-            self.store_detection(frame, detection_data, timestamp, frame_time_seconds)
+
+            # find closes environmental recording for the detection
+            sen55 = self.find_closest_sen55_record("/home/sg/sensing-garden/sen55/env_data.jsonl", timestamp) # fetching closest environmental datapoint of detection
+            
+            self.store_detection(frame, detection_data, timestamp, frame_time_seconds, sen55)
         
         return frame
 
