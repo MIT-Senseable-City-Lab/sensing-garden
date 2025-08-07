@@ -13,9 +13,7 @@ from hailo_platform import (
     HailoStreamInterface,
     InferVStreams,
     InputVStreamParams,
-    InputVStreams,
     OutputVStreamParams,
-    OutputVStreams,
     VDevice,
 )
 
@@ -25,7 +23,7 @@ def softmax(x):
     e_x = np.exp(x - np.max(x))  # Subtract max for numerical stability
     return e_x / e_x.sum()
 
-def infer_image(image_array, model_name="london_141-multitask", hef_path="./london_141-multitask.hef"):
+def infer_image(image_array, model_name="resnet50_ami_compiled_model", hef_path="/home/sg/sensing-garden/resources/resnet50_ami_compiled_model.har"):
     """
     Run inference on a single image using Hailo hardware
     

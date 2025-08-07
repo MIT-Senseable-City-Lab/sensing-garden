@@ -7,12 +7,14 @@ import logging
 from datetime import datetime, time as dt_time
 from pathlib import Path
 from picamera2 import Picamera2
+from picamera2.encoders import H264Encoder, Quality
+
 
 logger = logging.getLogger(__name__)
 
 class VideoRecorder:
     def __init__(self, output_dir="recordings", fps=15, resolution=(640, 640), 
-                 recording_duration=300, device_id="recorder", video_queue=None,
+                 recording_duration=30, device_id="recorder", video_queue=None,
                  recording_start_hour=6, recording_end_hour=22):
         """
         Initialize the video recorder for gapless recording.
@@ -57,6 +59,20 @@ class VideoRecorder:
     def initialize_camera(self):
         """Initialize and configure the camera."""
         try:
+
+            # from global shutter test
+            self.picam2 = Picamera2(0)
+            only_mode = self.picam2.sensor_modes[0]
+            self.picam2.video_configuration = self.picam2.create_video_configuration(
+                raw={"size": only_mode["size"], "format": only_mode["format"].format}
+            )
+            self.picam2.configure("video")
+            self.picam2.set_controls({"FrameRate": only_mode["fps"]})
+            #picam2.set_controls({"ExposureTime": exposure_time, "AnalogueGain": 10.0})
+            # adjusting both AnalogueGain and Exposure time automatically
+            self.picam2.set_controls({"AeEnable": True})
+
+            """
             self.picam2 = Picamera2()
             camera_config = self.picam2.create_video_configuration(
                 main={"format": 'RGB888', "size": self.resolution}
@@ -67,6 +83,14 @@ class VideoRecorder:
                 "AfMode": 0, "LensPosition": 0.0,
             })
             self.picam2.start()
+
+             """
+            encoder_config = H264Encoder()
+            self.picam2.start()
+
+
+            #self.picam2.start_recording(encoder_config, output_file, quality=Quality.HIGH)
+
             logger.info("Camera initializing...")
             time.sleep(2)
             logger.info("Camera ready.")
@@ -117,6 +141,8 @@ class VideoRecorder:
         frame_count = 0
         
         try:
+            diff = time.time() - start_time # CONT FROM HERE
+            logger.info(f'duration: {diff}')
             while time.time() - start_time < self.recording_duration:
                 try:
                     frame = self.frame_queue.get(timeout=1)
@@ -145,6 +171,10 @@ class VideoRecorder:
             while not self.stop_event.is_set():
                 if self.is_recording_time():
                     # Initialize camera only when we need to record
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"{self.device_id}_{timestamp}.mp4"
+                    output_path = self.output_dir / filename
+
                     if not camera_initialized:
                         logger.info("⏰ Entered recording hours - initializing camera...")
                         self.initialize_camera()
@@ -152,9 +182,6 @@ class VideoRecorder:
                         self.frame_grabber_thread.start()
                         camera_initialized = True
                     
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"{self.device_id}_{timestamp}.mp4"
-                    output_path = self.output_dir / filename
                     
                     self.record_segment(output_path)
                 else:
