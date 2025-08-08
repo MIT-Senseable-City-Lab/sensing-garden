@@ -63,12 +63,12 @@ class VideoRecorder:
             # from global shutter test
             self.picam2 = Picamera2(0)
             only_mode = self.picam2.sensor_modes[0]
-            self.picam2.video_configuration = self.picam2.create_video_configuration(
+            video_configuration = self.picam2.create_video_configuration(
                 raw={"size": only_mode["size"], "format": only_mode["format"].format}
             )
-            self.picam2.configure("video")
+            self.picam2.configure(video_configuration)
+            
             self.picam2.set_controls({"FrameRate": only_mode["fps"]})
-            #picam2.set_controls({"ExposureTime": exposure_time, "AnalogueGain": 10.0})
             # adjusting both AnalogueGain and Exposure time automatically
             self.picam2.set_controls({"AeEnable": True})
 
@@ -85,10 +85,9 @@ class VideoRecorder:
             self.picam2.start()
 
              """
-            encoder_config = H264Encoder()
             self.picam2.start()
 
-
+            #encoder_config = H264Encoder()
             #self.picam2.start_recording(encoder_config, output_file, quality=Quality.HIGH)
 
             logger.info("Camera initializing...")
@@ -139,9 +138,10 @@ class VideoRecorder:
 
         start_time = time.time()
         frame_count = 0
+        print(self.recording_duration)
         
         try:
-            diff = time.time() - start_time # CONT FROM HERE
+            diff = time.time() - start_time
             logger.info(f'duration: {diff}')
             while time.time() - start_time < self.recording_duration:
                 try:

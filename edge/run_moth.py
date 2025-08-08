@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 # Import our refactored components
 from main.record_video import VideoRecorder
-from main.moth_pipeline import MothVideoInferenceProcessor, process_camera_stream
+from main.moth_pipeline import MothVideoInferenceProcessor, process_camera_stream, process_video
 from models.insect_tracker import InsectTracker
 
 # Load environment variables
@@ -162,7 +162,7 @@ class ContinuousPipeline:
                 device_id=self.device_id,
                 confidence_threshold=self.confidence_threshold
             )
-            frames_processed = process_camera_stream(
+            frames_processed = process_video(
                 video_path=str(video_path), 
                 processor=processor,
                 tracker=self.tracker,
