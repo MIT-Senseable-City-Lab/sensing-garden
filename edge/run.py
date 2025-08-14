@@ -116,7 +116,7 @@ class ContinuousPipeline:
             url = f"https://api.gbif.org/v1/species/match?name={species_name}&verbose=true"
             response = requests.get(url)
             data = response.json()
-            if data.get('status') in ['ACCEPTED', 'SYNONYM']:
+            if data.get('status') in ['ACCEPTED', 'SYNONYM', 'DOUBTFUL']:
                 family, genus = data.get('family'), data.get('genus')
                 if family and genus:
                     if family not in taxonomy[1]: taxonomy[1].append(family)
