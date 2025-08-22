@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Local Network Live Stream</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #000000;
+      text-align: center;
+    }
+    #header {
+      background: #2196f3;
+      color: white;
+      padding: 1rem;
+      font-size: 1.5rem;
+    }
+    #status {
+      padding: 0.5rem;
+      color: #333;
+      font-weight: bold;
+    }
+    img {
+      max-width: 90%;
+      margin-top: 10px;
+      border: 3px solid #333;
+      background: #ddd;
+    }
+  </style>
+</head>
+<body>
+  
+  <!-- Top title bar -->
+
+  <!-- Connection status -->
+  <div id="status">Connecting to WebSocket...</div>
+
+  <!-- Video stream image -->
+  <img id="stream"  alt="Live Stream" />
+
+  <script>
+    // Replace with your server's LAN IP
+    const ws = new WebSocket("ws://192.168.70.148:8765"); // TODO edit wlan0 (ifconfig)
+
+    ws.onopen = () => {
+      document.getElementById('status').textContent = "✅ Connected to stream server, waiting for frames...";
+      document.getElementById('status').style.color = "green";
+    };
+
+    ws.onmessage = (event) => {
+      document.getElementById('stream').src = 'data:image/jpeg;base64,' + event.data;
+      document.getElementById('status').textContent = "📡 Receiving stream...";
+    };
+
+    ws.onerror = (err) => {
+      document.getElementById('status').textContent = "⚠️ WebSocket error!";
+      document.getElementById('status').style.color = "red";
+      console.error(err);
+    };
+
+    ws.onclose = () => {
+      document.getElementById('status').textContent = "❌ Disconnected from stream server";
+      document.getElementById('status').style.color = "red";
+    };
+  </script>
+</body>
+</html>
