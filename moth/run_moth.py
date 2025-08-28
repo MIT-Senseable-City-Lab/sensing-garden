@@ -13,7 +13,7 @@ import queue
 
 
 class MothDetection: 
-    def __init__(self, class_names_path="/home/sg/sensing-garden/moth/36_species.txt", confidence_threshold=0.35,
+    def __init__(self, class_names_path="/home/sg/sensing-garden/moth/36_species.txt", confidence_threshold=0.55,
                  model_path="/home/sg/sensing-garden/resources/yolov11s.hef",
                  classification_model="/home/sg/sensing-garden/moth/bplusplus-multitask-36.hef"):
         

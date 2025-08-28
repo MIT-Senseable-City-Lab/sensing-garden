@@ -41,7 +41,7 @@
 
   <script>
     // Replace with your server's LAN IP
-    const ws = new WebSocket("ws://192.168.70.148:8765"); // TODO edit wlan0 (ifconfig)
+    const ws = new WebSocket("ws://192.168.69.101:8765"); // TODO edit wlan0 (ifconfig)
 
     ws.onopen = () => {
       document.getElementById('status').textContent = "✅ Connected to stream server, waiting for frames...";
