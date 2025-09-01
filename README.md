@@ -12,7 +12,7 @@
 ```bash
 git clone https://github.com/aasehaa/sensing-garden.git
 ```
-...make shure to move into the correct branch. 
+...make sure to move into the correct branch. 
 ### 2. Install Hailo to run inferrence
 **Requirements**
 - numpy < 2.0.0
