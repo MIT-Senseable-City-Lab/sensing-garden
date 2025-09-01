@@ -9,11 +9,12 @@ import requests
 import json
 from streamserver import StreamServer
 import queue
+import argparse
 
 
 
 class MothDetection: 
-    def __init__(self, class_names_path="/home/sg/sensing-garden/moth/36_species.txt", confidence_threshold=0.55,
+    def __init__(self, class_names_path="/home/sg/sensing-garden/moth/species.txt", confidence_threshold=0.55,
                  model_path="/home/sg/sensing-garden/resources/yolov11s.hef",
                  classification_model="/home/sg/sensing-garden/moth/bplusplus-multitask-36.hef"):
         
@@ -26,7 +27,7 @@ class MothDetection:
         print("Initializing taxonomy...")
         try:
             self.class_names = self.load_class_names()            
-            with open('36_species.json') as f:
+            with open('species.json') as f:
                 d = json.load(f)
                 for key, value in d.items():
                     if key == "1":
@@ -266,16 +267,20 @@ class MothDetection:
         print("threads started")
 
 
-#from PIL import Image
-#pipeline = MothDetection()
-#img = cv2.imread("/home/sg/sensing-garden/moth/cropped-moth-test-2.jpg")
-#imgarray = np.asarray(img) 
-#pipeline.process_frame(imgarray)
-
-
 def main():
+    parser = argparse.ArgumentParser(description='Continuous video recording and inference pipeline.')
+    parser.add_argument('--hef-path', type=str, default='models', help='Path to HEF for hierarchical classification of species.')
 
-    pipeline = MothDetection()
+    args = parser.parse_args()
+
+    try: 
+        classification_model = args.hef_path
+    except ValueError:
+        print(f"Error: Invalid file path '{args.hef_path}'")
+        return 1
+    
+
+    pipeline = MothDetection(classification_model=classification_model)
     server = StreamServer(pipeline.frame_buffer)
     threading.Thread(target=server.run, daemon=True).start()
     threading.Thread(target=pipeline.process_raw_frames).start()
