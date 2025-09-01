@@ -1,58 +1,84 @@
-## *Note: This branch is used for deployments of the Sensing Garden monitoring system. Changes will be automatically updated for all deployed devices.*
+# Sensing Garden Livestream - show & tell
 
-# Prod branch for Sensing Garden
+*This branch is dedicated to show the stream from the sensing garden pipeline running to collect data on insect activity and count on a local webpage.*
 
+## Hardware setup
+### 1. [Connect the camera module to your raspberrypi5](documentation/raspberrypi_setup.md)
+### 2. [Connect the active cooler and AI HAT](https://www.raspberrypi.com/documentation/accessories/ai-hat-plus.html)(external website)
 
-Deployment settings for the sensing garden:
+## Installation
 
-1. Continiously running the time-lapse/timelapse_video.py script between 6:00 AM and 10:00 PM. Taking 1min video, and storing on SD card. 
-2. Twice a day, the device is checking for updates in the github branch and rebooting the system to keep itself updated. Log files are saved to `home/sg/sensing-garden-log/` folder
-3. If the device is connected to internet, it will send the video file to the cloud. If not, the video is stored on the SD card. 
-4. If the device is too hot (above 75 degrees celcius), the device will not run the provided scripts. 
-
-
-
-
-Script: update_and_reboot.sh
+### 1. Clone repo
 ```bash
-#!/bin/bash
-cd /home/sg/sensing-garden
-git fetch origin
-if ! git diff --quiet HEAD origin/prod; then
-    git pull origin prod
-    sudo shutdown -r now
-fi
+git clone https://github.com/aasehaa/sensing-garden.git
+```
+...make shure to move into the correct branch. 
+### 2. Install Hailo to run inferrence
+**Requirements**
+- numpy < 2.0.0
+- setproctitle
+- opencv-python
+```bash
+sudo apt install hailo-all
+```
+### 3. Run script to automate installation process
+```bash
+./install.sh
+```
+### 4. Source environment 
+```bash
+source setup_env.sh
+```
+### 5. Prepare new classification model
+*Expects to you already have a HEF model ready to run on the HAILO AI HAT*
+
+When running a new classification model with this script, you need to make sure to have the correct taxonomic data added to your scripts. 
+
+Build the taxonomic json file from txt file with species names:
+species.txt example: 
+```txt 
+Chrysoteuchia culmella
+Choristoneura fumiferana
+Hypoprepia fucosa
+...
+```
+Get taxonomy from GBIF for hierarchical classification from gbif (remember to have correct file path to txt file). This will generate a json file `species.json` you would need to run the classification model: 
+```bash
+python get_taxonomy_gbif.py --species-list species_list.txt
 ```
 
-Crontab file `crontab -e`:  
 
-```bash
-#!/bin/bash
-
-# running time lapse video on reboot
-@reboot cd /home/sg/sensing-garden && ./run_sensing_garden_tl.sh
-
-# Pull and reboot at 00:00 (midnight) and 13:30 (1:30 PM), and log output to log files
-0 0 * * * /home/sg/sensing-garden/update_and_reboot.sh >> /home/sg/sensing-garden-log/update_log.txt 2>&1
-30 13 * * * /home/sg/sensing-garden/update_and_reboot.sh >> /home/sg/sensing-garden-log/update_log.txt 2>&1
+Change number of family, genus and species in script, depending on your classification model and taxonomy restuls from the previous step: 
+```python
+def process_classification_results(self, classification_results, detection_data):
+            class_names = self.class_names
+            nr_genus = 33 # TODO edit
+            nr_family = 9 # TODO edit
+            nr_species = 36 # TODO edit
+...
 ```
 
-Manage crontab for running user processes on device:
-
-```bash
-#!/bin/bash
-# read the cronjob file
-crontab -l
-
-# edit the cronjob file
-crontab -e
-
-# find the PID of current running jobs
-ps aux | grep your_script_name # in the example above, the script would be run_sensing_garden_tl.sh
-
-# kill processes with the PID from the overview
-kill 887
-
-# double check that the process is turned off by running this command again
-ps aux | grep your_script_name
+### 6. Edit html with yout server IP
+Replace with your Pis IP in the `viewer.html` file: 
+```html
+    const ws = new WebSocket("ws://[add IP adress]:8765"); // TODO edit wlan0 (ifconfig)
 ```
+
+### 7. Run script
+
+To run a full detection example, you need to specify the HEF model you want to run:
+```bash
+python moth/run_moth.py --hef-path resources/classification-model.hef
+```
+### 8. Setup http server (locally)
+
+To run the server locally, simply type this in a new terminal window: 
+```bash
+python -m http.server 8080
+```
+
+Visit local webpage with your server IP: 
+
+`http://[add IP adress]:8080/viewer.html`
+
+
