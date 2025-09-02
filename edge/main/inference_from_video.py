@@ -179,7 +179,7 @@ class VideoInferenceProcessor:
                 "timestamp": timestamp,
                 "frame_time_seconds": frame_time_seconds,
                 **detection_data,  # Unpacks family, genus, species, confidences, bbox, track_id
-                "sen55": sen55
+                **sen55, # unpacks sen55 data TODO: test if this is working
             }
             
             self.all_detections.append(payload)
@@ -201,8 +201,11 @@ class VideoInferenceProcessor:
         print(f"\n--- ☁️ Starting batch upload of {len(self.all_detections)} detections ---")
         
         failed_count = 0
+
+        
         
         for i, payload in enumerate(self.all_detections):
+            print("payload test nox index: ", payload.get("nox_index"))
             try:
                 self.sgc.classifications.add(
                     device_id=payload['device_id'],
@@ -216,6 +219,16 @@ class VideoInferenceProcessor:
                     species_confidence=payload.get("species_confidence"),
                     timestamp=payload['timestamp'],
                     bounding_box=payload.get('bbox'), 
+                    environment={
+                        "pm1p0": payload.get("pm1p0"),              # PM1.0 particulate matter (μg/m³)
+                        "pm2p5": payload.get("pm2p5"),              # PM2.5 particulate matter (μg/m³)
+                        "pm4p0": payload.get("pm4p0"),              # PM4.0 particulate matter (μg/m³)
+                        "pm10p0": payload.get("pm10p0"),             # PM10.0 particulate matter (μg/m³)
+                        "ambient_temperature": payload.get("ambient_temperature"), # Temperature (°C)
+                        "ambient_humidity": payload.get("ambient_humidity"),    # Relative humidity (%)
+                        "voc_index": payload.get("voc_index"),           # Volatile Organic Compounds index (integer)
+                        "nox_index": payload.get("nox_index")             # Nitrogen Oxides index (integer)
+                    },
                     track_id=str(payload['track_id'])
                 )
                 print(f"  ✓ [{i+1}/{len(self.all_detections)}] Uploaded: {payload.get('species', 'N/A')} at {payload.get('frame_time_seconds', 0):.2f}s")
@@ -356,6 +369,7 @@ class VideoInferenceProcessor:
             # find closes environmental recording for the detection
             sen55 = self.find_closest_sen55_record("/home/sg/sensing-garden/sen55/env_data.jsonl", timestamp) # fetching closest environmental datapoint of detection
             
+            # ex sen55: {"device_id":"sensor-123","timestamp":"2025-09-02T11:33:28Z","data":{"pm1p0":0.600000023841858,"pm2p5":0.699999988079071,"pm4p0":0.699999988079071,"pm10p0":0.699999988,"ambient_humidity":54.229999542236328,"ambient_temperature":25.395000457763672,"voc_index":107,"nox_index":1}}>
             self.store_detection(frame, detection_data, timestamp, frame_time_seconds, sen55)
         
         return frame
