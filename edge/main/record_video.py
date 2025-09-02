@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, time as dt_time
 from pathlib import Path
 from picamera2 import Picamera2
+from libcamera import controls
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class VideoRecorder:
             self.picam2.configure(camera_config)
             self.picam2.set_controls({
                 "FrameRate": float(self.fps),
-                "AfMode": 0, "LensPosition": 0.0,
+                "AfMode": controls.AfModeEnum.Auto, "LensPosition": 0.0,
             })
             self.picam2.start()
             logger.info("Camera initializing...")
