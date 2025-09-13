@@ -172,6 +172,8 @@ class VideoInferenceProcessor:
             _, buffer = cv2.imencode('.jpg', frame)
             image_data = buffer.tobytes()
 
+            logger.info('sen55 data: ', **sen55)
+
             payload = {
                 "device_id": self.device_id,
                 "model_id": self.model_id,

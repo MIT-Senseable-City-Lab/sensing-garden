@@ -285,7 +285,9 @@ class ContinuousPipeline:
                 return
 
             # --- Derive timestamp from original filename ---
-            timestamp_str = video_path.stem.replace(f"{self.device_id}_", "")
+            timestamp_date_str = video_path.stem.split('_')[1]
+            timestamp_time_str = video_path.stem.split('_')[2]
+            timestamp_str = timestamp_date_str + "_" + timestamp_time_str
             video_datetime = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
             iso_timestamp = video_datetime.isoformat()
             
@@ -339,7 +341,7 @@ class ContinuousPipeline:
         except Exception as e:
             logger.error(f"Error scanning for existing videos: {e}")
 
-        self.recorder_thread = threading.Thread(target=self.recorder.start_continuous_recording, daemon=True)
+        #self.recorder_thread = threading.Thread(target=self.recorder.start_continuous_recording, daemon=True)
         self.processor_thread = threading.Thread(target=self.processor_worker, daemon=True)
         self.recorder_thread.start()
         self.processor_thread.start()

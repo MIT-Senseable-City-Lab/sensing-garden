@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class VideoRecorder:
     def __init__(self, output_dir="recordings", fps=15, resolution=(640, 640), 
-                 recording_duration=300, device_id="recorder", video_queue=None,
+                 recording_duration=30, device_id="recorder", video_queue=None,
                  recording_start_hour=6, recording_end_hour=22):
         """
         Initialize the video recorder for gapless recording.
@@ -58,14 +58,14 @@ class VideoRecorder:
     def initialize_camera(self):
         """Initialize and configure the camera."""
         try:
-            self.picam2 = Picamera2()
+            self.picam2 = Picamera2(0)
             camera_config = self.picam2.create_video_configuration(
                 main={"format": 'RGB888', "size": self.resolution}
             )
             self.picam2.configure(camera_config)
             self.picam2.set_controls({
                 "FrameRate": float(self.fps),
-                "AfMode": controls.AfModeEnum.Auto, "LensPosition": 0.0,
+                "AeEnable": True,
             })
             self.picam2.start()
             logger.info("Camera initializing...")
