@@ -47,6 +47,8 @@ if [ "$cpu_temp_c" -lt 80 ]; then
         DEVICE_ID="edge-sgsca1"
     elif [[ "$BASE_DIR" == *"92A9-FB17"* ]]; then
         DEVICE_ID="edge-sgsca2"
+    elif [[ "$BASE_DIR" == *"F737-8E10"* ]]; then
+        DEVICE_ID="edge-sgsca3"
     else
         DEVICE_ID="edge-sgsc-unknown"
         echo "Warning: Unknown USB drive, using default device ID"
@@ -59,7 +61,7 @@ if [ "$cpu_temp_c" -lt 80 ]; then
     cd edge
     python3 run.py \
         --video-dir "$VIDEO_DIR" \
-        --duration 600 \
+        --duration 30 \
         --upload-percentage 10 \
         --device-id "$DEVICE_ID" \
         --fps 10 \
