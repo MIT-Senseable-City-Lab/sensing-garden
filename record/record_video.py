@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime
 
-import sensing_garden_client as sgc
+#import sensing_garden_client as sgc
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 
