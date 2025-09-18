@@ -1,58 +1,22 @@
-## *Note: This branch is used for deployments of the Sensing Garden monitoring system. Changes will be automatically updated for all deployed devices.*
+# Branch for Sensing Garden deployments
 
-# Prod branch for Sensing Garden
+Goal of this repo is to run two scripts for collecting data on insect activity and enviornmental variables. 
 
+Collect 1min videos from the camera by running `python3 record/record_video.py`
 
-Deployment settings for the sensing garden:
-
-1. Continiously running the time-lapse/timelapse_video.py script between 6:00 AM and 10:00 PM. Taking 1min video, and storing on SD card. 
-2. Twice a day, the device is checking for updates in the github branch and rebooting the system to keep itself updated. Log files are saved to `home/sg/sensing-garden-log/` folder
-3. If the device is connected to internet, it will send the video file to the cloud. If not, the video is stored on the SD card. 
-4. If the device is too hot (above 75 degrees celcius), the device will not run the provided scripts. 
-
-
-
-
-Script: update_and_reboot.sh
-```bash
-#!/bin/bash
-cd /home/sg/sensing-garden
-git fetch origin
-if ! git diff --quiet HEAD origin/prod; then
-    git pull origin prod
-    sudo shutdown -r now
-fi
+Collect environmental data from sen55: 
+1. Connect the senserion sen55 to your device (https://www.hackster.io/negar-rafieedolatabadi/voice-activated-smart-air-quality-monitor-using-sen55-11dce6). 
+2. Make sure to enable I2C on the Raspberrypi via `raspi-config` and the double check connections: 
 ```
-
-Crontab file `crontab -e`:  
-
-```bash
-#!/bin/bash
-
-# running time lapse video on reboot
-@reboot cd /home/sg/sensing-garden && ./run_sensing_garden_tl.sh
-
-# Pull and reboot at 00:00 (midnight) and 13:30 (1:30 PM), and log output to log files
-0 0 * * * /home/sg/sensing-garden/update_and_reboot.sh >> /home/sg/sensing-garden-log/update_log.txt 2>&1
-30 13 * * * /home/sg/sensing-garden/update_and_reboot.sh >> /home/sg/sensing-garden-log/update_log.txt 2>&1
+sudo apt-get install i2c-tools
 ```
-
-Manage crontab for running user processes on device:
-
-```bash
-#!/bin/bash
-# read the cronjob file
-crontab -l
-
-# edit the cronjob file
-crontab -e
-
-# find the PID of current running jobs
-ps aux | grep your_script_name # in the example above, the script would be run_sensing_garden_tl.sh
-
-# kill processes with the PID from the overview
-kill 887
-
-# double check that the process is turned off by running this command again
-ps aux | grep your_script_name
+Run to scan for connectios: 
 ```
+i2cdetect -y 1
+```
+If you see the number `69`, all is set. 
+
+3. Move to the folder `raspberry-pi-i2c-sen5x-master`. Here you can find the prepared files for collecting and saving environmental data from the Senserion sen55 sensor.  
+4. Compile the "sensing_garden_sen55_collection.c" by running `make`
+5. Create a folder "sen55" with a file "env_data.jsonl" -> `/home/sg/sensing-garden/sen55/env_data.jsonl`. If your file path is different, make sure to change that in the file "sensing_garden_sen55_collection.c". 
+6. Run the compiled file by the command `./sensing_garden_sen55_collection`. This will store environmental data every 30 seconds. 
