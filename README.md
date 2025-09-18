@@ -16,7 +16,12 @@ i2cdetect -y 1
 ```
 If you see the number `69`, all is set. 
 
-3. Move to the folder `raspberry-pi-i2c-sen5x-master`. Here you can find the prepared files for collecting and saving environmental data from the Senserion sen55 sensor.  
-4. Compile the "sensing_garden_sen55_collection.c" by running `make`
-5. Create a folder "sen55" with a file "env_data.jsonl" -> `/home/sg/sensing-garden/sen55/env_data.jsonl`. If your file path is different, make sure to change that in the file "sensing_garden_sen55_collection.c". 
-6. Run the compiled file by the command `./sensing_garden_sen55_collection`. This will store environmental data every 30 seconds. 
+3. Move to the folder `raspberry-pi-i2c-sen5x-master`. Here you can find the prepared files for collecting and saving environmental data from the Senserion sen55 sensor.
+4. Install library needed to save data:
+
+```
+sudo apt install libcjson-dev
+```
+5. Compile the "sensing_garden_sen55_collection.c" by running `make`
+6. Create a folder "sen55" with a file "env_data.jsonl" -> `/home/sg/sensing-garden/sen55/env_data.jsonl`. If your file path is different, make sure to change that in the file "sensing_garden_sen55_collection.c". 
+7. Run the compiled file by the command `./sensing_garden_sen55_collection`. This will store environmental data every 30 seconds. 
