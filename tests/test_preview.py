@@ -50,20 +50,22 @@ class TestPythonInterpreterSelection:
     """Tests for Python interpreter selection (RPi5 vs Mac)."""
 
     @patch('bugcam.commands.preview.platform.system', return_value='Linux')
-    @patch('bugcam.commands.preview.Path')
-    def test_get_python_returns_system_python_on_linux(self, mock_path: MagicMock, mock_system: MagicMock) -> None:
-        """On Linux (RPi5), should return /usr/bin/python3."""
-        mock_path.return_value.exists.return_value = True
-        result = get_python_for_detection()
-        assert result == "/usr/bin/python3"
+    def test_get_python_returns_system_python_on_linux(self, mock_system: MagicMock, tmp_path: Path) -> None:
+        """On Linux (RPi5) without hailo venv, should return /usr/bin/python3."""
+        with patch.object(Path, 'home', return_value=tmp_path):
+            result = get_python_for_detection()
+            assert result == "/usr/bin/python3"
 
     @patch('bugcam.commands.preview.platform.system', return_value='Linux')
-    @patch('bugcam.commands.preview.Path')
-    def test_get_python_fallback_when_no_system_python(self, mock_path: MagicMock, mock_system: MagicMock) -> None:
-        """On Linux without /usr/bin/python3, should fall back to sys.executable."""
-        mock_path.return_value.exists.return_value = False
-        result = get_python_for_detection()
-        assert result == sys.executable
+    def test_get_python_uses_hailo_venv_when_available(self, mock_system: MagicMock, tmp_path: Path) -> None:
+        """On Linux with hailo venv, should use hailo venv Python."""
+        hailo_python = tmp_path / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
+        hailo_python.parent.mkdir(parents=True)
+        hailo_python.touch()
+
+        with patch.object(Path, 'home', return_value=tmp_path):
+            result = get_python_for_detection()
+            assert result == str(hailo_python)
 
     @patch('bugcam.commands.preview.platform.system', return_value='Darwin')
     def test_get_python_returns_sys_executable_on_mac(self, mock_system: MagicMock) -> None:
@@ -71,22 +73,21 @@ class TestPythonInterpreterSelection:
         result = get_python_for_detection()
         assert result == sys.executable
 
+    @patch('bugcam.commands.preview.preflight_check', return_value=True)
     @patch('bugcam.commands.preview.platform.system', return_value='Linux')
-    @patch('bugcam.commands.preview.Path')
     @patch('bugcam.commands.preview.subprocess.Popen')
     def test_preview_uses_system_python_on_rpi(
-        self, mock_popen: MagicMock, mock_path: MagicMock,
-        mock_system: MagicMock, cli_runner: CliRunner
+        self, mock_popen: MagicMock, mock_system: MagicMock,
+        mock_preflight: MagicMock, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """On RPi5 (Linux), preview should use /usr/bin/python3."""
-        mock_path.return_value.exists.return_value = True
-
+        """On RPi5 (Linux) without hailo venv, preview should use /usr/bin/python3."""
         mock_process = MagicMock()
         mock_process.wait.return_value = 0
         mock_process.returncode = 0
         mock_popen.return_value = mock_process
 
-        result = cli_runner.invoke(app, ["preview", "--model", "/fake/model.hef"])
+        with patch.object(Path, 'home', return_value=tmp_path):
+            result = cli_runner.invoke(app, ["preview", "--model", "/fake/model.hef"])
 
         # Verify subprocess was called with system Python
         assert mock_popen.called

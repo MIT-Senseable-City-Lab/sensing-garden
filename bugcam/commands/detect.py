@@ -18,21 +18,27 @@ console = Console()
 def get_python_for_detection() -> str:
     """Get the Python interpreter to use for detection script.
 
-    On Linux (Raspberry Pi), use system Python to access system packages
-    like gi and hailo that can't be pip installed.
+    Prefers hailo-rpi5-examples venv if available, otherwise system Python.
     """
+    # Check for hailo-rpi5-examples venv
+    hailo_venv_python = Path.home() / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
+    if hailo_venv_python.exists():
+        return str(hailo_venv_python)
+
+    # Fall back to system Python on Linux
     if platform.system() == "Linux" and Path("/usr/bin/python3").exists():
         return "/usr/bin/python3"
     return sys.executable
 
 
 def preflight_check() -> bool:
-    """Check if detection dependencies are available in system Python."""
+    """Check if detection dependencies are available in the Python interpreter."""
     if platform.system() != "Linux":
         return True  # Can't check on non-Linux
     try:
+        python_exe = get_python_for_detection()
         result = subprocess.run(
-            ["/usr/bin/python3", "-c", "import gi, hailo, hailo_apps_infra, numpy, cv2"],
+            [python_exe, "-c", "import gi, hailo, hailo_apps_infra, numpy, cv2"],
             capture_output=True,
             timeout=10
         )

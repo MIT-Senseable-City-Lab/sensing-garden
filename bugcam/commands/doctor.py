@@ -10,13 +10,30 @@ app = typer.Typer(help="Check system dependencies")
 console = Console()
 
 
+def get_python_for_detection() -> str:
+    """Get the Python interpreter to use for detection script.
+
+    Prefers hailo-rpi5-examples venv if available, otherwise system Python.
+    """
+    # Check for hailo-rpi5-examples venv
+    hailo_venv_python = Path.home() / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
+    if hailo_venv_python.exists():
+        return str(hailo_venv_python)
+
+    # Fall back to system Python on Linux
+    if platform.system() == "Linux" and Path("/usr/bin/python3").exists():
+        return "/usr/bin/python3"
+    return "/usr/bin/python3"
+
+
 def check_system_python_import(import_name: str) -> bool:
-    """Check if a package is importable in system Python."""
+    """Check if a package is importable in the Python interpreter."""
     if platform.system() != "Linux":
         return False
     try:
+        python_exe = get_python_for_detection()
         result = subprocess.run(
-            ["/usr/bin/python3", "-c", f"import {import_name}"],
+            [python_exe, "-c", f"import {import_name}"],
             capture_output=True,
             timeout=10
         )
