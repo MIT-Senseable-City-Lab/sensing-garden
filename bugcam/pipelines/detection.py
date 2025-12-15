@@ -23,7 +23,12 @@ def check_dependencies():
     try:
         import hailo
     except ImportError:
-        missing.append("Hailo SDK")
+        missing.append("Hailo SDK (hailo)")
+
+    try:
+        import hailo_apps_infra
+    except ImportError:
+        missing.append("Hailo Apps Infrastructure (hailo_apps_infra)")
 
     if missing:
         print("Error: Missing required system packages:", ", ".join(missing), file=sys.stderr)

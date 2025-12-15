@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "bugcam"
-version = "0.1.1"
+version = "0.1.2"
 description = "detect and classify insects on a raspberry pi"
 authors = ["Deniz Aydemir <deniz@aydemir.us>"]
 license = "MIT"
@@ -42,6 +42,7 @@ python_files = ["test_*.py"]
 python_functions = ["test_*"]
 markers = [
     "integration: marks tests as integration tests (require network, may be slow)",
+    "rpi: marks tests that only run on Raspberry Pi hardware",
 ]
 
 [build-system]

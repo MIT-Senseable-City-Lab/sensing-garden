@@ -20,24 +20,23 @@ LOCAL_RESOURCES_DIR = Path(__file__).parent.parent.parent / "resources"
 # S3 bucket URL for models (public bucket)
 MODELS_BASE_URL = "https://scl-sensing-garden-models.s3.amazonaws.com"
 
+# Known models in S3 (bucket listing is private, but objects are public)
+KNOWN_S3_MODELS = ["yolov8s.hef", "yolov8m.hef"]
+
+
 def list_s3_models() -> list[str]:
     """List available models from S3 bucket.
 
     Returns:
         List of model filenames (*.hef files).
     """
-    try:
-        # S3 bucket listing returns XML
-        req = urllib.request.Request(MODELS_BASE_URL)
-        response = urllib.request.urlopen(req, timeout=10)
-        content = response.read().decode('utf-8')
-
-        # Parse model names from XML (simple regex, avoids xml dependency)
-        import re
-        models = re.findall(r'<Key>([^<]+\.hef)</Key>', content)
-        return sorted(models)
-    except Exception:
-        return []
+    # S3 bucket listing is private, so we use a known list
+    # and verify each model is accessible via HEAD request
+    available = []
+    for model in KNOWN_S3_MODELS:
+        if get_s3_model_size(model) is not None:
+            available.append(model)
+    return sorted(available)
 
 
 def get_s3_model_size(model_name: str) -> Optional[int]:
