@@ -1,24 +1,82 @@
-# Guide for setting up the Sensing Garden Monitoring System
+# BugCam - Raspberry Pi Insect Detection
 
+CLI for running insect detection on Raspberry Pi with Hailo AI HAT+.
 
-Hardware you need to setup this system: 
-- RaspberryPi (v.3-5)
-- Converter cable for raspberryPi5 if needed
-- Camera Module 3 (regular or wide)
-- RaspberryPi active cooler
-- RaspberryPi 27W USB-C Power Supply
-- MicroHDMI to HDMI
-- Mouse
-- Keyboard
+## Quick Start
 
-To get the system up and running, you need to:
-# 1. [Connect the camera module to your raspberrypi5](documentation/raspberrypi_setup.md)
-# 2. [Connect the active cooler and AI HAT](https://www.raspberrypi.com/documentation/accessories/ai-hat-plus.html)(external website)
-# 3. [Clone this repo and setup the environment](documentation/environment_setup.md)
+### 1. Hardware Requirements
+- Raspberry Pi 4/5
+- Raspberry Pi Camera Module 3
+- Raspberry Pi AI HAT+ (Hailo8/Hailo8L)
+- Active cooler recommended
 
-## Troubleshooting with no internet connection to the device? [Set up a Raspberry Pi hotspot (offline Wi-Fi access point)](documentation/hotspot_setup.md)
+See [Hardware Setup Guide](docs/getting-started/hardware-setup.md) for detailed assembly instructions.
 
+### 2. Install BugCam
 
+```bash
+# Install system dependencies
+sudo apt install hailo-all
 
+# Install bugcam CLI
+pip install .
+# OR with pipx for isolated install
+pipx install .
+```
 
+See [Installation Guide](docs/getting-started/installation.md) for detailed setup instructions.
 
+### 3. Run Detection
+
+```bash
+# Preview camera with detection overlay
+bugcam preview
+
+# Start continuous detection
+bugcam detect start
+
+# Save detections to file
+bugcam detect start --output detections.jsonl
+
+# Enable autostart on boot
+bugcam autostart enable
+```
+
+See [CLI Reference](docs/cli-reference.md) for complete command documentation.
+
+## Pre-compiled Models
+
+Insect detection models are included in `resources/`:
+- `yolov8m.hef` - Medium model (31MB) - Higher accuracy
+- `yolov8s.hef` - Small model (11MB) - Faster inference
+
+## Documentation
+
+### Getting Started
+- [Hardware Setup](docs/getting-started/hardware-setup.md) - Raspberry Pi and camera assembly
+- [Installation](docs/getting-started/installation.md) - Software installation and configuration
+- [Hotspot Setup](docs/getting-started/hotspot-setup.md) - Configure wireless access point
+
+### Reference
+- [CLI Reference](docs/cli-reference.md) - Complete command documentation
+
+### Advanced
+- [Monitoring](docs/advanced/monitoring.md) - Performance monitoring and debugging
+- [TensorFlow Lite Alternative](docs/advanced/tensorflow-alternative.md) - Running without AI HAT
+
+## Development
+
+```bash
+# Install with dev dependencies
+poetry install
+
+# Run tests
+poetry run pytest tests/ -v
+
+# Run CLI from source
+poetry run bugcam --help
+```
+
+## License
+
+MIT

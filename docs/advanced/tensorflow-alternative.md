@@ -2,22 +2,26 @@
 
 *Official guide from Ultralytics platform: https://docs.ultralytics.com/guides/raspberry-pi/#install-ultralytics-package*
 
-*This guide will show you how you can convert and run a tflite model on your raspberrypi with no AI HAT connected*
+*This guide will show you how you can convert and run a tflite model on your Raspberry Pi with no AI HAT connected*
 
+**Note**: This is an alternative approach to the Hailo-accelerated detection. The primary BugCam workflow uses Hailo HEF models for better performance. Use this guide only if you need to run without the AI HAT.
+
+---
 
 Running TensorFlow Lite (TFLite) models on a Raspberry Pi offers several key advantages:
 
-- **Improved Performance**: TFLite models are optimized for on-device inference, resulting in faster execution times on resource-constrained devices like the Raspberry Pi14.
-- **Reduced Latency**: By processing data locally, TFLite minimizes the need for cloud-based computation, leading to quicker response times in real-time applications13.
-- **Offline Capability**: TFLite models can run without an internet connection, making them suitable for remote or disconnected environments1.
-- **Power Efficiency**: TFLite's optimization techniques result in lower power consumption, which is crucial for battery-powered or energy-constrained Raspberry Pi projects3.
-- **Versatility**: TFLite supports various applications on Raspberry Pi, including computer vision tasks, object detection, and image classification4.
-- **Hardware Acceleration**: TFLite can leverage hardware acceleration on the Raspberry Pi, further improving performance for neural network computations34.
+- **Improved Performance**: TFLite models are optimized for on-device inference, resulting in faster execution times on resource-constrained devices like the Raspberry Pi.
+- **Reduced Latency**: By processing data locally, TFLite minimizes the need for cloud-based computation, leading to quicker response times in real-time applications.
+- **Offline Capability**: TFLite models can run without an internet connection, making them suitable for remote or disconnected environments.
+- **Power Efficiency**: TFLite's optimization techniques result in lower power consumption, which is crucial for battery-powered or energy-constrained Raspberry Pi projects.
+- **Versatility**: TFLite supports various applications on Raspberry Pi, including computer vision tasks, object detection, and image classification.
+- **Hardware Acceleration**: TFLite can leverage hardware acceleration on the Raspberry Pi, further improving performance for neural network computations.
 
+## Convert Model to TFLite
 
-First step is to convert your yolo model to tflite: 
+First step is to convert your YOLO model to tflite:
 
-1. **Convert model:** 
+### 1. Convert model:
 
 ```python
 from ultralytics import YOLO
@@ -25,40 +29,39 @@ from ultralytics import YOLO
 # Load a YOLO11n PyTorch model
 model = YOLO("yolo11n.pt") # make sure the path is correct for your model
 
-# Export the model to NCNN format
+# Export the model to TFLite format
 model.export(format="tflite")  # creates 'best_saved_model' folder
-
 ```
 
-If you want to check the model sizes and compare after exporting to tflite, you can run this code: 
+### 2. Check model size (optional)
+
+If you want to check the model sizes and compare after exporting to tflite, you can run this code:
 
 ```python
+import os
 
 yolo11n_file = "runs/detect/train/weights/best.pt"
 tflite_file = "runs/detect/train/weights/best_saved_model/best_int8.tflite"
 
 def get_model_size(filepath):
+    # Get the file size in bytes
+    file_size = os.path.getsize(filepath)
 
-  # Get the file size in bytes
-  file_size = os.path.getsize(filepath)
+    # Convert to MB for readability
+    file_size_MB = file_size / (1024 * 1024)
 
-  # Convert to MB for readability
-  file_size_MB = file_size / (1024 * 1024)
-
-  print(f"Model size: {file_size_MB:.2f} MB")
+    print(f"Model size: {file_size_MB:.2f} MB")
 
 get_model_size(yolo11n_file)
 get_model_size(tflite_file)
-
 ```
 
-
-
-2. **Use Raspberrypi camera with the model**
+## Use Raspberry Pi Camera with the Model
 
 There are 2 methods of using the Raspberry Pi Camera to inference YOLO11 models.
 
-**Method 1:**
+### Method 1: Using Picamera2
+
 We can use `picamera2` which comes pre-installed with Raspberry Pi OS to access the camera and inference YOLO11 models.
 
 ```python
@@ -82,7 +85,7 @@ while True:
     # Capture frame-by-frame
     frame = picam2.capture_array()
 
-    # Run ftlite-model inference on the frame
+    # Run tflite-model inference on the frame
     results = model(frame)
 
     # Visualize the results on the frame
@@ -97,17 +100,19 @@ while True:
 
 # Release resources and close windows
 cv2.destroyAllWindows()
-
 ```
 
-**Method 2:**
+### Method 2: Using TCP Stream
+
 We need to initiate a TCP stream with `rpicam-vid` from the connected camera so that we can use this stream URL as an input when we are inferencing later. Execute the following command to start the TCP stream.
 
-```python
+```bash
 rpicam-vid -n -t 0 --inline --listen -o tcp://127.0.0.1:8888
 ```
 
 Learn more about `rpicam-vid` usage on [official Raspberry Pi documentation](https://www.raspberrypi.com/documentation/computers/camera_software.html#rpicam-vid).
+
+Then run inference:
 
 ```python
 from ultralytics import YOLO
@@ -117,5 +122,12 @@ model = YOLO("yolo11n.pt")
 
 # Run inference
 results = model("tcp://127.0.0.1:8888")
-
 ```
+
+## Performance Comparison
+
+**TFLite vs Hailo HEF:**
+- **TFLite**: ~3-5 FPS on Raspberry Pi 5 without AI HAT
+- **Hailo HEF**: ~15-25 FPS on Raspberry Pi 5 with AI HAT+
+
+For production use with the Sensing Garden project, we recommend using the Hailo-accelerated pipeline for better real-time performance.

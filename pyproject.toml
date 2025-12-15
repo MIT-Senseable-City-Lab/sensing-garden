@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "bugcam"
+version = "0.1.0"
+description = "detect and classify insects on a raspberry pi"
+authors = ["Deniz Aydemir <deniz@aydemir.us>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/MIT-Senseable-City-Lab/sensing-garden"
+keywords = ["hailo", "raspberry-pi", "insect-detection", "insect-classification", "computer-vision", "ai", "sensing-garden", "mit", "senseable-city-lab"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Video",
+]
+packages = [{include = "bugcam"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+typer = {extras = ["all"], version = ">=0.9.0"}
+rich = ">=13.0.0"
+boto3 = ">=1.34.0"
+numpy = "<2.0.0"
+setproctitle = "*"
+opencv-python = "*"
+sensing-garden-client = ">=0.0.8"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0.0"
+pytest-mock = ">=3.0.0"
+
+[tool.poetry.scripts]
+bugcam = "bugcam.cli:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "integration: marks tests as integration tests (require network, may be slow)",
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
