@@ -29,6 +29,16 @@ def check_dependencies():
     except ImportError:
         missing.append("hailo_apps_infra")
 
+    try:
+        import numpy
+    except ImportError:
+        missing.append("numpy")
+
+    try:
+        import cv2
+    except ImportError:
+        missing.append("cv2")
+
     if missing:
         print("Error: Missing required packages:", ", ".join(missing), file=sys.stderr)
         print(file=sys.stderr)
@@ -38,7 +48,13 @@ def check_dependencies():
         if "hailo" in missing:
             print("  sudo apt install hailo-all", file=sys.stderr)
         if "hailo_apps_infra" in missing:
-            print("  pip install git+https://github.com/hailo-ai/hailo-apps-infra.git", file=sys.stderr)
+            print("  sudo pip install git+https://github.com/hailo-ai/hailo-apps-infra.git", file=sys.stderr)
+        if "numpy" in missing:
+            print("  sudo apt install python3-numpy", file=sys.stderr)
+        if "cv2" in missing:
+            print("  sudo apt install python3-opencv", file=sys.stderr)
+        print(file=sys.stderr)
+        print("Run 'bugcam doctor' to check all dependencies.", file=sys.stderr)
         sys.exit(1)
 
 

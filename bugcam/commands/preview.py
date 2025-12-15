@@ -20,6 +20,21 @@ def get_python_for_detection() -> str:
         return "/usr/bin/python3"
     return sys.executable
 
+
+def preflight_check() -> bool:
+    """Check if detection dependencies are available in system Python."""
+    if platform.system() != "Linux":
+        return True  # Can't check on non-Linux
+    try:
+        result = subprocess.run(
+            ["/usr/bin/python3", "-c", "import gi, hailo, hailo_apps_infra, numpy, cv2"],
+            capture_output=True,
+            timeout=10
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
 @app.callback(invoke_without_command=True)
 def preview(
     duration: int = typer.Option(None, "--duration", "-d", help="Preview duration in seconds"),
@@ -59,6 +74,12 @@ def preview(
             console.print("[yellow]No model found[/yellow]")
             console.print("Download a model with: [cyan]bugcam models download[/cyan]")
             console.print("Running without detection overlay\n")
+
+    # Pre-flight dependency check
+    if not preflight_check():
+        console.print("[red]Missing system dependencies for detection.[/red]")
+        console.print("Run [cyan]bugcam doctor[/cyan] to see what's missing.")
+        raise typer.Exit(1)
 
     # Build command - detection.py expects --input and --hef-path arguments
     # Use system Python on Linux to access gi/hailo system packages
