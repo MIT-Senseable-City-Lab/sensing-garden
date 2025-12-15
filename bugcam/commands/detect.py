@@ -3,6 +3,7 @@ import subprocess
 import sys
 import json
 import signal
+import platform
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -12,6 +13,17 @@ from rich.table import Table
 
 app = typer.Typer(help="Run insect detection")
 console = Console()
+
+
+def get_python_for_detection() -> str:
+    """Get the Python interpreter to use for detection script.
+
+    On Linux (Raspberry Pi), use system Python to access system packages
+    like gi and hailo that can't be pip installed.
+    """
+    if platform.system() == "Linux" and Path("/usr/bin/python3").exists():
+        return "/usr/bin/python3"
+    return sys.executable
 
 
 @app.command()
@@ -48,9 +60,9 @@ def start(
     if not quiet:
         _show_startup_banner(model_path, output, duration)
 
-    # Build command
+    # Build command - use system Python on Linux to access gi/hailo system packages
     cmd = [
-        sys.executable,
+        get_python_for_detection(),
         str(detection_script),
         "--input", "rpi",
         "--hef-path", str(model_path)

@@ -17,7 +17,7 @@ app.add_typer(autostart.app, name="autostart")
 
 @app.callback()
 def main():
-    """BugCam - Raspberry Pi insect detection CLI"""
+    """bugcam - Raspberry Pi insect detection CLI"""
     pass
 
 if __name__ == "__main__":

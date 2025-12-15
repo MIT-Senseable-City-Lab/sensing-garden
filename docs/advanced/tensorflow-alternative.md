@@ -4,7 +4,7 @@
 
 *This guide will show you how you can convert and run a tflite model on your Raspberry Pi with no AI HAT connected*
 
-**Note**: This is an alternative approach to the Hailo-accelerated detection. The primary BugCam workflow uses Hailo HEF models for better performance. Use this guide only if you need to run without the AI HAT.
+**Note**: This is an alternative approach to the Hailo-accelerated detection. The primary bugcam workflow uses Hailo HEF models for better performance. Use this guide only if you need to run without the AI HAT.
 
 ---
 

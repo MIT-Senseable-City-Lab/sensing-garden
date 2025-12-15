@@ -4,19 +4,39 @@ Complete reference for the `bugcam` command-line interface.
 
 ## Models
 
-Manage and inspect detection models.
+Manage and inspect detection models. Models must be downloaded before use.
 
-### List available models
+### Download a model
+```bash
+bugcam models download <model_name>
+```
+Download a model from S3 and cache it locally in `~/.cache/bugcam/models/`.
+
+**Available models:**
+- `yolov8s` - Small model (~11MB) - Faster inference
+- `yolov8m` - Medium model (~31MB) - Higher accuracy
+
+**Example:**
+```bash
+bugcam models download yolov8s
+```
+
+### List installed models
 ```bash
 bugcam models list
 ```
-Shows all HEF models available in the `resources/` directory.
+Shows all downloaded models in the cache directory.
 
 ### Show model details
 ```bash
 bugcam models info <model_name>
 ```
-Display detailed information about a specific model (size, path, etc.).
+Display detailed information about a specific model (size, path, download status, etc.).
+
+**Example:**
+```bash
+bugcam models info yolov8s
+```
 
 ## Preview
 
@@ -115,9 +135,15 @@ Stream live logs from the running service (like `tail -f`).
 
 ## Configuration
 
-The BugCam CLI uses models from the `resources/` directory. Ensure you have the required HEF models:
-- `yolov8m.hef` - Medium model (31MB) - Higher accuracy
-- `yolov8s.hef` - Small model (11MB) - Faster inference
+### Model Storage
+
+Models are downloaded from S3 and cached locally:
+- **Cache directory**: `~/.cache/bugcam/models/`
+- **Available models**: `yolov8s.hef` (~11MB) and `yolov8m.hef` (~31MB)
+
+Download models with `bugcam models download <model_name>` before running detection.
+
+**Note**: The `resources/` directory contains models for development use only and is not included in package installations.
 
 ## Output Format
 

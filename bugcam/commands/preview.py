@@ -2,11 +2,23 @@ import typer
 import subprocess
 import sys
 import os
+import platform
 from pathlib import Path
 from rich.console import Console
 
 app = typer.Typer(help="Camera preview and testing")
 console = Console()
+
+
+def get_python_for_detection() -> str:
+    """Get the Python interpreter to use for detection script.
+
+    On Linux (Raspberry Pi), use system Python to access system packages
+    like gi and hailo that can't be pip installed.
+    """
+    if platform.system() == "Linux" and Path("/usr/bin/python3").exists():
+        return "/usr/bin/python3"
+    return sys.executable
 
 @app.callback(invoke_without_command=True)
 def preview(
@@ -49,7 +61,8 @@ def preview(
             console.print("Running without detection overlay\n")
 
     # Build command - detection.py expects --input and --hef-path arguments
-    cmd = [sys.executable, str(detection_script), "--input", "rpi"]
+    # Use system Python on Linux to access gi/hailo system packages
+    cmd = [get_python_for_detection(), str(detection_script), "--input", "rpi"]
 
     if hef_path:
         cmd.extend(["--hef-path", hef_path])

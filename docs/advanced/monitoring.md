@@ -1,6 +1,6 @@
 # Monitoring
 
-Tools and techniques for monitoring BugCam detection performance.
+Tools and techniques for monitoring bugcam detection performance.
 
 ## Hailo Monitor
 
@@ -24,9 +24,11 @@ Then run your detection:
 
 ```bash
 bugcam detect start
-# or
+# or (for development)
 python basic_pipelines/detection.py --input rpi --hef-path resources/yolov8m.hef
 ```
+
+**Note**: CLI commands use models from `~/.cache/bugcam/models/`. Development scripts use models from `resources/`.
 
 The Hailo monitor will display real-time metrics including:
 - Model inference time
@@ -163,7 +165,11 @@ du -ah /home/pi | sort -rh | head -20
 
 ## Performance Tips
 
-1. **Model Selection**: Use `yolov8s.hef` for faster inference if accuracy allows
+1. **Model Selection**: Use `yolov8s` for faster inference if accuracy allows
+   ```bash
+   bugcam models download yolov8s  # Faster, ~11MB
+   bugcam detect start --model yolov8s
+   ```
 2. **Resolution**: Lower camera resolution reduces processing time
 3. **Cooling**: Active cooling prevents thermal throttling under sustained load
 4. **Power**: Use official Raspberry Pi power supply (5V 5A recommended for Pi 5 + AI HAT+)

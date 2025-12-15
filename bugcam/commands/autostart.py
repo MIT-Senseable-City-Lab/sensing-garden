@@ -14,7 +14,7 @@ console = Console()
 SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/bugcam.service")
 
 SERVICE_TEMPLATE = """[Unit]
-Description=BugCam Insect Detection
+Description=bugcam Insect Detection
 After=multi-user.target
 
 [Service]

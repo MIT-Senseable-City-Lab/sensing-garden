@@ -80,6 +80,8 @@ def test_s3_models_accessible() -> None:
 def test_models_download_http_404_error(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test download handles HTTP 404 error."""
     with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
+         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef']), \
+         patch('bugcam.commands.models.get_s3_model_size', return_value=10000000), \
          patch('urllib.request.urlopen') as mock_urlopen:
         mock_urlopen.side_effect = urllib.error.HTTPError(
             url='http://test', code=404, msg='Not Found', hdrs={}, fp=None
@@ -91,7 +93,8 @@ def test_models_download_http_404_error(cli_runner: CliRunner, tmp_path: Path) -
 
 def test_models_download_unknown_model(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test download with unknown model name fails."""
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path):
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
+         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
         result = cli_runner.invoke(app, ["models", "download", "nonexistent.hef"])
         assert result.exit_code == 1
         assert "unknown" in result.output.lower()
@@ -99,7 +102,9 @@ def test_models_download_unknown_model(cli_runner: CliRunner, tmp_path: Path) ->
 
 def test_models_download_no_arguments(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test download without arguments shows available models help text."""
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path):
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
+         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
+         patch('bugcam.commands.models.get_s3_model_size', return_value=10000000):
         result = cli_runner.invoke(app, ["models", "download"])
         assert result.exit_code == 0
         assert "available models" in result.output.lower()
@@ -113,7 +118,9 @@ def test_models_download_skips_existing_file(cli_runner: CliRunner, tmp_path: Pa
     existing_file = tmp_path / "yolov8s.hef"
     existing_file.write_bytes(b"fake model data")
 
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path):
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
+         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
+         patch('bugcam.commands.models.get_s3_model_size', return_value=10000000):
         result = cli_runner.invoke(app, ["models", "download", "yolov8s"])
         assert result.exit_code == 0
         assert "skipping" in result.output.lower() or "already exists" in result.output.lower()

@@ -20,16 +20,42 @@ LOCAL_RESOURCES_DIR = Path(__file__).parent.parent.parent / "resources"
 # S3 bucket URL for models (public bucket)
 MODELS_BASE_URL = "https://scl-sensing-garden-models.s3.amazonaws.com"
 
-AVAILABLE_MODELS = {
-    "yolov8s.hef": {
-        "size": "11MB",
-        "description": "Small model - faster inference (~30 FPS), good accuracy"
-    },
-    "yolov8m.hef": {
-        "size": "31MB",
-        "description": "Medium model - higher accuracy, moderate speed (~15 FPS)"
-    },
-}
+def list_s3_models() -> list[str]:
+    """List available models from S3 bucket.
+
+    Returns:
+        List of model filenames (*.hef files).
+    """
+    try:
+        # S3 bucket listing returns XML
+        req = urllib.request.Request(MODELS_BASE_URL)
+        response = urllib.request.urlopen(req, timeout=10)
+        content = response.read().decode('utf-8')
+
+        # Parse model names from XML (simple regex, avoids xml dependency)
+        import re
+        models = re.findall(r'<Key>([^<]+\.hef)</Key>', content)
+        return sorted(models)
+    except Exception:
+        return []
+
+
+def get_s3_model_size(model_name: str) -> Optional[int]:
+    """Get model file size from S3 via HEAD request.
+
+    Returns:
+        Size in bytes, or None if request fails.
+    """
+    url = f"{MODELS_BASE_URL}/{model_name}"
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        response = urllib.request.urlopen(req, timeout=5)
+        content_length = response.headers.get('Content-Length')
+        if content_length:
+            return int(content_length)
+    except Exception:
+        pass
+    return None
 
 
 def get_models_dir() -> Path:
@@ -85,20 +111,25 @@ def download(
     # Create cache dir if needed
     MODELS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Get available models from S3
+    available_models = list_s3_models()
+    if not available_models:
+        console.print("[red]Error: Could not fetch model list from S3[/red]")
+        console.print("[dim]Check your internet connection and try again.[/dim]")
+        raise typer.Exit(1)
+
     # Determine which models to download
     if model_name == "all":
-        models_to_download = list(AVAILABLE_MODELS.keys())
+        models_to_download = available_models.copy()
     elif model_name is None:
-        # Show available models with better help text
+        # Show available models from S3
         console.print("[cyan]Available models:[/cyan]\n")
-        for name, info in AVAILABLE_MODELS.items():
-            console.print(f"  {name:15} {info['size']:>6}  {info['description']}")
-        console.print("\n[dim]You only need ONE model. Choose based on your priority:[/dim]")
-        console.print("[dim]  - yolov8s (recommended for most): Fast, good accuracy[/dim]")
-        console.print("[dim]  - yolov8m: Better accuracy, slower[/dim]")
+        for name in available_models:
+            size = get_s3_model_size(name)
+            size_str = format_size(size) if size else "Unknown"
+            console.print(f"  {name:20} {size_str:>10}")
         console.print("\n[dim]Usage:[/dim]")
-        console.print("[dim]  bugcam models download yolov8s[/dim]")
-        console.print("[dim]  bugcam models download yolov8m[/dim]")
+        console.print("[dim]  bugcam models download <model_name>[/dim]")
         console.print("[dim]  bugcam models download all[/dim]")
         return
     else:
@@ -106,9 +137,9 @@ def download(
         if not model_name.endswith('.hef'):
             model_name += '.hef'
 
-        if model_name not in AVAILABLE_MODELS:
+        if model_name not in available_models:
             console.print(f"[red]Unknown model: {model_name}[/red]")
-            console.print(f"Available models: {', '.join(AVAILABLE_MODELS.keys())}")
+            console.print(f"Available models: {', '.join(available_models)}")
             raise typer.Exit(1)
 
         models_to_download = [model_name]
@@ -117,7 +148,9 @@ def download(
     console.print(f"\n[cyan]Downloading {len(models_to_download)} model(s):[/cyan]")
     for model in models_to_download:
         status = "exists" if (MODELS_CACHE_DIR / model).exists() else "pending"
-        console.print(f"  {model:15} {AVAILABLE_MODELS[model]['size']:>6}  [{status}]")
+        size = get_s3_model_size(model)
+        size_str = format_size(size) if size else "Unknown"
+        console.print(f"  {model:20} {size_str:>10}  [{status}]")
     console.print()
 
     # Track download results
@@ -189,12 +222,9 @@ def list() -> None:
     models = get_hef_models()
 
     if not models:
-        console.print("[yellow]No models found[/yellow]\n")
-        console.print("[cyan]Available models for download:[/cyan]\n")
-        for name, info in AVAILABLE_MODELS.items():
-            console.print(f"  {name:15} {info['size']:>6}  {info['description']}")
-        console.print("\n[dim]You only need ONE model. Recommended: yolov8s for most users.[/dim]")
-        console.print("[dim]Download with: bugcam models download yolov8s[/dim]")
+        console.print("[yellow]No models installed[/yellow]\n")
+        console.print("[dim]Download a model with: bugcam models download <model_name>[/dim]")
+        console.print("[dim]List available models: bugcam models download[/dim]")
         return
 
     table = Table(title="Installed Models")

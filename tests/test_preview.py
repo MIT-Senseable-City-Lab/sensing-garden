@@ -1,9 +1,11 @@
 """Tests for bugcam preview command."""
+import sys
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from bugcam.cli import app
+from bugcam.commands.preview import get_python_for_detection
 
 
 class TestPreview:
@@ -42,3 +44,51 @@ class TestPreview:
             result = cli_runner.invoke(app, ["preview"])
             assert result.exit_code == 1
             assert "not found" in result.output.lower() or "error" in result.output.lower()
+
+
+class TestPythonInterpreterSelection:
+    """Tests for Python interpreter selection (RPi5 vs Mac)."""
+
+    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.commands.preview.Path')
+    def test_get_python_returns_system_python_on_linux(self, mock_path: MagicMock, mock_system: MagicMock) -> None:
+        """On Linux (RPi5), should return /usr/bin/python3."""
+        mock_path.return_value.exists.return_value = True
+        result = get_python_for_detection()
+        assert result == "/usr/bin/python3"
+
+    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.commands.preview.Path')
+    def test_get_python_fallback_when_no_system_python(self, mock_path: MagicMock, mock_system: MagicMock) -> None:
+        """On Linux without /usr/bin/python3, should fall back to sys.executable."""
+        mock_path.return_value.exists.return_value = False
+        result = get_python_for_detection()
+        assert result == sys.executable
+
+    @patch('bugcam.commands.preview.platform.system', return_value='Darwin')
+    def test_get_python_returns_sys_executable_on_mac(self, mock_system: MagicMock) -> None:
+        """On Mac (Darwin), should return sys.executable."""
+        result = get_python_for_detection()
+        assert result == sys.executable
+
+    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.commands.preview.Path')
+    @patch('bugcam.commands.preview.subprocess.Popen')
+    def test_preview_uses_system_python_on_rpi(
+        self, mock_popen: MagicMock, mock_path: MagicMock,
+        mock_system: MagicMock, cli_runner: CliRunner
+    ) -> None:
+        """On RPi5 (Linux), preview should use /usr/bin/python3."""
+        mock_path.return_value.exists.return_value = True
+
+        mock_process = MagicMock()
+        mock_process.wait.return_value = 0
+        mock_process.returncode = 0
+        mock_popen.return_value = mock_process
+
+        result = cli_runner.invoke(app, ["preview", "--model", "/fake/model.hef"])
+
+        # Verify subprocess was called with system Python
+        assert mock_popen.called
+        call_args = mock_popen.call_args[0][0]
+        assert call_args[0] == "/usr/bin/python3", f"Expected /usr/bin/python3 but got {call_args[0]}"
