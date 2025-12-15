@@ -3,8 +3,7 @@
 This module requires system packages that cannot be pip-installed:
 - PyGObject (gi): sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0
 - Hailo SDK: sudo apt install hailo-all
-
-For pipx users: pipx install bugcam --system-site-packages
+- hailo_apps_infra: pip install git+https://github.com/hailo-ai/hailo-apps-infra.git
 """
 
 import os
@@ -18,28 +17,28 @@ def check_dependencies():
     try:
         import gi
     except ImportError:
-        missing.append("PyGObject (gi)")
+        missing.append("gi")
 
     try:
         import hailo
     except ImportError:
-        missing.append("Hailo SDK (hailo)")
+        missing.append("hailo")
 
     try:
         import hailo_apps_infra
     except ImportError:
-        missing.append("Hailo Apps Infrastructure (hailo_apps_infra)")
+        missing.append("hailo_apps_infra")
 
     if missing:
-        print("Error: Missing required system packages:", ", ".join(missing), file=sys.stderr)
+        print("Error: Missing required packages:", ", ".join(missing), file=sys.stderr)
         print(file=sys.stderr)
-        print("On Raspberry Pi, install with:", file=sys.stderr)
-        print("  sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0", file=sys.stderr)
-        print("  sudo apt install hailo-all", file=sys.stderr)
-        print(file=sys.stderr)
-        print("For pipx users, reinstall with system packages access:", file=sys.stderr)
-        print("  pipx uninstall bugcam", file=sys.stderr)
-        print("  pipx install bugcam --system-site-packages", file=sys.stderr)
+        print("Install missing packages:", file=sys.stderr)
+        if "gi" in missing:
+            print("  sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0", file=sys.stderr)
+        if "hailo" in missing:
+            print("  sudo apt install hailo-all", file=sys.stderr)
+        if "hailo_apps_infra" in missing:
+            print("  pip install git+https://github.com/hailo-ai/hailo-apps-infra.git", file=sys.stderr)
         sys.exit(1)
 
 
