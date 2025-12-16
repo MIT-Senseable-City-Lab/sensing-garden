@@ -10,7 +10,7 @@ raw detection data from the Hailo accelerator.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 @dataclass
@@ -18,7 +18,7 @@ class Detection:
     """A single detection from the model."""
     label: str
     confidence: float
-    bbox: tuple  # (xmin, ymin, xmax, ymax) normalized 0-1
+    bbox: Tuple[float, float, float, float]  # (xmin, ymin, xmax, ymax) normalized 0-1
     track_id: Optional[int] = None
 
 
@@ -53,31 +53,35 @@ def process_detections(
     processed = []
 
     for detection in detections_raw:
-        label = detection.get_label()
-        confidence = detection.get_confidence()
-        bbox = detection.get_bbox()
+        try:
+            label = detection.get_label()
+            confidence = detection.get_confidence()
+            bbox = detection.get_bbox()
 
-        # Extract track ID if available
-        track_id = None
-        track = detection.get_objects_typed(hailo_module.HAILO_UNIQUE_ID)
-        if len(track) == 1:
-            track_id = track[0].get_id()
+            # Extract track ID if available
+            track_id = None
+            track = detection.get_objects_typed(hailo_module.HAILO_UNIQUE_ID)
+            if len(track) == 1:
+                track_id = track[0].get_id()
 
-        # --- CUSTOMIZE DETECTION FILTERING HERE ---
-        # Example: only keep detections above confidence threshold
-        # if confidence < 0.5:
-        #     continue
+            # --- CUSTOMIZE DETECTION FILTERING HERE ---
+            # Example: only keep detections above confidence threshold
+            # if confidence < 0.5:
+            #     continue
 
-        # Example: filter by specific labels
-        # if label not in ["insect", "bee", "butterfly"]:
-        #     continue
+            # Example: filter by specific labels
+            # if label not in ["insect", "bee", "butterfly"]:
+            #     continue
 
-        processed.append(Detection(
-            label=label,
-            confidence=confidence,
-            bbox=(bbox.xmin(), bbox.ymin(), bbox.xmax(), bbox.ymax()),
-            track_id=track_id,
-        ))
+            processed.append(Detection(
+                label=label,
+                confidence=confidence,
+                bbox=(bbox.xmin(), bbox.ymin(), bbox.xmax(), bbox.ymax()),
+                track_id=track_id,
+            ))
+        except (AttributeError, IndexError, TypeError):
+            # Skip malformed detections
+            continue
 
     return DetectionResult(
         detections=processed,
