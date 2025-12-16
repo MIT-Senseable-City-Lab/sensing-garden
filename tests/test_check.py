@@ -36,8 +36,8 @@ def test_check_hailo_success(cli_runner: CliRunner) -> None:
 def test_check_hailo_not_found(cli_runner: CliRunner) -> None:
     """Test check hailo fails when no device found."""
     mock_result = MagicMock()
-    mock_result.returncode = 1
-    mock_result.stdout = b"No devices found"
+    mock_result.returncode = 0
+    mock_result.stdout = b"Hailo devices not found"
     mock_result.stderr = b""
 
     with patch('subprocess.run', return_value=mock_result):

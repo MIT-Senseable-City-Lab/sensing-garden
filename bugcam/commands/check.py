@@ -23,16 +23,8 @@ def check_hailo() -> bool:
         stdout = result.stdout.decode()
         stderr = result.stderr.decode()
 
-        if result.returncode == 0 and "Hailo" in stdout:
-            # Parse device info
-            lines = stdout.strip().split("\n")
-            for line in lines:
-                if "Hailo" in line:
-                    console.print(f"[green]✓ {line.strip()}[/green]")
-            return True
-
-        # Check for common errors
-        if "No devices found" in stdout or "No devices found" in stderr:
+        # Check for failure conditions first (before checking for "Hailo" in output)
+        if "not found" in stdout.lower() or "not found" in stderr.lower():
             console.print("[red]✗ No Hailo device found[/red]")
             console.print("\n[yellow]Troubleshooting:[/yellow]")
             console.print("1. Check AI HAT+ is properly seated on GPIO header")
@@ -40,6 +32,14 @@ def check_hailo() -> bool:
             console.print("3. Reinstall driver: [cyan]sudo apt install --reinstall hailo-all[/cyan]")
             console.print("4. Reboot: [cyan]sudo reboot[/cyan]")
             return False
+
+        # Check for successful device detection
+        if result.returncode == 0 and "Hailo" in stdout:
+            lines = stdout.strip().split("\n")
+            for line in lines:
+                if "Hailo" in line and "not found" not in line.lower():
+                    console.print(f"[green]✓ {line.strip()}[/green]")
+            return True
 
         console.print("[red]✗ Hailo check failed[/red]")
         if stderr:
