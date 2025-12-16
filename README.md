@@ -113,7 +113,7 @@ bugcam models delete yolov8m
 | `london_141-multitask` | 34 MB | London invertebrates - 141 species classifier |
 
 ### `bugcam record`
-Record videos at intervals (without on-device detection).
+Record videos at intervals (without on-device detection). Useful for collecting training data or when you want to process videos later on a more powerful machine.
 
 ```bash
 # Record 60s videos every 10 minutes
@@ -122,11 +122,27 @@ bugcam record start --interval 10 --length 60
 # Record for 8 hours then stop
 bugcam record start --duration 480 --interval 10 --length 60
 
+# Save to custom directory
+bugcam record start --output-dir /mnt/usb/videos --interval 10 --length 60
+
 # Record a single test video
 bugcam record single --length 30
+
+# Save single video to specific path
+bugcam record single --output /tmp/test.mp4 --length 10
 ```
 
-Videos are saved to `~/bugcam-videos/` by default with timestamp filenames.
+**Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--interval`, `-i` | 10 | Minutes between recordings |
+| `--length`, `-l` | 60 | Length of each video in seconds |
+| `--duration`, `-d` | 0 | Total runtime in minutes (0 = run forever) |
+| `--output-dir`, `-o` | `~/bugcam-videos` | Directory to save videos |
+| `--quiet`, `-q` | false | Suppress console output |
+
+Videos are saved with timestamp filenames like `video_20251216_153045.mp4`.
 
 ### `bugcam autostart`
 Manage systemd service for automatic detection or recording on boot.
@@ -137,6 +153,9 @@ bugcam autostart enable --mode detect --model small-generic
 
 # Recording mode (video only, no detection)
 bugcam autostart enable --mode record --interval 10 --length 60
+
+# Recording to external storage
+bugcam autostart enable --mode record --interval 10 --length 60 --output-dir /mnt/usb/videos
 
 # Manage service
 bugcam autostart disable

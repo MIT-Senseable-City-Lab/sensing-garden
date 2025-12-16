@@ -77,6 +77,26 @@ def _validate_model_name(model: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9._/-]+$', model))
 
 
+def _validate_path(path: Path) -> bool:
+    """Validate path contains only safe characters for systemd service file."""
+    path_str = str(path)
+    # Reject paths with newlines, quotes, or other dangerous chars
+    if '\n' in path_str or '\r' in path_str:
+        return False
+    if '"' in path_str or "'" in path_str:
+        return False
+    if ';' in path_str or '&' in path_str or '|' in path_str:
+        return False
+    if '$' in path_str or '`' in path_str:
+        return False
+    return True
+
+
+def _validate_username(user: str) -> bool:
+    """Validate username contains only safe characters."""
+    return bool(re.match(r'^[a-zA-Z0-9_-]+$', user))
+
+
 def _run_systemctl(command: list[str], check: bool = True) -> subprocess.CompletedProcess:
     """Run systemctl command with sudo."""
     full_command = ["sudo", "systemctl"] + command
@@ -120,6 +140,20 @@ def enable(
         user = os.environ.get("USER", "pi")
         workdir = Path.home()
 
+        # Validate user to prevent injection
+        if not _validate_username(user):
+            console.print(f"[red]Error: Invalid username '{user}'[/red]")
+            raise typer.Exit(1)
+
+        # Validate paths to prevent injection
+        if not _validate_path(bugcam_path):
+            console.print(f"[red]Error: Invalid bugcam path[/red]")
+            raise typer.Exit(1)
+
+        if not _validate_path(workdir):
+            console.print(f"[red]Error: Invalid working directory path[/red]")
+            raise typer.Exit(1)
+
         # Generate service file based on mode
         if mode == "detect":
             # Default model if not specified
@@ -143,6 +177,12 @@ def enable(
             # Record mode
             if output_dir is None:
                 output_dir = Path.home() / "bugcam-videos"
+
+            # Validate output_dir to prevent injection
+            if not _validate_path(output_dir):
+                console.print(f"[red]Error: Invalid output directory path[/red]")
+                console.print("[yellow]Path must not contain special characters like newlines, quotes, or shell metacharacters[/yellow]")
+                raise typer.Exit(1)
 
             service_content = SERVICE_TEMPLATE_RECORD.format(
                 user=user,

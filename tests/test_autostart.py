@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from bugcam.cli import app
-from bugcam.commands.autostart import _validate_model_name
+from bugcam.commands.autostart import _validate_model_name, _validate_path, _validate_username
 
 
 class TestModelNameValidation:
@@ -52,6 +52,86 @@ class TestModelNameValidation:
     def test_empty_string_rejected(self) -> None:
         """Test that empty string is rejected."""
         assert not _validate_model_name(""), "Empty string not rejected"
+
+
+class TestPathValidation:
+    """SECURITY-CRITICAL: Tests for path validation to prevent systemd injection."""
+
+    def test_valid_paths_accepted(self) -> None:
+        """Test that valid paths are accepted."""
+        valid_paths = [
+            Path("/home/pi/bugcam-videos"),
+            Path("/mnt/usb/videos"),
+            Path("/tmp/test"),
+        ]
+        for path in valid_paths:
+            assert _validate_path(path), f"Valid path rejected: {path}"
+
+    def test_newline_injection_rejected(self) -> None:
+        """Test that newline injection in paths is rejected."""
+        assert not _validate_path(Path("/tmp/videos\nExecStartPre=/bin/evil")), "Newline injection not rejected"
+
+    def test_carriage_return_rejected(self) -> None:
+        """Test that carriage return in paths is rejected."""
+        assert not _validate_path(Path("/tmp/videos\rExecStart=/bin/evil")), "Carriage return not rejected"
+
+    def test_double_quote_rejected(self) -> None:
+        """Test that double quotes in paths are rejected."""
+        assert not _validate_path(Path('/tmp/"test')), "Double quote not rejected"
+
+    def test_single_quote_rejected(self) -> None:
+        """Test that single quotes in paths are rejected."""
+        assert not _validate_path(Path("/tmp/'test")), "Single quote not rejected"
+
+    def test_semicolon_rejected(self) -> None:
+        """Test that semicolons in paths are rejected."""
+        assert not _validate_path(Path("/tmp/test; rm -rf /")), "Semicolon not rejected"
+
+    def test_ampersand_rejected(self) -> None:
+        """Test that ampersands in paths are rejected."""
+        assert not _validate_path(Path("/tmp/test & evil")), "Ampersand not rejected"
+
+    def test_pipe_rejected(self) -> None:
+        """Test that pipes in paths are rejected."""
+        assert not _validate_path(Path("/tmp/test | evil")), "Pipe not rejected"
+
+    def test_dollar_rejected(self) -> None:
+        """Test that dollar signs in paths are rejected."""
+        assert not _validate_path(Path("/tmp/$(whoami)")), "Dollar sign not rejected"
+
+    def test_backtick_rejected(self) -> None:
+        """Test that backticks in paths are rejected."""
+        assert not _validate_path(Path("/tmp/`id`")), "Backtick not rejected"
+
+
+class TestUsernameValidation:
+    """SECURITY-CRITICAL: Tests for username validation to prevent systemd injection."""
+
+    def test_valid_usernames_accepted(self) -> None:
+        """Test that valid usernames are accepted."""
+        valid_usernames = ["pi", "root", "deniz", "user_name", "user-name", "user123"]
+        for username in valid_usernames:
+            assert _validate_username(username), f"Valid username rejected: {username}"
+
+    def test_space_rejected(self) -> None:
+        """Test that spaces in usernames are rejected."""
+        assert not _validate_username("user name"), "Space not rejected"
+
+    def test_newline_rejected(self) -> None:
+        """Test that newlines in usernames are rejected."""
+        assert not _validate_username("user\nname"), "Newline not rejected"
+
+    def test_semicolon_rejected(self) -> None:
+        """Test that semicolons in usernames are rejected."""
+        assert not _validate_username("user;evil"), "Semicolon not rejected"
+
+    def test_dollar_rejected(self) -> None:
+        """Test that dollar signs in usernames are rejected."""
+        assert not _validate_username("$USER"), "Dollar sign not rejected"
+
+    def test_empty_rejected(self) -> None:
+        """Test that empty string is rejected."""
+        assert not _validate_username(""), "Empty string not rejected"
 
 
 class TestAutostart:
