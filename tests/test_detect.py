@@ -217,3 +217,76 @@ class TestPythonInterpreterSelection:
         assert mock_popen.called
         call_args = mock_popen.call_args[0][0]
         assert call_args[0] == "/usr/bin/python3", f"Expected /usr/bin/python3 but got {call_args[0]}"
+
+
+class TestPreflightCheck:
+    """Tests for preflight dependency check."""
+
+    @patch('bugcam.commands.detect.platform.system', return_value='Darwin')
+    def test_preflight_returns_true_on_non_linux(self, mock_system: MagicMock) -> None:
+        """Preflight check should return True on non-Linux (can't check)."""
+        from bugcam.commands.detect import preflight_check
+        assert preflight_check() is True
+
+    @patch('bugcam.commands.detect.platform.system', return_value='Linux')
+    @patch('bugcam.commands.detect.get_python_for_detection', return_value='/usr/bin/python3')
+    @patch('bugcam.commands.detect.subprocess.run')
+    def test_preflight_checks_hailo_apps_import(
+        self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
+    ) -> None:
+        """Preflight check should verify hailo_apps import (not hailo_apps_infra)."""
+        from bugcam.commands.detect import preflight_check
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_run.return_value = mock_result
+
+        result = preflight_check()
+        assert result is True
+
+        # Verify it checks "hailo_apps"
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert call_args == ['/usr/bin/python3', '-c', 'import gi, hailo, hailo_apps, numpy, cv2']
+
+    @patch('bugcam.commands.detect.platform.system', return_value='Linux')
+    @patch('bugcam.commands.detect.get_python_for_detection', return_value='/usr/bin/python3')
+    @patch('bugcam.commands.detect.subprocess.run')
+    def test_preflight_returns_false_on_import_failure(
+        self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
+    ) -> None:
+        """Preflight check should return False when imports fail."""
+        from bugcam.commands.detect import preflight_check
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_run.return_value = mock_result
+
+        result = preflight_check()
+        assert result is False
+
+    @patch('bugcam.commands.detect.platform.system', return_value='Linux')
+    @patch('bugcam.commands.detect.get_python_for_detection', return_value='/usr/bin/python3')
+    @patch('bugcam.commands.detect.subprocess.run', side_effect=Exception("Test error"))
+    def test_preflight_returns_false_on_exception(
+        self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
+    ) -> None:
+        """Preflight check should return False on exception."""
+        from bugcam.commands.detect import preflight_check
+
+        result = preflight_check()
+        assert result is False
+
+    @patch('bugcam.commands.detect.preflight_check', return_value=False)
+    @patch('bugcam.commands.detect._resolve_model_path')
+    def test_detect_fails_when_preflight_fails(
+        self, mock_resolve: MagicMock, mock_preflight: MagicMock, cli_runner: CliRunner
+    ) -> None:
+        """Detect should exit with error when preflight check fails."""
+        mock_resolve.return_value = Path("/fake/model.hef")
+
+        with patch.object(Path, 'exists', return_value=True):
+            result = cli_runner.invoke(app, ["detect", "start"])
+            assert result.exit_code == 1
+            assert "missing" in result.output.lower() or "dependencies" in result.output.lower()
+            assert "bugcam doctor" in result.output.lower()

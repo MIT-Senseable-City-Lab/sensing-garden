@@ -116,12 +116,13 @@ def start(
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             bufsize=1
         )
 
         # Stream output
+        stderr_output = []
         for line in process.stdout:
             if not quiet:
                 print(line, end='')
@@ -142,7 +143,22 @@ def start(
                         # If parsing fails, just write the raw line
                         pass
 
+        # Capture stderr
+        stderr_text = process.stderr.read()
         process.wait()
+
+        # Check for numpy binary incompatibility error
+        if process.returncode != 0 and stderr_text:
+            if "numpy.dtype size changed" in stderr_text or "binary incompatibility" in stderr_text:
+                console.print("\n[red]NumPy binary incompatibility detected.[/red]")
+                console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
+                console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
+                console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
+                raise typer.Exit(1)
+            else:
+                console.print(f"\n[red]Error:[/red] {stderr_text}")
+                console.print("\nRun [cyan]bugcam check[/cyan] to diagnose issues.")
+                raise typer.Exit(1)
 
     except KeyboardInterrupt:
         if not quiet:
@@ -150,8 +166,11 @@ def start(
         if process:
             process.terminate()
             process.wait()
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
+        console.print("\nRun [cyan]bugcam check[/cyan] to diagnose issues.")
         raise typer.Exit(1)
     finally:
         signal.alarm(0)

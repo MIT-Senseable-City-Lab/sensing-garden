@@ -137,7 +137,22 @@ def enable(
         # Optionally start immediately
         if start_now:
             console.print("[cyan]Starting bugcam service...[/cyan]")
-            _run_systemctl(["start", "bugcam"])
+            result = _run_systemctl(["start", "bugcam"], check=False)
+
+            if result.returncode != 0:
+                # Check for numpy binary incompatibility
+                if result.stderr and ("numpy.dtype size changed" in result.stderr or "binary incompatibility" in result.stderr):
+                    console.print("[red]NumPy binary incompatibility detected.[/red]")
+                    console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
+                    console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
+                    console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
+                    raise typer.Exit(1)
+                else:
+                    console.print(f"[red]Service failed to start[/red]")
+                    console.print("\nCheck logs with: [cyan]bugcam autostart logs[/cyan]")
+                    console.print("Or run: [cyan]bugcam check[/cyan] to diagnose issues.")
+                    raise typer.Exit(1)
+
             console.print("[green]✓ Service started[/green]")
 
         console.print("\n[bold]Service Details:[/bold]")
@@ -150,10 +165,21 @@ def enable(
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Error: {e}[/red]")
         if e.stderr:
-            console.print(f"[red]{e.stderr}[/red]")
+            # Check for numpy binary incompatibility
+            if "numpy.dtype size changed" in e.stderr or "binary incompatibility" in e.stderr:
+                console.print("\n[red]NumPy binary incompatibility detected.[/red]")
+                console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
+                console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
+                console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
+            else:
+                console.print(f"[red]{e.stderr}[/red]")
+                console.print("\nRun [cyan]bugcam check[/cyan] to diagnose issues.")
         raise typer.Exit(1)
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
+        console.print("\nRun [cyan]bugcam check[/cyan] to diagnose issues.")
         raise typer.Exit(1)
 
 

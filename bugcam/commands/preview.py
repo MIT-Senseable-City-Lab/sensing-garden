@@ -102,11 +102,29 @@ def preview(
 
     process = None
     try:
-        process = subprocess.Popen(cmd)
-        process.wait()
+        process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True)
+        _, stderr = process.communicate()
+
+        # Check for numpy binary incompatibility error
+        if process.returncode != 0 and stderr:
+            if "numpy.dtype size changed" in stderr or "binary incompatibility" in stderr:
+                console.print("[red]NumPy binary incompatibility detected.[/red]")
+                console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
+                console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
+                console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
+                sys.exit(1)
+            else:
+                # Show actual error
+                console.print(f"[red]Error:[/red] {stderr}")
+                console.print("\nRun [cyan]bugcam check[/cyan] to diagnose issues.")
+
         sys.exit(process.returncode)
     except KeyboardInterrupt:
         console.print("\n[green]Preview stopped[/green]")
         if process:
             process.terminate()
         sys.exit(0)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        console.print("\nRun [cyan]bugcam check[/cyan] to diagnose issues.")
+        sys.exit(1)
