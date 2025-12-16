@@ -29,7 +29,9 @@ def check_camera() -> bool:
         if "dtype size changed" in stderr or "binary incompatibility" in stderr:
             console.print("[red]✗ NumPy binary incompatibility detected.[/red]")
             console.print("This usually happens when system packages are out of sync.\n")
-            console.print("Fix with: [cyan]pip uninstall -y numpy && sudo apt install --reinstall python3-numpy python3-picamera2 python3-libcamera[/cyan]\n")
+            console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy python3-picamera2 python3-libcamera python3-simplejpeg[/cyan]\n")
+            console.print("If that doesn't work, also remove any pip numpy:")
+            console.print("[cyan]rm -rf ~/.local/lib/python*/site-packages/numpy*[/cyan]\n")
             console.print("Then run: [cyan]bugcam check camera[/cyan] to verify.")
             return False
 
