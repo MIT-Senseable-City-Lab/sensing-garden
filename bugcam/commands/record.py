@@ -88,8 +88,15 @@ def _record_single_video(output_path: Path, length: int, quiet: bool) -> bool:
         camera_config = picam2.create_video_configuration(
             main={"format": 'RGB888', "size": (1080, 1080)}
         )
-        picam2.set_controls({"AfMode": 0, "LensPosition": 0.5})
         picam2.configure(camera_config)
+
+        # Try to set autofocus controls (only available on Camera Module 3)
+        try:
+            picam2.set_controls({"AfMode": 0, "LensPosition": 0.5})
+        except Exception:
+            # Camera doesn't support autofocus (e.g., Camera Module 2, HQ Camera)
+            pass
+
         picam2.start()
 
         encoder = H264Encoder(bitrate=10000000)  # 10 Mbps
