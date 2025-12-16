@@ -8,6 +8,56 @@ app = typer.Typer(help="Test device connections")
 console = Console()
 
 
+def check_hailo() -> bool:
+    """Test Hailo AI accelerator connection."""
+    console.print("\n[bold cyan]Hailo Check[/bold cyan]")
+
+    try:
+        # Use hailortcli scan to detect device
+        result = subprocess.run(
+            ["hailortcli", "scan"],
+            capture_output=True,
+            timeout=10
+        )
+
+        stdout = result.stdout.decode()
+        stderr = result.stderr.decode()
+
+        if result.returncode == 0 and "Hailo" in stdout:
+            # Parse device info
+            lines = stdout.strip().split("\n")
+            for line in lines:
+                if "Hailo" in line:
+                    console.print(f"[green]✓ {line.strip()}[/green]")
+            return True
+
+        # Check for common errors
+        if "No devices found" in stdout or "No devices found" in stderr:
+            console.print("[red]✗ No Hailo device found[/red]")
+            console.print("\n[yellow]Troubleshooting:[/yellow]")
+            console.print("1. Check AI HAT+ is properly seated on GPIO header")
+            console.print("2. Enable PCIe Gen 3: [cyan]sudo raspi-config[/cyan] → Advanced → PCIe Speed")
+            console.print("3. Reinstall driver: [cyan]sudo apt install --reinstall hailo-all[/cyan]")
+            console.print("4. Reboot: [cyan]sudo reboot[/cyan]")
+            return False
+
+        console.print("[red]✗ Hailo check failed[/red]")
+        if stderr:
+            console.print(f"[dim]{stderr[:200]}[/dim]")
+        return False
+
+    except FileNotFoundError:
+        console.print("[red]✗ hailortcli not found[/red]")
+        console.print("Install with: [cyan]sudo apt install hailo-all[/cyan]")
+        return False
+    except subprocess.TimeoutExpired:
+        console.print("[red]✗ Hailo check timed out[/red]")
+        return False
+    except Exception as e:
+        console.print(f"[red]✗ Hailo check failed: {e}[/red]")
+        return False
+
+
 def check_camera() -> bool:
     """Test camera connection."""
     console.print("\n[bold cyan]Camera Check[/bold cyan]")
@@ -106,6 +156,14 @@ def check_sensor() -> bool:
 
 
 @app.command()
+def hailo() -> None:
+    """Test Hailo AI accelerator connection."""
+    success = check_hailo()
+    console.print()
+    raise typer.Exit(0 if success else 1)
+
+
+@app.command()
 def camera() -> None:
     """Test camera connection."""
     success = check_camera()
@@ -124,11 +182,12 @@ def sensor() -> None:
 @app.command()
 def all() -> None:
     """Run all device checks."""
+    hailo_ok = check_hailo()
     camera_ok = check_camera()
     sensor_ok = check_sensor()
 
     console.print()
-    if camera_ok and sensor_ok:
+    if hailo_ok and camera_ok and sensor_ok:
         console.print("[green]All device checks passed![/green]")
         raise typer.Exit(0)
     else:

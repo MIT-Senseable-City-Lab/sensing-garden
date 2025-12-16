@@ -71,11 +71,22 @@ bugcam doctor
 ```
 
 ### `bugcam check`
-Verify system is ready for inference (dependencies, camera, Hailo device).
+Test hardware connections before running detection.
 
 ```bash
-bugcam check
+bugcam check all      # Run all checks
+bugcam check hailo    # Test Hailo AI accelerator
+bugcam check camera   # Test camera connection
+bugcam check sensor   # Test I2C sensors
 ```
+
+**Checks performed:**
+
+| Check | What it tests | How |
+|-------|---------------|-----|
+| `hailo` | Hailo AI accelerator is detected | Runs `hailortcli scan` |
+| `camera` | RPi camera is accessible | Imports picamera2 and initializes |
+| `sensor` | I2C sensors are connected | Scans I2C bus for known addresses (SCD30, SCD40, BME280) |
 
 ### `bugcam models`
 Manage detection models.
