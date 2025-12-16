@@ -53,8 +53,16 @@ def setup() -> None:
 
     console.print("[cyan]Installing hailo_apps_infra...[/cyan]\n")
 
-    # Run pip install --user
-    cmd = [python_exe, "-m", "pip", "install", "--user", HAILO_APPS_INFRA_URL]
+    # Build pip install command
+    # If installing to system Python, need --break-system-packages for PEP 668 (Debian 12+/Raspberry Pi OS)
+    # If installing to hailo venv, --user and --break-system-packages are not needed
+    is_venv = python_exe != "/usr/bin/python3"
+
+    if is_venv:
+        cmd = [python_exe, "-m", "pip", "install", HAILO_APPS_INFRA_URL]
+    else:
+        cmd = [python_exe, "-m", "pip", "install", "--user", "--break-system-packages", HAILO_APPS_INFRA_URL]
+
     console.print(f"[dim]$ {' '.join(cmd)}[/dim]\n")
 
     try:
