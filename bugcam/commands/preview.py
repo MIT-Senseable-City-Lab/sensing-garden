@@ -110,7 +110,7 @@ def preview(
             if "numpy.dtype size changed" in stderr or "binary incompatibility" in stderr:
                 console.print("[red]NumPy binary incompatibility detected.[/red]")
                 console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
-                console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
+                console.print("Fix with: [cyan]sudo apt install --reinstall python3-picamera2 python3-libcamera[/cyan]\n")
                 console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
                 sys.exit(1)
             else:

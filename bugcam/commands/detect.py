@@ -152,7 +152,7 @@ def start(
             if "numpy.dtype size changed" in stderr_text or "binary incompatibility" in stderr_text:
                 console.print("\n[red]NumPy binary incompatibility detected.[/red]")
                 console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
-                console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
+                console.print("Fix with: [cyan]sudo apt install --reinstall python3-picamera2 python3-libcamera[/cyan]\n")
                 console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
                 raise typer.Exit(1)
             else:
