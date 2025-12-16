@@ -28,7 +28,7 @@ def check_camera() -> bool:
         stderr = result.stderr.decode()
         if "dtype size changed" in stderr or "ValueError" in stderr:
             console.print("[red]✗ Camera check failed - numpy binary incompatibility[/red]")
-            console.print("[yellow]Fix: sudo apt install --reinstall python3-picamera2 python3-libcamera[/yellow]")
+            console.print("[yellow]Fix: pip uninstall -y numpy && sudo apt install --reinstall python3-numpy python3-picamera2 python3-libcamera[/yellow]")
             return False
 
         console.print("[red]✗ Camera not accessible[/red]")
