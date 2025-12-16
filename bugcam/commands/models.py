@@ -20,41 +20,65 @@ LOCAL_RESOURCES_DIR = Path(__file__).parent.parent.parent / "resources"
 # S3 bucket URL for models (public bucket)
 MODELS_BASE_URL = "https://scl-sensing-garden-models.s3.amazonaws.com"
 
-# Known models in S3 (bucket listing is private, but objects are public)
-KNOWN_S3_MODELS = ["yolov8s.hef", "yolov8m.hef"]
+# GitHub releases URL for insect-specific models
+GITHUB_RELEASES_URL = "https://github.com/MIT-Senseable-City-Lab/sensing-garden/releases/download/weights"
+
+# Model registry: name -> (url, description)
+MODEL_REGISTRY = {
+    # Generic COCO detection models (S3)
+    "yolov8s.hef": (f"{MODELS_BASE_URL}/yolov8s.hef", "YOLOv8 Small - generic COCO detection"),
+    "yolov8m.hef": (f"{MODELS_BASE_URL}/yolov8m.hef", "YOLOv8 Medium - generic COCO detection"),
+    # Insect-specific models (GitHub releases)
+    "small-generic.hef": (f"{GITHUB_RELEASES_URL}/small-generic.hef", "Generic insect detection"),
+    "london_141-multitask.hef": (f"{GITHUB_RELEASES_URL}/london_141-multitask.hef", "London invertebrates - 141 species classifier"),
+}
+
+# For backwards compatibility
+KNOWN_S3_MODELS = list(MODEL_REGISTRY.keys())
 
 
-def list_s3_models() -> list[str]:
-    """List available models from S3 bucket.
+def list_available_models() -> list[str]:
+    """List available models from registry.
 
     Returns:
         List of model filenames (*.hef files).
     """
-    # S3 bucket listing is private, so we use a known list
-    # and verify each model is accessible via HEAD request
+    # Verify each model is accessible via HEAD request
     available = []
-    for model in KNOWN_S3_MODELS:
-        if get_s3_model_size(model) is not None:
+    for model in MODEL_REGISTRY.keys():
+        if get_model_size(model) is not None:
             available.append(model)
     return sorted(available)
 
 
-def get_s3_model_size(model_name: str) -> Optional[int]:
-    """Get model file size from S3 via HEAD request.
+# Alias for backwards compatibility
+def list_s3_models() -> list[str]:
+    return list_available_models()
+
+
+def get_model_size(model_name: str) -> Optional[int]:
+    """Get model file size via HEAD request.
 
     Returns:
         Size in bytes, or None if request fails.
     """
-    url = f"{MODELS_BASE_URL}/{model_name}"
+    if model_name not in MODEL_REGISTRY:
+        return None
+    url, _ = MODEL_REGISTRY[model_name]
     try:
         req = urllib.request.Request(url, method='HEAD')
-        response = urllib.request.urlopen(req, timeout=5)
+        response = urllib.request.urlopen(req, timeout=10)
         content_length = response.headers.get('Content-Length')
         if content_length:
             return int(content_length)
     except Exception:
         pass
     return None
+
+
+# Alias for backwards compatibility
+def get_s3_model_size(model_name: str) -> Optional[int]:
+    return get_model_size(model_name)
 
 
 def get_models_dir() -> Path:
@@ -110,10 +134,10 @@ def download(
     # Create cache dir if needed
     MODELS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Get available models from S3
-    available_models = list_s3_models()
+    # Get available models
+    available_models = list_available_models()
     if not available_models:
-        console.print("[red]Error: Could not fetch model list from S3[/red]")
+        console.print("[red]Error: Could not fetch model list[/red]")
         console.print("[dim]Check your internet connection and try again.[/dim]")
         raise typer.Exit(1)
 
@@ -121,12 +145,15 @@ def download(
     if model_name == "all":
         models_to_download = available_models.copy()
     elif model_name is None:
-        # Show available models from S3
+        # Show available models with descriptions
         console.print("[cyan]Available models:[/cyan]\n")
         for name in available_models:
-            size = get_s3_model_size(name)
-            size_str = format_size(size) if size else "Unknown"
-            console.print(f"  {name:20} {size_str:>10}")
+            _, desc = MODEL_REGISTRY.get(name, (None, ""))
+            size = get_model_size(name)
+            size_str = format_size(size) if size else "?"
+            console.print(f"  [bold]{name}[/bold]  ({size_str})")
+            if desc:
+                console.print(f"    [dim]{desc}[/dim]")
         console.print("\n[dim]Usage:[/dim]")
         console.print("[dim]  bugcam models download <model_name>[/dim]")
         console.print("[dim]  bugcam models download all[/dim]")
@@ -147,9 +174,9 @@ def download(
     console.print(f"\n[cyan]Downloading {len(models_to_download)} model(s):[/cyan]")
     for model in models_to_download:
         status = "exists" if (MODELS_CACHE_DIR / model).exists() else "pending"
-        size = get_s3_model_size(model)
-        size_str = format_size(size) if size else "Unknown"
-        console.print(f"  {model:20} {size_str:>10}  [{status}]")
+        size = get_model_size(model)
+        size_str = format_size(size) if size else "?"
+        console.print(f"  {model:30} {size_str:>10}  [{status}]")
     console.print()
 
     # Track download results
@@ -160,7 +187,7 @@ def download(
     # Download each model
     for model in models_to_download:
         dest_path = MODELS_CACHE_DIR / model
-        url = f"{MODELS_BASE_URL}/{model}"
+        url, _ = MODEL_REGISTRY[model]
 
         # Skip if already exists
         if dest_path.exists():

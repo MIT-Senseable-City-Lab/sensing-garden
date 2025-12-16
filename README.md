@@ -103,7 +103,14 @@ bugcam models info yolov8m
 bugcam models delete yolov8m
 ```
 
-> **Note:** The available models (yolov8s, yolov8m) are generic COCO object detection models from the Hailo Model Zoo, not insect-specific models.
+**Available models:**
+
+| Model | Size | Description |
+|-------|------|-------------|
+| `yolov8s` | 10 MB | Generic COCO detection (80 classes) |
+| `yolov8m` | 29 MB | Generic COCO detection (80 classes, more accurate) |
+| `small-generic` | 18 MB | Generic insect detection |
+| `london_141-multitask` | 34 MB | London invertebrates - 141 species classifier |
 
 ### `bugcam autostart`
 Manage systemd service for automatic detection on boot.

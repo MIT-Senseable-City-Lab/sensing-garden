@@ -137,18 +137,19 @@ def test_list_s3_models_uses_known_list(cli_runner: CliRunner) -> None:
         assert all(model in KNOWN_S3_MODELS for model in models)
 
 
-def test_list_s3_models_verifies_accessibility(cli_runner: CliRunner) -> None:
-    """Test list_s3_models verifies each model is accessible via HEAD request."""
-    from bugcam.commands.models import list_s3_models
+def test_list_available_models_verifies_accessibility(cli_runner: CliRunner) -> None:
+    """Test list_available_models verifies each model is accessible via HEAD request."""
+    from bugcam.commands.models import list_available_models
 
-    with patch('bugcam.commands.models.get_s3_model_size') as mock_get_size:
-        # Only first model is accessible
+    with patch('bugcam.commands.models.get_model_size') as mock_get_size:
+        # Only some models are accessible
         mock_get_size.side_effect = lambda name: 10000000 if name == "yolov8s.hef" else None
 
-        models = list_s3_models()
+        models = list_available_models()
         # Should only include accessible models
         assert "yolov8s.hef" in models
-        assert "yolov8m.hef" not in models
+        # Inaccessible models should be excluded
+        assert all(mock_get_size(m) is not None for m in models)
 
 
 def test_get_s3_model_size_returns_content_length(cli_runner: CliRunner) -> None:
@@ -204,8 +205,8 @@ def test_known_s3_models_constant_exists(cli_runner: CliRunner) -> None:
 def test_models_download_all_uses_known_models(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test 'download all' uses known models list, not bucket listing."""
     with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef', 'yolov8m.hef']) as mock_list, \
-         patch('bugcam.commands.models.get_s3_model_size', return_value=10000000), \
+         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']) as mock_list, \
+         patch('bugcam.commands.models.get_model_size', return_value=10000000), \
          patch('urllib.request.urlopen') as mock_urlopen:
         # Mock successful download
         mock_response = MagicMock()
@@ -215,5 +216,5 @@ def test_models_download_all_uses_known_models(cli_runner: CliRunner, tmp_path: 
 
         result = cli_runner.invoke(app, ["models", "download", "all"])
 
-        # Should call list_s3_models to get known models
+        # Should call list_available_models to get known models
         mock_list.assert_called_once()
