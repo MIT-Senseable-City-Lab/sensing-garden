@@ -148,9 +148,15 @@ def start(
         stderr_text = process.stderr.read()
         process.wait()
 
-        # Check for numpy binary incompatibility error
+        # Check for errors
         if process.returncode != 0 and stderr_text:
-            if "numpy.dtype size changed" in stderr_text or "binary incompatibility" in stderr_text:
+            # Check for missing Hailo post-process libraries
+            if "Could not load lib" in stderr_text and "libyolo_hailortpp_postprocess.so" in stderr_text:
+                console.print("\n[red]Missing Hailo post-processing libraries.[/red]")
+                console.print("Run [cyan]bugcam setup[/cyan] to compile the required libraries.\n")
+                raise typer.Exit(1)
+            # Check for numpy binary incompatibility error
+            elif "numpy.dtype size changed" in stderr_text or "binary incompatibility" in stderr_text:
                 console.print("\n[red]NumPy binary incompatibility detected.[/red]")
                 console.print("This usually happens when system packages are out of sync.\n")
                 console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy python3-picamera2 python3-libcamera python3-simplejpeg[/cyan]\n")

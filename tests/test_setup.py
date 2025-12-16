@@ -93,123 +93,139 @@ def test_check_import_handles_exception(cli_runner: CliRunner) -> None:
         assert result is False
 
 
-def test_setup_already_installed(cli_runner: CliRunner) -> None:
-    """Test setup exits early if hailo_apps is already installed."""
+def test_setup_clones_repo_if_not_exists(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test setup clones hailo-rpi5-examples if directory doesn't exist."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
     with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value='/usr/bin/python3'), \
+         patch.object(Path, 'home', return_value=tmp_path), \
+         patch('subprocess.run', return_value=mock_result) as mock_run:
+        result = cli_runner.invoke(app, ["setup"])
+
+        # Should have called git clone
+        calls = [call[0][0] for call in mock_run.call_args_list]
+        git_clone_call = next((c for c in calls if c[0] == "git" and c[1] == "clone"), None)
+        assert git_clone_call is not None
+        assert "hailo-ai/hailo-rpi5-examples.git" in git_clone_call[2]
+
+
+def test_setup_skips_clone_if_exists(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test setup skips clone if hailo-rpi5-examples already exists."""
+    # Create fake hailo-rpi5-examples directory with required scripts
+    hailo_dir = tmp_path / "hailo-rpi5-examples"
+    hailo_dir.mkdir()
+    (hailo_dir / "install.sh").touch()
+    (hailo_dir / "compile_postprocess.sh").touch()
+    (hailo_dir / "setup_env.sh").touch()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
+         patch.object(Path, 'home', return_value=tmp_path), \
+         patch('subprocess.run', return_value=mock_result) as mock_run, \
          patch('bugcam.commands.setup.check_import', return_value=True):
         result = cli_runner.invoke(app, ["setup"])
-        assert result.exit_code == 0
-        assert "already installed" in result.output.lower()
-        assert "bugcam doctor" in result.output.lower()
+
+        # Should not have called git clone
+        calls = [call[0][0] for call in mock_run.call_args_list]
+        git_clone_calls = [c for c in calls if isinstance(c, list) and len(c) > 1 and c[0] == "git" and c[1] == "clone"]
+        assert len(git_clone_calls) == 0
+        assert "Found hailo-rpi5-examples" in result.output
 
 
-def test_setup_installs_with_venv_python(cli_runner: CliRunner) -> None:
-    """Test setup uses correct pip flags for hailo venv installation."""
-    hailo_venv_python = str(Path.home() / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python")
+def test_setup_runs_install_script(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test setup runs install.sh script."""
+    hailo_dir = tmp_path / "hailo-rpi5-examples"
+    hailo_dir.mkdir()
+    (hailo_dir / "install.sh").touch()
+    (hailo_dir / "compile_postprocess.sh").touch()
+    (hailo_dir / "setup_env.sh").touch()
 
     mock_result = MagicMock()
     mock_result.returncode = 0
 
     with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value=hailo_venv_python), \
-         patch('bugcam.commands.setup.check_import', side_effect=[False, True]), \
-         patch('subprocess.run', return_value=mock_result) as mock_run:
+         patch.object(Path, 'home', return_value=tmp_path), \
+         patch('subprocess.run', return_value=mock_result) as mock_run, \
+         patch('bugcam.commands.setup.check_import', return_value=True):
         result = cli_runner.invoke(app, ["setup"])
-        assert result.exit_code == 0
 
-        # Verify correct command was used (no --user or --break-system-packages for venv)
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0] == hailo_venv_python
-        assert "--user" not in call_args
-        assert "--break-system-packages" not in call_args
-        assert "git+https://github.com/hailo-ai/hailo-apps-infra.git" in call_args
+        # Should have called ./install.sh
+        calls = [call[0][0] for call in mock_run.call_args_list]
+        install_call = next((c for c in calls if c == ["./install.sh"]), None)
+        assert install_call is not None
 
 
-def test_setup_installs_with_system_python_pep668(cli_runner: CliRunner) -> None:
-    """Test setup uses --break-system-packages for system Python (PEP 668)."""
+def test_setup_compiles_postprocess(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test setup runs compile_postprocess.sh script."""
+    hailo_dir = tmp_path / "hailo-rpi5-examples"
+    hailo_dir.mkdir()
+    (hailo_dir / "install.sh").touch()
+    (hailo_dir / "compile_postprocess.sh").touch()
+    (hailo_dir / "setup_env.sh").touch()
+
     mock_result = MagicMock()
     mock_result.returncode = 0
 
     with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value='/usr/bin/python3'), \
-         patch('bugcam.commands.setup.check_import', side_effect=[False, True]), \
-         patch('subprocess.run', return_value=mock_result) as mock_run:
+         patch.object(Path, 'home', return_value=tmp_path), \
+         patch('subprocess.run', return_value=mock_result) as mock_run, \
+         patch('bugcam.commands.setup.check_import', return_value=True):
         result = cli_runner.invoke(app, ["setup"])
-        assert result.exit_code == 0
 
-        # Verify correct command was used (with --user and --break-system-packages)
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0] == '/usr/bin/python3'
-        assert "--user" in call_args
-        assert "--break-system-packages" in call_args
-        assert "git+https://github.com/hailo-ai/hailo-apps-infra.git" in call_args
+        # Should have called bash to run compile script
+        calls = [call[0][0] for call in mock_run.call_args_list]
+        compile_call = next((c for c in calls if c[0] == "bash" and "-c" in c), None)
+        assert compile_call is not None
+        assert "compile_postprocess.sh" in compile_call[2]
 
 
-def test_setup_installation_failure(cli_runner: CliRunner) -> None:
-    """Test setup handles pip installation failure."""
-    mock_result = MagicMock()
-    mock_result.returncode = 1
+def test_setup_install_script_failure(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test setup handles install.sh failure."""
+    hailo_dir = tmp_path / "hailo-rpi5-examples"
+    hailo_dir.mkdir()
+    (hailo_dir / "install.sh").touch()
+    (hailo_dir / "compile_postprocess.sh").touch()
+    (hailo_dir / "setup_env.sh").touch()
+
+    mock_success = MagicMock()
+    mock_success.returncode = 0
+    mock_failure = MagicMock()
+    mock_failure.returncode = 1
+
+    def run_side_effect(cmd, **kwargs):
+        if cmd == ["./install.sh"]:
+            return mock_failure
+        return mock_success
 
     with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value='/usr/bin/python3'), \
-         patch('bugcam.commands.setup.check_import', return_value=False), \
-         patch('subprocess.run', return_value=mock_result):
+         patch.object(Path, 'home', return_value=tmp_path), \
+         patch('subprocess.run', side_effect=run_side_effect):
         result = cli_runner.invoke(app, ["setup"])
         assert result.exit_code == 1
         assert "failed" in result.output.lower()
 
 
-def test_setup_installation_timeout(cli_runner: CliRunner) -> None:
-    """Test setup handles installation timeout."""
-    with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value='/usr/bin/python3'), \
-         patch('bugcam.commands.setup.check_import', return_value=False), \
-         patch('subprocess.run', side_effect=subprocess.TimeoutExpired("pip", 300)):
-        result = cli_runner.invoke(app, ["setup"])
-        assert result.exit_code == 1
-        assert "timed out" in result.output.lower()
+def test_setup_verifies_hailo_apps(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test setup verifies hailo_apps installation at the end."""
+    hailo_dir = tmp_path / "hailo-rpi5-examples"
+    hailo_dir.mkdir()
+    (hailo_dir / "install.sh").touch()
+    (hailo_dir / "compile_postprocess.sh").touch()
+    (hailo_dir / "setup_env.sh").touch()
 
-
-def test_setup_installation_generic_exception(cli_runner: CliRunner) -> None:
-    """Test setup handles generic exceptions during installation."""
-    with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value='/usr/bin/python3'), \
-         patch('bugcam.commands.setup.check_import', return_value=False), \
-         patch('subprocess.run', side_effect=Exception("Network error")):
-        result = cli_runner.invoke(app, ["setup"])
-        assert result.exit_code == 1
-        assert "error" in result.output.lower()
-
-
-def test_setup_verification_failure(cli_runner: CliRunner) -> None:
-    """Test setup handles verification failure after installation."""
     mock_result = MagicMock()
     mock_result.returncode = 0
 
     with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value='/usr/bin/python3'), \
-         patch('bugcam.commands.setup.check_import', side_effect=[False, False]), \
-         patch('subprocess.run', return_value=mock_result):
-        result = cli_runner.invoke(app, ["setup"])
-        assert result.exit_code == 1
-        assert "failed" in result.output.lower()
-        assert "import hailo_apps" in result.output.lower()
-
-
-def test_setup_verifies_hailo_apps_import_not_infra(cli_runner: CliRunner) -> None:
-    """Test setup verifies 'hailo_apps' import, not 'hailo_apps_infra'."""
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-
-    with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.setup.get_python_for_detection', return_value='/usr/bin/python3'), \
-         patch('bugcam.commands.setup.check_import', side_effect=[False, True]) as mock_check, \
-         patch('subprocess.run', return_value=mock_result):
+         patch.object(Path, 'home', return_value=tmp_path), \
+         patch('subprocess.run', return_value=mock_result), \
+         patch('bugcam.commands.setup.check_import', return_value=True) as mock_check:
         result = cli_runner.invoke(app, ["setup"])
         assert result.exit_code == 0
+        assert "hailo_apps: OK" in result.output
 
-        # Verify it checks "hailo_apps", not "hailo_apps_infra"
-        calls = [call[0][1] for call in mock_check.call_args_list]
-        assert "hailo_apps" in calls
-        assert "hailo_apps_infra" not in calls
+        # Verify it checks hailo_apps import
+        mock_check.assert_called_with(mock_check.call_args[0][0], "hailo_apps")
