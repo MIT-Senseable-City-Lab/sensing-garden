@@ -80,8 +80,8 @@ def test_s3_models_accessible() -> None:
 def test_models_download_http_404_error(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test download handles HTTP 404 error."""
     with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef']), \
-         patch('bugcam.commands.models.get_s3_model_size', return_value=10000000), \
+         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef']), \
+         patch('bugcam.commands.models.get_model_size', return_value=10000000), \
          patch('urllib.request.urlopen') as mock_urlopen:
         mock_urlopen.side_effect = urllib.error.HTTPError(
             url='http://test', code=404, msg='Not Found', hdrs={}, fp=None
@@ -94,7 +94,7 @@ def test_models_download_http_404_error(cli_runner: CliRunner, tmp_path: Path) -
 def test_models_download_unknown_model(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test download with unknown model name fails."""
     with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
+         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
         result = cli_runner.invoke(app, ["models", "download", "nonexistent.hef"])
         assert result.exit_code == 1
         assert "unknown" in result.output.lower()
@@ -103,8 +103,8 @@ def test_models_download_unknown_model(cli_runner: CliRunner, tmp_path: Path) ->
 def test_models_download_no_arguments(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test download without arguments shows available models help text."""
     with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
-         patch('bugcam.commands.models.get_s3_model_size', return_value=10000000):
+         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
+         patch('bugcam.commands.models.get_model_size', return_value=10000000):
         result = cli_runner.invoke(app, ["models", "download"])
         assert result.exit_code == 0
         assert "available models" in result.output.lower()
@@ -119,70 +119,68 @@ def test_models_download_skips_existing_file(cli_runner: CliRunner, tmp_path: Pa
     existing_file.write_bytes(b"fake model data")
 
     with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_s3_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
-         patch('bugcam.commands.models.get_s3_model_size', return_value=10000000):
+         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
+         patch('bugcam.commands.models.get_model_size', return_value=10000000):
         result = cli_runner.invoke(app, ["models", "download", "yolov8s"])
         assert result.exit_code == 0
         assert "skipping" in result.output.lower() or "already exists" in result.output.lower()
 
 
-def test_list_s3_models_uses_known_list(cli_runner: CliRunner) -> None:
-    """Test list_s3_models uses KNOWN_S3_MODELS instead of bucket listing."""
-    from bugcam.commands.models import list_s3_models, KNOWN_S3_MODELS
+def test_list_s3_models_queries_bucket(cli_runner: CliRunner) -> None:
+    """Test list_s3_models dynamically queries S3 bucket."""
+    from bugcam.commands.models import list_s3_models
 
-    with patch('bugcam.commands.models.get_s3_model_size', return_value=10000000):
+    with patch('bugcam.commands.models.list_s3_bucket_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
         models = list_s3_models()
-        # Should return known models that are accessible
+        # Should return models from bucket listing
         assert isinstance(models, list)
-        assert all(model in KNOWN_S3_MODELS for model in models)
+        assert 'yolov8s.hef' in models
+        assert 'yolov8m.hef' in models
 
 
-def test_list_available_models_verifies_accessibility(cli_runner: CliRunner) -> None:
-    """Test list_available_models verifies each model is accessible via HEAD request."""
+def test_list_available_models_returns_bucket_contents(cli_runner: CliRunner) -> None:
+    """Test list_available_models returns S3 bucket contents."""
     from bugcam.commands.models import list_available_models
 
-    with patch('bugcam.commands.models.get_model_size') as mock_get_size:
-        # Only some models are accessible
-        mock_get_size.side_effect = lambda name: 10000000 if name == "yolov8s.hef" else None
-
+    with patch('bugcam.commands.models.list_s3_bucket_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
         models = list_available_models()
-        # Should only include accessible models
-        assert "yolov8s.hef" in models
-        # Inaccessible models should be excluded
-        assert all(mock_get_size(m) is not None for m in models)
+        # Should return models from bucket
+        assert isinstance(models, list)
+        assert 'yolov8s.hef' in models
+        assert 'yolov8m.hef' in models
 
 
-def test_get_s3_model_size_returns_content_length(cli_runner: CliRunner) -> None:
-    """Test get_s3_model_size returns size from Content-Length header."""
-    from bugcam.commands.models import get_s3_model_size
+def test_get_model_size_returns_content_length(cli_runner: CliRunner) -> None:
+    """Test get_model_size returns size from Content-Length header."""
+    from bugcam.commands.models import get_model_size
 
     mock_response = MagicMock()
     mock_response.headers.get.return_value = "10485760"  # 10 MB
 
     with patch('urllib.request.urlopen', return_value=mock_response):
-        size = get_s3_model_size("yolov8s.hef")
+        size = get_model_size("yolov8s.hef")
         assert size == 10485760
 
 
-def test_get_s3_model_size_returns_none_on_error(cli_runner: CliRunner) -> None:
-    """Test get_s3_model_size returns None when request fails."""
-    from bugcam.commands.models import get_s3_model_size
+def test_get_model_size_returns_none_on_error(cli_runner: CliRunner) -> None:
+    """Test get_model_size returns None when request fails."""
+    from bugcam.commands.models import get_model_size
 
     with patch('urllib.request.urlopen', side_effect=Exception("Network error")):
-        size = get_s3_model_size("yolov8s.hef")
+        size = get_model_size("yolov8s.hef")
         assert size is None
 
 
-def test_get_s3_model_size_uses_head_request(cli_runner: CliRunner) -> None:
-    """Test get_s3_model_size uses HEAD request (not GET)."""
-    from bugcam.commands.models import get_s3_model_size
+def test_get_model_size_uses_head_request(cli_runner: CliRunner) -> None:
+    """Test get_model_size uses HEAD request (not GET)."""
+    from bugcam.commands.models import get_model_size
 
     mock_response = MagicMock()
     mock_response.headers.get.return_value = "10485760"
 
     with patch('urllib.request.Request') as mock_request, \
          patch('urllib.request.urlopen', return_value=mock_response):
-        get_s3_model_size("yolov8s.hef")
+        get_model_size("yolov8s.hef")
 
         # Verify HEAD request was used
         mock_request.assert_called_once()
@@ -190,20 +188,16 @@ def test_get_s3_model_size_uses_head_request(cli_runner: CliRunner) -> None:
         assert call_args[1].get('method') == 'HEAD'
 
 
-def test_known_s3_models_constant_exists(cli_runner: CliRunner) -> None:
-    """Test KNOWN_S3_MODELS constant is defined and contains expected models."""
-    from bugcam.commands.models import KNOWN_S3_MODELS
+def test_get_model_url_constructs_s3_url(cli_runner: CliRunner) -> None:
+    """Test get_model_url constructs correct S3 URL."""
+    from bugcam.commands.models import get_model_url, MODELS_BASE_URL
 
-    assert isinstance(KNOWN_S3_MODELS, list)
-    assert len(KNOWN_S3_MODELS) > 0
-    assert all(model.endswith('.hef') for model in KNOWN_S3_MODELS)
-    # Should include at least the common models
-    assert "yolov8s.hef" in KNOWN_S3_MODELS
-    assert "yolov8m.hef" in KNOWN_S3_MODELS
+    url = get_model_url("yolov8s.hef")
+    assert url == f"{MODELS_BASE_URL}/yolov8s.hef"
 
 
-def test_models_download_all_uses_known_models(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test 'download all' uses known models list, not bucket listing."""
+def test_models_download_all_uses_available_models(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test 'download all' uses dynamically fetched available models."""
     with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
          patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']) as mock_list, \
          patch('bugcam.commands.models.get_model_size', return_value=10000000), \
@@ -216,5 +210,31 @@ def test_models_download_all_uses_known_models(cli_runner: CliRunner, tmp_path: 
 
         result = cli_runner.invoke(app, ["models", "download", "all"])
 
-        # Should call list_available_models to get known models
+        # Should call list_available_models to get models from S3
         mock_list.assert_called_once()
+
+
+def test_list_s3_bucket_models_parses_xml(cli_runner: CliRunner) -> None:
+    """Test list_s3_bucket_models parses S3 bucket XML listing."""
+    from bugcam.commands.models import list_s3_bucket_models
+
+    # Mock S3 XML response
+    mock_xml = b'''<?xml version="1.0" encoding="UTF-8"?>
+    <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <Contents><Key>yolov8s.hef</Key><Size>10602702</Size></Contents>
+        <Contents><Key>yolov8m.hef</Key><Size>30516142</Size></Contents>
+        <Contents><Key>readme.txt</Key><Size>100</Size></Contents>
+    </ListBucketResult>'''
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = mock_xml
+    mock_response.__enter__ = MagicMock(return_value=mock_response)
+    mock_response.__exit__ = MagicMock(return_value=False)
+
+    with patch('urllib.request.urlopen', return_value=mock_response):
+        models = list_s3_bucket_models()
+        # Should include .hef files only
+        assert 'yolov8s.hef' in models
+        assert 'yolov8m.hef' in models
+        # Should not include non-.hef files
+        assert 'readme.txt' not in models

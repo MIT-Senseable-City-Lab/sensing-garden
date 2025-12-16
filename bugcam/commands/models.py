@@ -7,6 +7,7 @@ from datetime import datetime
 import hashlib
 import urllib.request
 from typing import Optional
+import xml.etree.ElementTree as ET
 
 app = typer.Typer(help="Manage detection models")
 console = Console()
@@ -23,32 +24,81 @@ MODELS_BASE_URL = "https://scl-sensing-garden-models.s3.amazonaws.com"
 # GitHub releases URL for insect-specific models
 GITHUB_RELEASES_URL = "https://github.com/MIT-Senseable-City-Lab/sensing-garden/releases/download/weights"
 
-# Model registry: name -> (url, description)
-MODEL_REGISTRY = {
-    # Generic COCO detection models (S3)
-    "yolov8s.hef": (f"{MODELS_BASE_URL}/yolov8s.hef", "YOLOv8 Small - generic COCO detection"),
-    "yolov8m.hef": (f"{MODELS_BASE_URL}/yolov8m.hef", "YOLOv8 Medium - generic COCO detection"),
-    # Insect-specific models (GitHub releases)
-    "small-generic.hef": (f"{GITHUB_RELEASES_URL}/small-generic.hef", "Generic insect detection"),
-    "london_141-multitask.hef": (f"{GITHUB_RELEASES_URL}/london_141-multitask.hef", "London invertebrates - 141 species classifier"),
-}
+def check_model_exists(model_name: str) -> bool:
+    """Check if a model exists on S3 via HEAD request.
 
-# For backwards compatibility
-KNOWN_S3_MODELS = list(MODEL_REGISTRY.keys())
+    Args:
+        model_name: Name of the model file (e.g., "yolov8s.hef")
+
+    Returns:
+        True if model exists and is accessible, False otherwise.
+    """
+    url = get_model_url(model_name)
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def get_model_url(model_name: str) -> str:
+    """Construct URL for a model by name.
+
+    Args:
+        model_name: Name of the model file (e.g., "yolov8s.hef")
+
+    Returns:
+        Full URL to the model file. Defaults to S3 bucket.
+    """
+    # Default to S3 bucket
+    return f"{MODELS_BASE_URL}/{model_name}"
+
+
+def list_s3_bucket_models() -> list[str]:
+    """Fetch list of .hef models from S3 bucket by listing bucket contents.
+
+    Returns:
+        List of .hef model filenames found in the S3 bucket.
+    """
+    try:
+        req = urllib.request.Request(MODELS_BASE_URL)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read()
+
+        # Parse XML response
+        root = ET.fromstring(xml_data)
+
+        # Handle S3 namespace if present
+        namespace = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+
+        # Try with namespace first
+        contents = root.findall('.//s3:Contents/s3:Key', namespace)
+        if not contents:
+            # Fallback to no namespace
+            contents = root.findall('.//Contents/Key')
+
+        # Extract .hef files
+        hef_files = []
+        for key_elem in contents:
+            key = key_elem.text
+            if key and key.endswith('.hef'):
+                hef_files.append(key)
+
+        return sorted(hef_files)
+
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not fetch S3 bucket listing: {e}[/yellow]", style="dim")
+        return []
 
 
 def list_available_models() -> list[str]:
-    """List available models from registry.
+    """List available models from S3 bucket.
 
     Returns:
         List of model filenames (*.hef files).
     """
-    # Verify each model is accessible via HEAD request
-    available = []
-    for model in MODEL_REGISTRY.keys():
-        if get_model_size(model) is not None:
-            available.append(model)
-    return sorted(available)
+    return list_s3_bucket_models()
 
 
 # Alias for backwards compatibility
@@ -59,12 +109,13 @@ def list_s3_models() -> list[str]:
 def get_model_size(model_name: str) -> Optional[int]:
     """Get model file size via HEAD request.
 
+    Args:
+        model_name: Name of the model file
+
     Returns:
         Size in bytes, or None if request fails.
     """
-    if model_name not in MODEL_REGISTRY:
-        return None
-    url, _ = MODEL_REGISTRY[model_name]
+    url = get_model_url(model_name)
     try:
         req = urllib.request.Request(url, method='HEAD')
         response = urllib.request.urlopen(req, timeout=10)
@@ -76,9 +127,14 @@ def get_model_size(model_name: str) -> Optional[int]:
     return None
 
 
-# Alias for backwards compatibility
+# Aliases for backwards compatibility
 def get_s3_model_size(model_name: str) -> Optional[int]:
+    """Backwards compatibility alias for get_model_size."""
     return get_model_size(model_name)
+
+
+# For backwards compatibility with tests that check this constant
+KNOWN_S3_MODELS: list[str] = []  # Models are now dynamically fetched from S3
 
 
 def get_models_dir() -> Path:
@@ -145,15 +201,12 @@ def download(
     if model_name == "all":
         models_to_download = available_models.copy()
     elif model_name is None:
-        # Show available models with descriptions
+        # Show available models
         console.print("[cyan]Available models:[/cyan]\n")
         for name in available_models:
-            _, desc = MODEL_REGISTRY.get(name, (None, ""))
             size = get_model_size(name)
             size_str = format_size(size) if size else "?"
             console.print(f"  [bold]{name}[/bold]  ({size_str})")
-            if desc:
-                console.print(f"    [dim]{desc}[/dim]")
         console.print("\n[dim]Usage:[/dim]")
         console.print("[dim]  bugcam models download <model_name>[/dim]")
         console.print("[dim]  bugcam models download all[/dim]")
@@ -187,7 +240,7 @@ def download(
     # Download each model
     for model in models_to_download:
         dest_path = MODELS_CACHE_DIR / model
-        url, _ = MODEL_REGISTRY[model]
+        url = get_model_url(model)
 
         # Skip if already exists
         if dest_path.exists():
