@@ -1,9 +1,9 @@
 """Detection pipeline for bugcam.
 
-This module requires system packages that cannot be pip-installed:
-- PyGObject (gi): sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0
-- Hailo SDK: sudo apt install hailo-all
-- hailo_apps_infra: pip install git+https://github.com/hailo-ai/hailo-apps-infra.git
+Required system packages:
+- sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0
+- sudo apt install hailo-all python3-numpy python3-opencv
+- bugcam setup  (installs hailo_apps_infra)
 """
 
 import os
@@ -48,11 +48,7 @@ def check_dependencies():
         if "hailo" in missing:
             print("  sudo apt install hailo-all", file=sys.stderr)
         if "hailo_apps_infra" in missing:
-            print("  Option 1: Install hailo-rpi5-examples (recommended)", file=sys.stderr)
-            print("    git clone https://github.com/hailo-ai/hailo-rpi5-examples.git ~/hailo-rpi5-examples", file=sys.stderr)
-            print("    cd ~/hailo-rpi5-examples && bash setup_env.sh", file=sys.stderr)
-            print("  Option 2: System-wide install", file=sys.stderr)
-            print("    sudo pip install git+https://github.com/hailo-ai/hailo-apps-infra.git", file=sys.stderr)
+            print("  bugcam setup", file=sys.stderr)
         if "numpy" in missing:
             print("  sudo apt install python3-numpy", file=sys.stderr)
         if "cv2" in missing:

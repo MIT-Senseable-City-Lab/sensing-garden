@@ -60,7 +60,7 @@ def doctor() -> None:
     deps = [
         ("gi", "python3-gi python3-gi-cairo gir1.2-gstreamer-1.0", "sudo apt install"),
         ("hailo", "hailo-all", "sudo apt install"),
-        ("hailo_apps_infra", "git+https://github.com/hailo-ai/hailo-apps-infra.git", "sudo pip install"),
+        ("hailo_apps_infra", "", "bugcam setup"),
         ("numpy", "python3-numpy", "sudo apt install"),
         ("cv2", "python3-opencv", "sudo apt install"),
     ]
@@ -72,7 +72,8 @@ def doctor() -> None:
                 table.add_row(import_name, "[green]OK[/green]", "")
             else:
                 all_ok = False
-                table.add_row(import_name, "[red]MISSING[/red]", f"{cmd} {package}")
+                install_cmd = f"{cmd} {package}".strip() if package else cmd
+                table.add_row(import_name, "[red]MISSING[/red]", install_cmd)
         else:
             table.add_row(import_name, "[dim]skip[/dim]", "Linux only")
 
