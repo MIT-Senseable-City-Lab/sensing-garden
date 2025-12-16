@@ -238,3 +238,100 @@ def test_list_s3_bucket_models_parses_xml(cli_runner: CliRunner) -> None:
         assert 'yolov8m.hef' in models
         # Should not include non-.hef files
         assert 'readme.txt' not in models
+
+
+def test_models_delete_help(cli_runner: CliRunner) -> None:
+    """Test models delete help."""
+    result = cli_runner.invoke(app, ["models", "delete", "--help"])
+    assert result.exit_code == 0
+    assert "delete" in result.output.lower()
+
+
+def test_models_delete_no_args_shows_models(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test models delete without arguments shows available models."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "test_model.hef").write_bytes(b"fake model")
+
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
+         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
+        result = cli_runner.invoke(app, ["models", "delete"])
+        assert result.exit_code == 0
+        assert "test_model.hef" in result.output
+
+
+def test_models_delete_nonexistent(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test models delete with nonexistent model shows error."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    # Create a model so delete doesn't just say "no models installed"
+    (cache_dir / "other_model.hef").write_bytes(b"fake model")
+
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
+         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
+        result = cli_runner.invoke(app, ["models", "delete", "nonexistent.hef"])
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+
+def test_models_delete_success(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test models delete successfully removes model file."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    model_file = cache_dir / "test_model.hef"
+    model_file.write_bytes(b"fake model data")
+    assert model_file.exists()
+
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
+         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
+        result = cli_runner.invoke(app, ["models", "delete", "test_model"], input="y\n")
+        assert result.exit_code == 0
+        assert "deleted" in result.output.lower()
+        assert not model_file.exists()
+
+
+def test_models_delete_cancelled(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test models delete can be cancelled."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    model_file = cache_dir / "test_model.hef"
+    model_file.write_bytes(b"fake model data")
+
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
+         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
+        result = cli_runner.invoke(app, ["models", "delete", "test_model"], input="n\n")
+        assert result.exit_code == 0
+        assert "cancelled" in result.output.lower()
+        assert model_file.exists()  # File should still exist
+
+
+def test_models_delete_local_resources_blocked(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test models delete blocks deletion from local resources directory."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    local_dir = tmp_path / "local"
+    local_dir.mkdir()
+    local_model = local_dir / "local_model.hef"
+    local_model.write_bytes(b"fake model")
+
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
+         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', local_dir):
+        result = cli_runner.invoke(app, ["models", "delete", "local_model"])
+        assert result.exit_code == 1
+        assert "cannot delete" in result.output.lower()
+        assert local_model.exists()  # File should still exist
+
+
+def test_models_delete_adds_hef_extension(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test models delete adds .hef extension if not provided."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    model_file = cache_dir / "test_model.hef"
+    model_file.write_bytes(b"fake model data")
+
+    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
+         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
+        # Use model name without .hef extension
+        result = cli_runner.invoke(app, ["models", "delete", "test_model"], input="y\n")
+        assert result.exit_code == 0
+        assert not model_file.exists()

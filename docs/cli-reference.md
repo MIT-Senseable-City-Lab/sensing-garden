@@ -16,13 +16,11 @@ bugcam models download <model_name>
 ```
 Download a model from S3 and cache it locally in `~/.cache/bugcam/models/`.
 
-**Available models:**
-- `yolov8s` - Small model (~11MB) - Faster inference
-- `yolov8m` - Medium model (~31MB) - Higher accuracy
+To see available models, run `bugcam models list`.
 
 **Example:**
 ```bash
-bugcam models download yolov8s
+bugcam models download london_141-multitask
 ```
 
 ### List installed models ✓
@@ -39,7 +37,7 @@ Display detailed information about a specific model (size, path, download status
 
 **Example:**
 ```bash
-bugcam models info yolov8s
+bugcam models info london_141-multitask
 ```
 
 ## Preview ⚠️
@@ -54,12 +52,12 @@ Opens a camera preview window with real-time detection visualization.
 
 ### Preview with specific model ⚠️
 ```bash
-bugcam preview --model yolov8m
+bugcam preview --model london_141-multitask
 ```
 Use a specific model from the available models.
 
 **Options:**
-- `--model <name>` - Specify which model to use (default: yolov8m)
+- `--model <name>` - Specify which model to use (default: london_141-multitask)
 
 ## Detection ⚠️
 
@@ -91,11 +89,11 @@ Suppress console output (useful when saving to file).
 
 ### Combined options ⚠️
 ```bash
-bugcam detect start --model yolov8s --output results.jsonl --duration 60 --quiet
+bugcam detect start --model london_141-multitask --output results.jsonl --duration 60 --quiet
 ```
 
 **Options:**
-- `--model <name>` - Specify which model to use (default: yolov8m)
+- `--model <name>` - Specify which model to use (default: london_141-multitask)
 - `--output <file>` - Save detections to file (JSONL format)
 - `--duration <minutes>` - Run for specified minutes (default: run indefinitely)
 - `--quiet` - Suppress console output
@@ -149,9 +147,8 @@ Stream live logs from the running service (like `tail -f`).
 
 Models are downloaded from S3 and cached locally:
 - **Cache directory**: `~/.cache/bugcam/models/`
-- **Available models**: `yolov8s.hef` (~11MB) and `yolov8m.hef` (~31MB)
 
-Download models with `bugcam models download <model_name>` before running detection.
+Download models with `bugcam models download <model_name>` before running detection. Use `bugcam models list` to see available models.
 
 **Note**: The `resources/` directory contains models for development use only and is not included in package installations.
 

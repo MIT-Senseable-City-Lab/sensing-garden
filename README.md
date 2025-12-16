@@ -1,3 +1,10 @@
+[![PyPI version](https://img.shields.io/pypi/v/bugcam.svg)](https://pypi.org/project/bugcam/)
+[![Python versions](https://img.shields.io/pypi/pyversions/bugcam.svg)](https://pypi.org/project/bugcam/)
+[![License](https://img.shields.io/pypi/l/bugcam.svg)](https://pypi.org/project/bugcam/)
+[![Downloads](https://static.pepy.tech/badge/bugcam)](https://pepy.tech/project/bugcam)
+[![Downloads](https://static.pepy.tech/badge/bugcam/month)](https://pepy.tech/project/bugcam)
+[![Downloads](https://static.pepy.tech/badge/bugcam/week)](https://pepy.tech/project/bugcam)
+
 # bugcam - Raspberry Pi Insect Detection
 
 CLI for running insect detection on Raspberry Pi with Hailo AI HAT+.
@@ -13,7 +20,7 @@ CLI for running insect detection on Raspberry Pi with Hailo AI HAT+.
 - **RAM**: 8GB recommended
 - **Storage**: 32GB microSD minimum (64GB recommended for multiple models)
 - **AI Accelerator**: Raspberry Pi AI HAT+ with Hailo-8L (13 TOPS) or Hailo-8 (26 TOPS)
-- **Camera**: Any official Raspberry Pi camera (Camera Module 3 recommended, High Quality Camera also supported)
+- **Camera**: Raspberry Pi High Quality Camera (recommended, tested) or Raspberry Pi Camera Module 3 (likely supported, not yet tested)
 - **Cooling**: Active Cooler required (thermal management essential under AI workload)
 - **Power Supply**: Official 27W USB-C power supply recommended
 
@@ -33,7 +40,7 @@ sudo apt update && sudo apt install hailo-all
 pipx install bugcam
 
 # 3. Download detection model
-bugcam models download yolov8m
+bugcam models download london_141-multitask
 
 # 4. Run detection
 bugcam preview
@@ -52,7 +59,7 @@ bugcam setup
 Run live camera preview with detection overlay.
 
 ```bash
-bugcam preview [--model yolov8m]
+bugcam preview [--model london_141-multitask]
 ```
 
 ### `bugcam detect` ⚠️
@@ -94,27 +101,20 @@ bugcam status models    # Check installed models
 Manage detection models.
 
 ```bash
-# Download a model (yolov8s or yolov8m)
-bugcam models download yolov8m
+# Download a model
+bugcam models download london_141-multitask
 
-# List installed models
+# List available and installed models
 bugcam models list
 
 # Show model details
-bugcam models info yolov8m
+bugcam models info london_141-multitask
 
 # Delete a model
-bugcam models delete yolov8m
+bugcam models delete london_141-multitask
 ```
 
-**Available models:**
-
-| Model | Size | Description |
-|-------|------|-------------|
-| `yolov8s` | 10 MB | Generic COCO detection (80 classes) |
-| `yolov8m` | 29 MB | Generic COCO detection (80 classes, more accurate) |
-| `small-generic` | 18 MB | Generic insect detection |
-| `london_141-multitask` | 34 MB | London invertebrates - 141 species classifier |
+Models are managed by the S3 backend. Run `bugcam models list` to see available models.
 
 ### `bugcam record` ✓
 Record videos at intervals (without on-device detection). Useful for collecting training data or when you want to process videos later on a more powerful machine.
