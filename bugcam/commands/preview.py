@@ -89,7 +89,8 @@ def preview(
 
     # Build command - detection.py expects --input and --hef-path arguments
     # Use system Python on Linux to access gi/hailo system packages
-    cmd = [get_python_for_detection(), str(detection_script), "--input", "rpi"]
+    # RPi AI Kit uses Hailo-8L architecture
+    cmd = [get_python_for_detection(), str(detection_script), "--input", "rpi", "--arch", "hailo8l"]
 
     if hef_path:
         cmd.extend(["--hef-path", hef_path])

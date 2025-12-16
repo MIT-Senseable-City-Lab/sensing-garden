@@ -92,7 +92,8 @@ def start(
         get_python_for_detection(),
         str(detection_script),
         "--input", "rpi",
-        "--hef-path", str(model_path)
+        "--hef-path", str(model_path),
+        "--arch", "hailo8l"
     ]
 
     # Setup output file if specified
