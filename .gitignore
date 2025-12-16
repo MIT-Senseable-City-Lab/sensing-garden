@@ -6,3 +6,16 @@ hailort.log
 log-files
 videos/
 .env
+# Python build and cache artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+dist/
+build/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
