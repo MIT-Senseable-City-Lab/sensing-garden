@@ -79,7 +79,12 @@ def main():
     from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
 
     # Import the detection handler - edit detection_handler.py to customize behavior
-    from bugcam.detection_handler import process_detections, format_detection_output
+    # Use path-based import since this script runs standalone with system Python
+    from pathlib import Path
+    _package_dir = Path(__file__).resolve().parent.parent
+    if str(_package_dir) not in sys.path:
+        sys.path.insert(0, str(_package_dir))
+    from detection_handler import process_detections, format_detection_output
 
     # User-defined class to be used in the callback function
     class user_app_callback_class(app_callback_class):

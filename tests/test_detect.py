@@ -1,4 +1,5 @@
 """Tests for bugcam detect command."""
+import subprocess
 import sys
 import pytest
 from pathlib import Path
@@ -290,3 +291,61 @@ class TestPreflightCheck:
             assert result.exit_code == 1
             assert "missing" in result.output.lower() or "dependencies" in result.output.lower()
             assert "bugcam doctor" in result.output.lower()
+
+
+class TestDetectionPipelineImports:
+    """Tests that detection.py can import detection_handler when run as standalone script.
+
+    This catches regressions where detection.py fails to import modules when spawned
+    as a subprocess (since it runs with system Python, not the bugcam venv).
+    """
+
+    def test_detection_handler_importable_from_pipeline_context(self) -> None:
+        """Verify detection_handler can be imported using the path-based import in detection.py."""
+        # Simulate how detection.py imports detection_handler
+        detection_script = Path(__file__).parent.parent / "bugcam" / "pipelines" / "detection.py"
+        package_dir = detection_script.parent.parent
+
+        # This is the same logic used in detection.py
+        original_path = sys.path.copy()
+        try:
+            if str(package_dir) not in sys.path:
+                sys.path.insert(0, str(package_dir))
+            from detection_handler import process_detections, format_detection_output
+            assert callable(process_detections)
+            assert callable(format_detection_output)
+        finally:
+            sys.path = original_path
+
+    def test_detection_script_imports_work_as_subprocess(self) -> None:
+        """Run detection.py import logic as subprocess to verify it works standalone.
+
+        This test actually spawns a subprocess (like the real detect command does)
+        to verify the import path manipulation works correctly.
+        """
+        detection_script = Path(__file__).parent.parent / "bugcam" / "pipelines" / "detection.py"
+
+        # Create a test script that mimics the import logic in detection.py
+        test_code = f'''
+import sys
+from pathlib import Path
+
+# Same import logic as detection.py
+_package_dir = Path("{detection_script}").resolve().parent.parent
+if str(_package_dir) not in sys.path:
+    sys.path.insert(0, str(_package_dir))
+
+try:
+    from detection_handler import process_detections, format_detection_output
+    print("IMPORT_SUCCESS")
+except ImportError as e:
+    print(f"IMPORT_FAILED: {{e}}")
+    sys.exit(1)
+'''
+        result = subprocess.run(
+            [sys.executable, "-c", test_code],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Import failed: {result.stderr}"
+        assert "IMPORT_SUCCESS" in result.stdout, f"Unexpected output: {result.stdout}"
