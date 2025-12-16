@@ -16,7 +16,7 @@ class TestPreview:
         result = cli_runner.invoke(app, ["preview", "--help"])
         assert result.exit_code == 0
         assert "--model" in result.output or "-m" in result.output
-        assert "--duration" in result.output or "-d" in result.output
+        assert "--timeout" in result.output or "-t" in result.output
 
     @patch('bugcam.commands.preview.subprocess.Popen')
     @patch('pathlib.Path.exists')
@@ -49,14 +49,14 @@ class TestPreview:
 class TestPythonInterpreterSelection:
     """Tests for Python interpreter selection (RPi5 vs Mac)."""
 
-    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.utils.platform.system', return_value='Linux')
     def test_get_python_returns_system_python_on_linux(self, mock_system: MagicMock, tmp_path: Path) -> None:
         """On Linux (RPi5) without hailo venv, should return /usr/bin/python3."""
         with patch.object(Path, 'home', return_value=tmp_path):
             result = get_python_for_detection()
             assert result == "/usr/bin/python3"
 
-    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.utils.platform.system', return_value='Linux')
     def test_get_python_uses_hailo_venv_when_available(self, mock_system: MagicMock, tmp_path: Path) -> None:
         """On Linux with hailo venv, should use hailo venv Python."""
         hailo_python = tmp_path / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
@@ -67,14 +67,14 @@ class TestPythonInterpreterSelection:
             result = get_python_for_detection()
             assert result == str(hailo_python)
 
-    @patch('bugcam.commands.preview.platform.system', return_value='Darwin')
+    @patch('bugcam.utils.platform.system', return_value='Darwin')
     def test_get_python_returns_sys_executable_on_mac(self, mock_system: MagicMock) -> None:
         """On Mac (Darwin), should return sys.executable."""
         result = get_python_for_detection()
         assert result == sys.executable
 
-    @patch('bugcam.commands.preview.preflight_check', return_value=True)
-    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.utils.preflight_check', return_value=True)
+    @patch('bugcam.utils.platform.system', return_value='Linux')
     @patch('bugcam.commands.preview.subprocess.Popen')
     def test_preview_uses_system_python_on_rpi(
         self, mock_popen: MagicMock, mock_system: MagicMock,
@@ -103,20 +103,20 @@ class TestPythonInterpreterSelection:
 class TestPreflightCheck:
     """Tests for preflight dependency check."""
 
-    @patch('bugcam.commands.preview.platform.system', return_value='Darwin')
+    @patch('bugcam.utils.platform.system', return_value='Darwin')
     def test_preflight_returns_true_on_non_linux(self, mock_system: MagicMock) -> None:
         """Preflight check should return True on non-Linux (can't check)."""
-        from bugcam.commands.preview import preflight_check
+        from bugcam.utils import preflight_check
         assert preflight_check() is True
 
-    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.utils.platform.system', return_value='Linux')
     @patch('bugcam.commands.preview.get_python_for_detection', return_value='/usr/bin/python3')
-    @patch('bugcam.commands.preview.subprocess.run')
+    @patch('bugcam.utils.subprocess.run')
     def test_preflight_checks_hailo_apps_import(
         self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
     ) -> None:
         """Preflight check should verify hailo_apps import (not hailo_apps_infra)."""
-        from bugcam.commands.preview import preflight_check
+        from bugcam.utils import preflight_check
 
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -130,14 +130,14 @@ class TestPreflightCheck:
         call_args = mock_run.call_args[0][0]
         assert call_args == ['/usr/bin/python3', '-c', 'import gi, hailo, hailo_apps, numpy, cv2']
 
-    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.utils.platform.system', return_value='Linux')
     @patch('bugcam.commands.preview.get_python_for_detection', return_value='/usr/bin/python3')
-    @patch('bugcam.commands.preview.subprocess.run')
+    @patch('bugcam.utils.subprocess.run')
     def test_preflight_returns_false_on_import_failure(
         self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
     ) -> None:
         """Preflight check should return False when imports fail."""
-        from bugcam.commands.preview import preflight_check
+        from bugcam.utils import preflight_check
 
         mock_result = MagicMock()
         mock_result.returncode = 1
@@ -146,14 +146,14 @@ class TestPreflightCheck:
         result = preflight_check()
         assert result is False
 
-    @patch('bugcam.commands.preview.platform.system', return_value='Linux')
+    @patch('bugcam.utils.platform.system', return_value='Linux')
     @patch('bugcam.commands.preview.get_python_for_detection', return_value='/usr/bin/python3')
-    @patch('bugcam.commands.preview.subprocess.run', side_effect=Exception("Test error"))
+    @patch('bugcam.utils.subprocess.run', side_effect=Exception("Test error"))
     def test_preflight_returns_false_on_exception(
         self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
     ) -> None:
         """Preflight check should return False on exception."""
-        from bugcam.commands.preview import preflight_check
+        from bugcam.utils import preflight_check
 
         result = preflight_check()
         assert result is False

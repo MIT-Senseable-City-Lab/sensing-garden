@@ -19,7 +19,6 @@ DEFAULT_OUTPUT_DIR = Path.home() / "bugcam-videos"
 
 
 def _check_camera_available() -> bool:
-    """Check if camera is accessible."""
     if platform.system() != "Linux":
         return True  # Can't check on non-Linux
     try:
@@ -34,7 +33,6 @@ def _check_camera_available() -> bool:
 
 
 def _check_ffmpeg_available() -> bool:
-    """Check if ffmpeg is installed."""
     try:
         result = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5)
         return result.returncode == 0
@@ -43,7 +41,6 @@ def _check_ffmpeg_available() -> bool:
 
 
 def _remux_video(path: Path) -> bool:
-    """Remux video with ffmpeg for better compatibility."""
     if not _check_ffmpeg_available():
         console.print("[yellow]ffmpeg not found, skipping remux[/yellow]")
         return True
@@ -65,16 +62,6 @@ def _remux_video(path: Path) -> bool:
 
 
 def _record_single_video(output_path: Path, length: int, quiet: bool) -> bool:
-    """Record a single video using picamera2.
-
-    Args:
-        output_path: Path to save the video
-        length: Recording length in seconds
-        quiet: Suppress output
-
-    Returns:
-        True if successful, False otherwise
-    """
     # Import here to avoid import errors on non-Pi systems
     try:
         from picamera2 import Picamera2

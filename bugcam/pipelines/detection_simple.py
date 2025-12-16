@@ -5,19 +5,17 @@ import hailo
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
 from hailo_apps.hailo_app_python.apps.detection_simple.detection_pipeline_simple import GStreamerDetectionApp
 
-# User-defined class to be used in the callback function: Inheritance from the app_callback_class
 class user_app_callback_class(app_callback_class):
     def __init__(self):
         super().__init__()
 
-# User-defined callback function: This is the callback function that will be called when data is available from the pipeline
 def app_callback(pad, info, user_data):
-    user_data.increment()  # Using the user_data to count the number of frames
+    user_data.increment()
     string_to_print = f"Frame count: {user_data.get_count()}\n"
-    buffer = info.get_buffer()  # Get the GstBuffer from the probe info
-    if buffer is None:  # Check if the buffer is valid
+    buffer = info.get_buffer()
+    if buffer is None:
         return Gst.PadProbeReturn.OK
-    for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):  # Get the detections from the buffer & Parse the detections
+    for detection in hailo.get_roi_from_buffer(buffer).get_objects_typed(hailo.HAILO_DETECTION):
         string_to_print += (f"Detection: {detection.get_label()} Confidence: {detection.get_confidence():.2f}\n")
     print(string_to_print)
     return Gst.PadProbeReturn.OK

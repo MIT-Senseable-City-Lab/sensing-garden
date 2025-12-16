@@ -2,7 +2,6 @@ import typer
 import subprocess
 import json
 import signal
-import platform
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -10,25 +9,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from ..config import get_python_for_detection, get_cache_dir
+from ..utils import preflight_check, handle_numpy_error, handle_hailo_lib_error
 
 app = typer.Typer(help="Run insect detection")
 console = Console()
-
-
-def preflight_check() -> bool:
-    """Check if detection dependencies are available in the Python interpreter."""
-    if platform.system() != "Linux":
-        return True  # Can't check on non-Linux
-    try:
-        python_exe = get_python_for_detection()
-        result = subprocess.run(
-            [python_exe, "-c", "import gi, hailo, hailo_apps, numpy, cv2"],
-            capture_output=True,
-            timeout=10
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
 
 
 @app.command()
@@ -136,17 +120,11 @@ def start(
         if process.returncode != 0 and stderr_text:
             # Check for missing Hailo post-process libraries
             if "Could not load lib" in stderr_text and "libyolo_hailortpp_postprocess.so" in stderr_text:
-                console.print("\n[red]Missing Hailo post-processing libraries.[/red]")
-                console.print("Run [cyan]bugcam setup[/cyan] to compile the required libraries.\n")
+                handle_hailo_lib_error(console)
                 raise typer.Exit(1)
             # Check for numpy binary incompatibility error
             elif "numpy.dtype size changed" in stderr_text or "binary incompatibility" in stderr_text:
-                console.print("\n[red]NumPy binary incompatibility detected.[/red]")
-                console.print("This usually happens when system packages are out of sync.\n")
-                console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy python3-picamera2 python3-libcamera python3-simplejpeg[/cyan]\n")
-                console.print("If that doesn't work, also remove any pip numpy:")
-                console.print("[cyan]rm -rf ~/.local/lib/python*/site-packages/numpy*[/cyan]\n")
-                console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
+                handle_numpy_error(console)
                 raise typer.Exit(1)
             else:
                 console.print(f"\n[red]Error:[/red] {stderr_text}")

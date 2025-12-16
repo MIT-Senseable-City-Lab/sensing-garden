@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "bugcam"
-version = "0.1.26"
+version = "0.1.27"
 description = "detect and classify insects on a raspberry pi"
 authors = ["Deniz Aydemir <deniz@aydemir.us>"]
 license = "MIT"

@@ -25,14 +25,7 @@ MODELS_BASE_URL = "https://scl-sensing-garden-models.s3.amazonaws.com"
 GITHUB_RELEASES_URL = "https://github.com/MIT-Senseable-City-Lab/sensing-garden/releases/download/weights"
 
 def check_model_exists(model_name: str) -> bool:
-    """Check if a model exists on S3 via HEAD request.
-
-    Args:
-        model_name: Name of the model file (e.g., "yolov8s.hef")
-
-    Returns:
-        True if model exists and is accessible, False otherwise.
-    """
+    """Check if a model exists on S3 via HEAD request."""
     url = get_model_url(model_name)
     try:
         req = urllib.request.Request(url, method='HEAD')
@@ -43,24 +36,12 @@ def check_model_exists(model_name: str) -> bool:
 
 
 def get_model_url(model_name: str) -> str:
-    """Construct URL for a model by name.
-
-    Args:
-        model_name: Name of the model file (e.g., "yolov8s.hef")
-
-    Returns:
-        Full URL to the model file. Defaults to S3 bucket.
-    """
-    # Default to S3 bucket
+    """Construct URL for a model by name."""
     return f"{MODELS_BASE_URL}/{model_name}"
 
 
 def list_s3_bucket_models() -> list[str]:
-    """Fetch list of .hef models from S3 bucket by listing bucket contents.
-
-    Returns:
-        List of .hef model filenames found in the S3 bucket.
-    """
+    """Fetch list of .hef models from S3 bucket by listing bucket contents."""
     try:
         req = urllib.request.Request(MODELS_BASE_URL)
         with urllib.request.urlopen(req, timeout=10) as response:
@@ -93,11 +74,7 @@ def list_s3_bucket_models() -> list[str]:
 
 
 def list_available_models() -> list[str]:
-    """List available models from S3 bucket.
-
-    Returns:
-        List of model filenames (*.hef files).
-    """
+    """List available models from S3 bucket."""
     return list_s3_bucket_models()
 
 
@@ -107,14 +84,7 @@ def list_s3_models() -> list[str]:
 
 
 def get_model_size(model_name: str) -> Optional[int]:
-    """Get model file size via HEAD request.
-
-    Args:
-        model_name: Name of the model file
-
-    Returns:
-        Size in bytes, or None if request fails.
-    """
+    """Get model file size via HEAD request."""
     url = get_model_url(model_name)
     try:
         req = urllib.request.Request(url, method='HEAD')
@@ -165,7 +135,6 @@ def get_hef_models() -> list[Path]:
 
 
 def format_size(size_bytes: int) -> str:
-    """Format bytes to human-readable size."""
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size_bytes < 1024.0:
             return f"{size_bytes:.1f} {unit}"
@@ -174,7 +143,6 @@ def format_size(size_bytes: int) -> str:
 
 
 def calculate_checksum(file_path: Path) -> str:
-    """Calculate SHA256 checksum of a file."""
     sha256 = hashlib.sha256()
     with open(file_path, 'rb') as f:
         for chunk in iter(lambda: f.read(8192), b''):
@@ -208,7 +176,7 @@ def download(
             size_str = format_size(size) if size else "?"
             console.print(f"  [bold]{name}[/bold]  ({size_str})")
         console.print("\n[dim]Usage:[/dim]")
-        console.print("[dim]  bugcam models download <model_name>[/dim]")
+        console.print("[dim]  bugcam models download yolov8s[/dim]")
         console.print("[dim]  bugcam models download all[/dim]")
         return
     else:

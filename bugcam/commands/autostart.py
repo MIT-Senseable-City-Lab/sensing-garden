@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from rich.console import Console
 from typing import Optional
+from ..utils import handle_numpy_error
 
 app = typer.Typer(help="Manage auto-start on boot")
 console = Console()
@@ -53,8 +54,6 @@ WantedBy=multi-user.target
 
 
 def _get_bugcam_path() -> Path:
-    """Find the bugcam binary path."""
-    # Try which bugcam first
     try:
         result = subprocess.run(
             ["which", "bugcam"],
@@ -73,14 +72,11 @@ def _get_bugcam_path() -> Path:
 
 
 def _validate_model_name(model: str) -> bool:
-    """Validate model name contains only safe characters."""
     return bool(re.match(r'^[a-zA-Z0-9._/-]+$', model))
 
 
 def _validate_path(path: Path) -> bool:
-    """Validate path contains only safe characters for systemd service file."""
     path_str = str(path)
-    # Reject paths with newlines, quotes, or other dangerous chars
     if '\n' in path_str or '\r' in path_str:
         return False
     if '"' in path_str or "'" in path_str:
@@ -93,12 +89,10 @@ def _validate_path(path: Path) -> bool:
 
 
 def _validate_username(user: str) -> bool:
-    """Validate username contains only safe characters."""
     return bool(re.match(r'^[a-zA-Z0-9_-]+$', user))
 
 
 def _run_systemctl(command: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    """Run systemctl command with sudo."""
     full_command = ["sudo", "systemctl"] + command
     return subprocess.run(
         full_command,
@@ -231,10 +225,7 @@ def enable(
             if result.returncode != 0:
                 # Check for numpy binary incompatibility
                 if result.stderr and ("numpy.dtype size changed" in result.stderr or "binary incompatibility" in result.stderr):
-                    console.print("[red]NumPy binary incompatibility detected.[/red]")
-                    console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
-                    console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
-                    console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
+                    handle_numpy_error(console)
                     raise typer.Exit(1)
                 else:
                     console.print(f"[red]Service failed to start[/red]")
@@ -255,10 +246,7 @@ def enable(
         if e.stderr:
             # Check for numpy binary incompatibility
             if "numpy.dtype size changed" in e.stderr or "binary incompatibility" in e.stderr:
-                console.print("\n[red]NumPy binary incompatibility detected.[/red]")
-                console.print("This usually happens when system packages were compiled against a different NumPy version.\n")
-                console.print("Fix with: [cyan]sudo apt install --reinstall python3-numpy[/cyan]\n")
-                console.print("Then run: [cyan]bugcam check camera[/cyan] to verify the fix.")
+                handle_numpy_error(console)
             else:
                 console.print(f"[red]{e.stderr}[/red]")
                 console.print("\nRun [cyan]bugcam check[/cyan] to diagnose issues.")
@@ -279,6 +267,12 @@ def disable(
     # Check if service exists
     if not SYSTEMD_SERVICE_PATH.exists():
         console.print("[yellow]Service is not installed[/yellow]")
+        raise typer.Exit(0)
+
+    # Confirm removal
+    confirm = typer.confirm("Remove auto-start service?")
+    if not confirm:
+        console.print("[yellow]Cancelled[/yellow]")
         raise typer.Exit(0)
 
     try:
