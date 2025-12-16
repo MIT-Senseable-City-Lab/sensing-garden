@@ -2,6 +2,10 @@
 
 CLI for running insect detection on Raspberry Pi with Hailo AI HAT+.
 
+## Feature Status
+
+**Legend:** ✓ Tested & working on device | ⚠️ In development (not yet verified on device)
+
 ## Requirements
 
 ### Hardware
@@ -37,21 +41,21 @@ bugcam preview
 
 ## Commands
 
-### `bugcam setup`
+### `bugcam setup` ✓
 Initialize bugcam by installing dependencies and downloading hailo-rpi5-examples.
 
 ```bash
 bugcam setup
 ```
 
-### `bugcam preview`
+### `bugcam preview` ⚠️
 Run live camera preview with detection overlay.
 
 ```bash
 bugcam preview [--model yolov8m]
 ```
 
-### `bugcam detect`
+### `bugcam detect` ⚠️
 Run continuous detection and save results.
 
 ```bash
@@ -63,7 +67,7 @@ Output format (JSONL):
 {"timestamp": "2025-12-14T10:30:45", "class": "insect", "confidence": 0.92, "bbox": [100, 200, 150, 250]}
 ```
 
-### `bugcam status`
+### `bugcam status` ✓
 Check system status, dependencies, and hardware connections.
 
 ```bash
@@ -86,7 +90,7 @@ bugcam status models    # Check installed models
 | `sensor` | I2C sensors are connected | Scans I2C bus for known addresses |
 | `models` | .hef model files installed | Checks cache directory |
 
-### `bugcam models`
+### `bugcam models` ✓
 Manage detection models.
 
 ```bash
@@ -112,7 +116,7 @@ bugcam models delete yolov8m
 | `small-generic` | 18 MB | Generic insect detection |
 | `london_141-multitask` | 34 MB | London invertebrates - 141 species classifier |
 
-### `bugcam record`
+### `bugcam record` ✓
 Record videos at intervals (without on-device detection). Useful for collecting training data or when you want to process videos later on a more powerful machine.
 
 ```bash
@@ -148,16 +152,16 @@ Videos are saved with timestamp filenames like `video_20251216_153045.mp4`.
 Manage systemd service for automatic detection or recording on boot.
 
 ```bash
-# Detection mode (with AI model)
+# Detection mode (with AI model) ⚠️
 bugcam autostart enable --mode detect --model small-generic
 
-# Recording mode (video only, no detection)
+# Recording mode (video only, no detection) ✓
 bugcam autostart enable --mode record --interval 10 --length 60
 
-# Recording to external storage
+# Recording to external storage ✓
 bugcam autostart enable --mode record --interval 10 --length 60 --output-dir /mnt/usb/videos
 
-# Manage service
+# Manage service ✓
 bugcam autostart disable
 bugcam autostart status
 bugcam autostart logs [--follow]

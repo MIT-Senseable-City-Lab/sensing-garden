@@ -2,11 +2,15 @@
 
 Complete reference for the `bugcam` command-line interface.
 
-## Models
+## Feature Status
+
+**Legend:** ✓ Tested & working on device | ⚠️ In development (not yet verified on device)
+
+## Models ✓
 
 Manage and inspect detection models. Models must be downloaded before use.
 
-### Download a model
+### Download a model ✓
 ```bash
 bugcam models download <model_name>
 ```
@@ -21,13 +25,13 @@ Download a model from S3 and cache it locally in `~/.cache/bugcam/models/`.
 bugcam models download yolov8s
 ```
 
-### List installed models
+### List installed models ✓
 ```bash
 bugcam models list
 ```
 Shows all downloaded models in the cache directory.
 
-### Show model details
+### Show model details ✓
 ```bash
 bugcam models info <model_name>
 ```
@@ -38,17 +42,17 @@ Display detailed information about a specific model (size, path, download status
 bugcam models info yolov8s
 ```
 
-## Preview
+## Preview ⚠️
 
 Run live camera preview with detection overlay.
 
-### Basic preview
+### Basic preview ⚠️
 ```bash
 bugcam preview
 ```
 Opens a camera preview window with real-time detection visualization.
 
-### Preview with specific model
+### Preview with specific model ⚠️
 ```bash
 bugcam preview --model yolov8m
 ```
@@ -57,35 +61,35 @@ Use a specific model from the available models.
 **Options:**
 - `--model <name>` - Specify which model to use (default: yolov8m)
 
-## Detection
+## Detection ⚠️
 
 Run continuous detection and save results.
 
-### Start detection
+### Start detection ⚠️
 ```bash
 bugcam detect start
 ```
 Start continuous detection, printing results to console.
 
-### Save detections to file
+### Save detections to file ⚠️
 ```bash
 bugcam detect start --output detections.jsonl
 ```
 Save detection results to a JSONL file (one detection per line).
 
-### Run for specific duration
+### Run for specific duration ⚠️
 ```bash
 bugcam detect start --duration 30
 ```
 Run detection for 30 minutes, then stop automatically.
 
-### Quiet mode
+### Quiet mode ⚠️
 ```bash
 bugcam detect start --quiet
 ```
 Suppress console output (useful when saving to file).
 
-### Combined options
+### Combined options ⚠️
 ```bash
 bugcam detect start --model yolov8s --output results.jsonl --duration 60 --quiet
 ```
@@ -100,31 +104,37 @@ bugcam detect start --model yolov8s --output results.jsonl --duration 60 --quiet
 
 Manage automatic detection on system boot using systemd services.
 
-### Enable autostart
+### Enable autostart (detect mode) ⚠️
 ```bash
 bugcam autostart enable
 ```
 Creates and enables a systemd service that runs detection on boot.
 
-### Disable autostart
+### Enable autostart (record mode) ✓
+```bash
+bugcam autostart enable --mode record
+```
+Creates and enables a systemd service that runs video recording on boot.
+
+### Disable autostart ✓
 ```bash
 bugcam autostart disable
 ```
 Stops and disables the systemd service.
 
-### Check status
+### Check status ✓
 ```bash
 bugcam autostart status
 ```
 Shows the current status of the autostart service.
 
-### View logs
+### View logs ✓
 ```bash
 bugcam autostart logs
 ```
 Display recent logs from the autostart service.
 
-### Follow logs in real-time
+### Follow logs in real-time ✓
 ```bash
 bugcam autostart logs --follow
 ```
