@@ -1,4 +1,4 @@
-"""Setup command for bugcam - installs hailo_apps_infra."""
+"""Setup command for bugcam - installs hailo_apps."""
 import typer
 import subprocess
 import sys
@@ -37,7 +37,7 @@ def check_import(python_exe: str, module: str) -> bool:
 
 @app.callback(invoke_without_command=True)
 def setup() -> None:
-    """Install hailo_apps_infra (the only pip-installable dependency)."""
+    """Install hailo_apps (the only pip-installable dependency)."""
     if platform.system() != "Linux":
         console.print("[yellow]Note: bugcam detection only works on Raspberry Pi (Linux)[/yellow]")
         console.print(f"Current platform: {platform.system()}")
@@ -46,12 +46,12 @@ def setup() -> None:
     python_exe = get_python_for_detection()
 
     # Check if already installed
-    if check_import(python_exe, "hailo_apps_infra"):
-        console.print("[green]hailo_apps_infra is already installed.[/green]")
+    if check_import(python_exe, "hailo_apps"):
+        console.print("[green]hailo_apps is already installed.[/green]")
         console.print("\nRun [cyan]bugcam doctor[/cyan] to check all dependencies.")
         return
 
-    console.print("[cyan]Installing hailo_apps_infra...[/cyan]\n")
+    console.print("[cyan]Installing hailo_apps...[/cyan]\n")
 
     # Build pip install command
     # If installing to system Python, need --break-system-packages for PEP 668 (Debian 12+/Raspberry Pi OS)
@@ -83,10 +83,11 @@ def setup() -> None:
 
     # Verify installation
     console.print("\n[cyan]Verifying installation...[/cyan]")
-    if check_import(python_exe, "hailo_apps_infra"):
-        console.print("[green]hailo_apps_infra: OK[/green]")
+    if check_import(python_exe, "hailo_apps"):
+        console.print("[green]hailo_apps: OK[/green]")
         console.print("\nRun [cyan]bugcam doctor[/cyan] to check remaining dependencies.")
     else:
-        console.print("[red]hailo_apps_infra: FAILED[/red]")
-        console.print("Installation completed but import failed. Check for errors above.")
+        console.print("[red]hailo_apps: FAILED[/red]")
+        console.print("Installation completed but import failed.")
+        console.print("Try: " + python_exe + " -c 'import hailo_apps'")
         raise typer.Exit(1)

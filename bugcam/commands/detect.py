@@ -38,7 +38,7 @@ def preflight_check() -> bool:
     try:
         python_exe = get_python_for_detection()
         result = subprocess.run(
-            [python_exe, "-c", "import gi, hailo, hailo_apps_infra, numpy, cv2"],
+            [python_exe, "-c", "import gi, hailo, hailo_apps, numpy, cv2"],
             capture_output=True,
             timeout=10
         )

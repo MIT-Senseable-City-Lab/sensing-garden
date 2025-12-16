@@ -60,7 +60,7 @@ def doctor() -> None:
     deps = [
         ("gi", "python3-gi python3-gi-cairo gir1.2-gstreamer-1.0", "sudo apt install"),
         ("hailo", "hailo-all", "sudo apt install"),
-        ("hailo_apps_infra", "", "bugcam setup"),
+        ("hailo_apps", "", "bugcam setup"),
         ("numpy", "python3-numpy", "sudo apt install"),
         ("cv2", "python3-opencv", "sudo apt install"),
     ]

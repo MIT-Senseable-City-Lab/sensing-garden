@@ -3,7 +3,7 @@
 Required system packages:
 - sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0
 - sudo apt install hailo-all python3-numpy python3-opencv
-- bugcam setup  (installs hailo_apps_infra)
+- bugcam setup  (installs hailo_apps)
 """
 
 import os
@@ -25,9 +25,9 @@ def check_dependencies():
         missing.append("hailo")
 
     try:
-        import hailo_apps_infra
+        import hailo_apps
     except ImportError:
-        missing.append("hailo_apps_infra")
+        missing.append("hailo_apps")
 
     try:
         import numpy
@@ -47,7 +47,7 @@ def check_dependencies():
             print("  sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0", file=sys.stderr)
         if "hailo" in missing:
             print("  sudo apt install hailo-all", file=sys.stderr)
-        if "hailo_apps_infra" in missing:
+        if "hailo_apps" in missing:
             print("  bugcam setup", file=sys.stderr)
         if "numpy" in missing:
             print("  sudo apt install python3-numpy", file=sys.stderr)
@@ -71,12 +71,12 @@ def main():
     import cv2
     import hailo
 
-    from hailo_apps_infra.hailo_rpi_common import (
+    from hailo_apps.hailo_app_python.core.common.buffer_utils import (
         get_caps_from_pad,
         get_numpy_from_buffer,
-        app_callback_class,
     )
-    from hailo_apps_infra.detection_pipeline import GStreamerDetectionApp
+    from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
+    from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
 
     # User-defined class to be used in the callback function
     class user_app_callback_class(app_callback_class):
