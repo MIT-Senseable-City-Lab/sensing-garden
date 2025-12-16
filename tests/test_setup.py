@@ -23,7 +23,7 @@ def test_setup_fails_on_non_linux(cli_runner: CliRunner) -> None:
 
 def test_setup_detects_hailo_venv_python(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test get_python_for_detection prefers hailo venv if available."""
-    from bugcam.commands.setup import get_python_for_detection
+    from bugcam.config import get_python_for_detection
 
     # Create fake hailo venv
     hailo_python = tmp_path / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
@@ -37,9 +37,9 @@ def test_setup_detects_hailo_venv_python(cli_runner: CliRunner, tmp_path: Path) 
 
 def test_setup_falls_back_to_system_python(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test get_python_for_detection falls back to /usr/bin/python3 on Linux."""
-    from bugcam.commands.setup import get_python_for_detection
+    from bugcam.config import get_python_for_detection
 
-    with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
+    with patch('bugcam.config.platform.system', return_value='Linux'), \
          patch.object(Path, 'home', return_value=tmp_path):
         # Hailo venv doesn't exist, falls back to system python
         python = get_python_for_detection()
@@ -48,10 +48,10 @@ def test_setup_falls_back_to_system_python(cli_runner: CliRunner, tmp_path: Path
 
 def test_setup_uses_sys_executable_fallback(cli_runner: CliRunner) -> None:
     """Test get_python_for_detection uses sys.executable as final fallback."""
-    from bugcam.commands.setup import get_python_for_detection
+    from bugcam.config import get_python_for_detection
     import sys
 
-    with patch('bugcam.commands.setup.platform.system', return_value='Darwin'), \
+    with patch('bugcam.config.platform.system', return_value='Darwin'), \
          patch('pathlib.Path.exists', return_value=False):
         python = get_python_for_detection()
         assert python == sys.executable
@@ -116,8 +116,6 @@ def test_setup_skips_clone_if_exists(cli_runner: CliRunner, tmp_path: Path) -> N
     hailo_dir = tmp_path / "hailo-rpi5-examples"
     hailo_dir.mkdir()
     (hailo_dir / "install.sh").touch()
-    (hailo_dir / "compile_postprocess.sh").touch()
-    (hailo_dir / "setup_env.sh").touch()
 
     mock_result = MagicMock()
     mock_result.returncode = 0
@@ -140,8 +138,6 @@ def test_setup_runs_install_script(cli_runner: CliRunner, tmp_path: Path) -> Non
     hailo_dir = tmp_path / "hailo-rpi5-examples"
     hailo_dir.mkdir()
     (hailo_dir / "install.sh").touch()
-    (hailo_dir / "compile_postprocess.sh").touch()
-    (hailo_dir / "setup_env.sh").touch()
 
     mock_result = MagicMock()
     mock_result.returncode = 0
@@ -158,37 +154,11 @@ def test_setup_runs_install_script(cli_runner: CliRunner, tmp_path: Path) -> Non
         assert install_call is not None
 
 
-def test_setup_compiles_postprocess(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test setup runs compile_postprocess.sh script."""
-    hailo_dir = tmp_path / "hailo-rpi5-examples"
-    hailo_dir.mkdir()
-    (hailo_dir / "install.sh").touch()
-    (hailo_dir / "compile_postprocess.sh").touch()
-    (hailo_dir / "setup_env.sh").touch()
-
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-
-    with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
-         patch.object(Path, 'home', return_value=tmp_path), \
-         patch('subprocess.run', return_value=mock_result) as mock_run, \
-         patch('bugcam.commands.setup.check_import', return_value=True):
-        result = cli_runner.invoke(app, ["setup"])
-
-        # Should have called bash to run compile script
-        calls = [call[0][0] for call in mock_run.call_args_list]
-        compile_call = next((c for c in calls if c[0] == "bash" and "-c" in c), None)
-        assert compile_call is not None
-        assert "compile_postprocess.sh" in compile_call[2]
-
-
 def test_setup_install_script_failure(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test setup handles install.sh failure."""
     hailo_dir = tmp_path / "hailo-rpi5-examples"
     hailo_dir.mkdir()
     (hailo_dir / "install.sh").touch()
-    (hailo_dir / "compile_postprocess.sh").touch()
-    (hailo_dir / "setup_env.sh").touch()
 
     mock_success = MagicMock()
     mock_success.returncode = 0
@@ -213,8 +183,6 @@ def test_setup_verifies_hailo_apps(cli_runner: CliRunner, tmp_path: Path) -> Non
     hailo_dir = tmp_path / "hailo-rpi5-examples"
     hailo_dir.mkdir()
     (hailo_dir / "install.sh").touch()
-    (hailo_dir / "compile_postprocess.sh").touch()
-    (hailo_dir / "setup_env.sh").touch()
 
     mock_result = MagicMock()
     mock_result.returncode = 0

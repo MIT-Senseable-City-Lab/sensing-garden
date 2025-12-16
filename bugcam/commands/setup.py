@@ -28,7 +28,7 @@ def check_import(python_exe: str, module: str) -> bool:
 
 @app.callback(invoke_without_command=True)
 def setup() -> None:
-    """Set up Hailo environment and compile post-processing libraries."""
+    """Set up Hailo environment by cloning and installing hailo-rpi5-examples."""
     if platform.system() != "Linux":
         console.print("[yellow]Note: bugcam detection only works on Raspberry Pi (Linux)[/yellow]")
         console.print(f"Current platform: {platform.system()}")
@@ -59,13 +59,14 @@ def setup() -> None:
     else:
         console.print(f"[green]Found hailo-rpi5-examples at {hailo_examples_dir}[/green]\n")
 
-    # Step 2: Run install script
+    # Step 2: Run install script (creates venv, installs deps, compiles .so files)
     install_script = hailo_examples_dir / "install.sh"
     if not install_script.exists():
         console.print(f"[red]install.sh not found at {install_script}[/red]")
         raise typer.Exit(1)
 
     console.print("[cyan]Running install script (this may take a few minutes)...[/cyan]")
+    console.print("[dim]This will create the venv, install dependencies, and compile .so files[/dim]")
     console.print(f"[dim]$ cd {hailo_examples_dir} && ./install.sh[/dim]\n")
 
     try:
@@ -85,36 +86,7 @@ def setup() -> None:
         console.print(f"\n[red]Error running install script: {e}[/red]")
         raise typer.Exit(1)
 
-    # Step 3: Compile post-processing libraries
-    compile_script = hailo_examples_dir / "compile_postprocess.sh"
-    setup_env = hailo_examples_dir / "setup_env.sh"
-
-    if not compile_script.exists():
-        console.print(f"[red]compile_postprocess.sh not found at {compile_script}[/red]")
-        raise typer.Exit(1)
-
-    console.print("[cyan]Compiling post-processing libraries (this will take several minutes)...[/cyan]")
-    console.print(f"[dim]$ cd {hailo_examples_dir} && source setup_env.sh && ./compile_postprocess.sh[/dim]\n")
-
-    try:
-        # Use bash to source setup_env.sh and run compile script
-        result = subprocess.run(
-            ["bash", "-c", "source setup_env.sh && ./compile_postprocess.sh"],
-            cwd=str(hailo_examples_dir),
-            timeout=900  # 15 min timeout for compilation
-        )
-        if result.returncode != 0:
-            console.print("\n[red]Compilation failed.[/red]")
-            raise typer.Exit(1)
-        console.print("[green]Compilation complete.[/green]\n")
-    except subprocess.TimeoutExpired:
-        console.print("\n[red]Compilation timed out.[/red]")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"\n[red]Error compiling: {e}[/red]")
-        raise typer.Exit(1)
-
-    # Step 4: Verify hailo_apps installation
+    # Step 3: Verify hailo_apps installation
     python_exe = get_python_for_detection()
     console.print("[cyan]Verifying hailo_apps installation...[/cyan]")
 

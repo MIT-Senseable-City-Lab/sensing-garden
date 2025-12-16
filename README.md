@@ -4,11 +4,20 @@ CLI for running insect detection on Raspberry Pi with Hailo AI HAT+.
 
 ## Requirements
 
-- Raspberry Pi 5
-- Raspberry Pi AI HAT+ (Hailo8/Hailo8L)
-- Raspberry Pi Camera Module 3
-- 64-bit Raspberry Pi OS Bookworm
-- Active cooler recommended
+### Hardware
+- **Raspberry Pi**: Raspberry Pi 5 (required - Pi 4 not supported due to PCIe requirement)
+- **RAM**: 8GB recommended
+- **Storage**: 32GB microSD minimum (64GB recommended for multiple models)
+- **AI Accelerator**: Raspberry Pi AI HAT+ with Hailo-8L (13 TOPS) or Hailo-8 (26 TOPS)
+- **Camera**: Any official Raspberry Pi camera (Camera Module 3 recommended, High Quality Camera also supported)
+- **Cooling**: Active Cooler required (thermal management essential under AI workload)
+- **Power Supply**: Official 27W USB-C power supply recommended
+
+### Software
+- **OS**: Raspberry Pi OS Bookworm 64-bit (latest version)
+- **Kernel**: 6.6.31 or newer (run `sudo apt full-upgrade` if needed)
+- **PCIe**: Gen 3 enabled via `raspi-config` (required for optimal performance)
+
 
 ## Quick Start
 
