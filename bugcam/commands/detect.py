@@ -1,6 +1,5 @@
 import typer
 import subprocess
-import sys
 import json
 import signal
 import platform
@@ -10,25 +9,10 @@ from typing import Optional
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from ..config import get_python_for_detection, get_cache_dir
 
 app = typer.Typer(help="Run insect detection")
 console = Console()
-
-
-def get_python_for_detection() -> str:
-    """Get the Python interpreter to use for detection script.
-
-    Prefers hailo-rpi5-examples venv if available, otherwise system Python.
-    """
-    # Check for hailo-rpi5-examples venv
-    hailo_venv_python = Path.home() / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
-    if hailo_venv_python.exists():
-        return str(hailo_venv_python)
-
-    # Fall back to system Python on Linux
-    if platform.system() == "Linux" and Path("/usr/bin/python3").exists():
-        return "/usr/bin/python3"
-    return sys.executable
 
 
 def preflight_check() -> bool:
@@ -199,13 +183,13 @@ def _resolve_model_path(model: Optional[str]) -> Optional[Path]:
     If model is a name, look for it in cache, then resources/
     """
     # Cache and resources directories
-    cache_dir = Path.home() / ".cache" / "bugcam" / "models"
+    models_dir = get_cache_dir() / "models"
     resources_dir = Path(__file__).parent.parent.parent / "resources"
 
     if model is None:
         # Auto-detect first .hef file - check cache first, then resources
-        if cache_dir.exists():
-            hef_files = list(cache_dir.glob("*.hef"))
+        if models_dir.exists():
+            hef_files = list(models_dir.glob("*.hef"))
             if hef_files:
                 return hef_files[0]
 
@@ -227,7 +211,7 @@ def _resolve_model_path(model: Optional[str]) -> Optional[Path]:
         model = f"{model}.hef"
 
     # Look in cache directory first
-    cache_model = cache_dir / model
+    cache_model = models_dir / model
     if cache_model.exists():
         return cache_model
 
@@ -258,13 +242,13 @@ def _show_startup_banner(model_path: Path, output: Optional[Path], duration: Opt
 
 def _show_model_not_found_help() -> None:
     """Display helpful message when no model is found."""
-    cache_dir = Path.home() / ".cache" / "bugcam" / "models"
+    models_dir = get_cache_dir() / "models"
 
     console.print(Panel(
         "[bold red]No model found[/bold red]\n\n"
         "To download a model, run:\n"
         "[cyan]bugcam model download[/cyan]\n\n"
-        f"Or place a .hef file in:\n{cache_dir}",
+        f"Or place a .hef file in:\n{models_dir}",
         border_style="red"
     ))
 

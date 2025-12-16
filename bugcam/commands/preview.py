@@ -1,29 +1,13 @@
 import typer
 import subprocess
 import sys
-import os
 import platform
 from pathlib import Path
 from rich.console import Console
+from ..config import get_python_for_detection, get_cache_dir
 
 app = typer.Typer(help="Camera preview and testing")
 console = Console()
-
-
-def get_python_for_detection() -> str:
-    """Get the Python interpreter to use for detection script.
-
-    Prefers hailo-rpi5-examples venv if available, otherwise system Python.
-    """
-    # Check for hailo-rpi5-examples venv
-    hailo_venv_python = Path.home() / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
-    if hailo_venv_python.exists():
-        return str(hailo_venv_python)
-
-    # Fall back to system Python on Linux
-    if platform.system() == "Linux" and Path("/usr/bin/python3").exists():
-        return "/usr/bin/python3"
-    return sys.executable
 
 
 def preflight_check() -> bool:
@@ -62,11 +46,11 @@ def preview(
     # Find default model if none specified
     if hef_path is None:
         # Check cache directory first
-        cache_dir = Path.home() / ".cache" / "bugcam" / "models"
+        models_dir = get_cache_dir() / "models"
         model_files = []
 
-        if cache_dir.exists():
-            model_files = list(cache_dir.glob("*.hef"))
+        if models_dir.exists():
+            model_files = list(models_dir.glob("*.hef"))
 
         # Fall back to resources directory
         if not model_files:

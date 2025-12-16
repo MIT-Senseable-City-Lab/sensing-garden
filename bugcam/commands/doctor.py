@@ -5,25 +5,10 @@ import platform
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
+from ..config import get_python_for_detection, get_cache_dir
 
 app = typer.Typer(help="Check system dependencies")
 console = Console()
-
-
-def get_python_for_detection() -> str:
-    """Get the Python interpreter to use for detection script.
-
-    Prefers hailo-rpi5-examples venv if available, otherwise system Python.
-    """
-    # Check for hailo-rpi5-examples venv
-    hailo_venv_python = Path.home() / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
-    if hailo_venv_python.exists():
-        return str(hailo_venv_python)
-
-    # Fall back to system Python on Linux
-    if platform.system() == "Linux" and Path("/usr/bin/python3").exists():
-        return "/usr/bin/python3"
-    return "/usr/bin/python3"
 
 
 def check_system_python_import(import_name: str) -> bool:
@@ -78,8 +63,8 @@ def doctor() -> None:
             table.add_row(import_name, "[dim]skip[/dim]", "Linux only")
 
     # Check for models
-    cache_dir = Path.home() / ".cache" / "bugcam" / "models"
-    hef_files = list(cache_dir.glob("*.hef")) if cache_dir.exists() else []
+    models_dir = get_cache_dir() / "models"
+    hef_files = list(models_dir.glob("*.hef")) if models_dir.exists() else []
     if hef_files:
         table.add_row("model (.hef)", "[green]OK[/green]", f"{len(hef_files)} found")
     else:
