@@ -28,7 +28,7 @@ def preflight_check() -> bool:
 @app.callback(invoke_without_command=True)
 def preview(
     duration: int = typer.Option(None, "--duration", "-d", help="Preview duration in seconds"),
-    hef_path: str = typer.Option(None, "--model", "-m", help="Path to .hef model file"),
+    hef_path: str = typer.Option(None, "--model", "-m", help="Path to .hef model file or model name"),
 ) -> None:
     """
     Start camera preview with optional detection overlay.
@@ -43,8 +43,41 @@ def preview(
         console.print(f"[red]Error: Detection script not found at {detection_script}[/red]")
         raise typer.Exit(1)
 
-    # Find default model if none specified
-    if hef_path is None:
+    # Resolve model path
+    if hef_path is not None:
+        # Check if it's a full path that exists
+        hef_path_obj = Path(hef_path)
+        if not hef_path_obj.exists():
+            # Not a valid path, treat as model name and search for it
+            model_name = hef_path if hef_path.endswith('.hef') else f"{hef_path}.hef"
+
+            # Check cache directory first
+            models_dir = get_cache_dir() / "models"
+            model_files = []
+
+            if models_dir.exists():
+                model_files = list(models_dir.glob("*.hef"))
+
+            # Fall back to resources directory
+            if not model_files:
+                resources_dir = Path(__file__).parent.parent.parent / "resources"
+                if resources_dir.exists():
+                    model_files = list(resources_dir.glob("*.hef"))
+
+            # Find matching model
+            found = False
+            for model_file in model_files:
+                if model_file.name == model_name:
+                    hef_path = str(model_file)
+                    found = True
+                    break
+
+            if not found:
+                console.print(f"[red]Model '{model_name}' not found[/red]")
+                console.print(f"Available models: {', '.join(m.name for m in model_files)}")
+                raise typer.Exit(1)
+    else:
+        # Find default model if none specified
         # Check cache directory first
         models_dir = get_cache_dir() / "models"
         model_files = []

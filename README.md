@@ -63,30 +63,28 @@ Output format (JSONL):
 {"timestamp": "2025-12-14T10:30:45", "class": "insect", "confidence": 0.92, "bbox": [100, 200, 150, 250]}
 ```
 
-### `bugcam doctor`
-Run system diagnostics to check dependencies, hardware, and configuration.
+### `bugcam status`
+Check system status, dependencies, and hardware connections.
 
 ```bash
-bugcam doctor
-```
-
-### `bugcam check`
-Test hardware connections before running detection.
-
-```bash
-bugcam check all      # Run all checks
-bugcam check hailo    # Test Hailo AI accelerator
-bugcam check camera   # Test camera connection
-bugcam check sensor   # Test I2C sensors
+bugcam status           # Run all checks
+bugcam status deps      # Check software dependencies
+bugcam status devices   # Check hardware connections
+bugcam status hailo     # Check Hailo AI accelerator
+bugcam status camera    # Check camera connection
+bugcam status sensor    # Check I2C sensors
+bugcam status models    # Check installed models
 ```
 
 **Checks performed:**
 
 | Check | What it tests | How |
 |-------|---------------|-----|
+| `deps` | Python packages (gi, hailo, numpy, cv2, hailo_apps) | Imports in detection Python |
 | `hailo` | Hailo AI accelerator is detected | Runs `hailortcli scan` |
 | `camera` | RPi camera is accessible | Imports picamera2 and initializes |
-| `sensor` | I2C sensors are connected | Scans I2C bus for known addresses (SCD30, SCD40, BME280) |
+| `sensor` | I2C sensors are connected | Scans I2C bus for known addresses |
+| `models` | .hef model files installed | Checks cache directory |
 
 ### `bugcam models`
 Manage detection models.
@@ -100,7 +98,12 @@ bugcam models list
 
 # Show model details
 bugcam models info yolov8m
+
+# Delete a model
+bugcam models delete yolov8m
 ```
+
+> **Note:** The available models (yolov8s, yolov8m) are generic COCO object detection models from the Hailo Model Zoo, not insect-specific models.
 
 ### `bugcam autostart`
 Manage systemd service for automatic detection on boot.
@@ -135,11 +138,8 @@ bugcam autostart logs --follow
 ## Troubleshooting
 
 ```bash
-# Run diagnostics
-bugcam doctor
-
-# Verify system readiness
-bugcam check
+# Run all system checks
+bugcam status
 
 # Command not found after install
 pipx ensurepath  # then close and reopen terminal

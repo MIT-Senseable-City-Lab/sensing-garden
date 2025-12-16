@@ -283,3 +283,63 @@ def info(model_name: str) -> None:
     table.add_row("SHA256", checksum[:16] + "...")
 
     console.print(table)
+
+
+@app.command()
+def delete(
+    model_name: Optional[str] = typer.Argument(None, help="Model to delete"),
+) -> None:
+    """Delete downloaded models from cache."""
+    models = get_hef_models()
+
+    if not models:
+        console.print("[yellow]No models installed[/yellow]")
+        return
+
+    # If no model specified, show available models
+    if model_name is None:
+        console.print("[cyan]Installed models:[/cyan]\n")
+        for model in models:
+            location = "cache" if MODELS_CACHE_DIR in model.parents else "local"
+            can_delete = location == "cache"
+            status = "" if can_delete else " [dim](local - cannot delete)[/dim]"
+            console.print(f"  {model.name}{status}")
+        console.print("\n[dim]Usage:[/dim]")
+        console.print("[dim]  bugcam models delete <model_name>[/dim]")
+        return
+
+    # Add .hef extension if not present
+    if not model_name.endswith('.hef'):
+        model_name += '.hef'
+
+    # Find the model by name
+    model_path = None
+    for model in models:
+        if model.name == model_name:
+            model_path = model
+            break
+
+    if not model_path:
+        console.print(f"[red]Model '{model_name}' not found[/red]")
+        console.print(f"Available models: {', '.join(m.name for m in models)}")
+        raise typer.Exit(1)
+
+    # Only allow deletion from cache directory
+    if MODELS_CACHE_DIR not in model_path.parents:
+        console.print(f"[red]Cannot delete '{model_name}' from local resources[/red]")
+        console.print("[dim]Only cached models can be deleted[/dim]")
+        raise typer.Exit(1)
+
+    # Confirm deletion
+    confirm = typer.confirm(f"Delete {model_name}?")
+    if not confirm:
+        console.print("[yellow]Deletion cancelled[/yellow]")
+        return
+
+    # Delete the model
+    try:
+        model_path.unlink()
+        console.print(f"[green]✓ Deleted {model_name}[/green]")
+    except Exception as e:
+        console.print(f"[red]✗ Failed to delete: {e}[/red]")
+        raise typer.Exit(1)

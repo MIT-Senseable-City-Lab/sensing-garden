@@ -84,10 +84,15 @@ class TestPythonInterpreterSelection:
         mock_process = MagicMock()
         mock_process.wait.return_value = 0
         mock_process.returncode = 0
+        mock_process.communicate.return_value = ("", "")
         mock_popen.return_value = mock_process
 
+        # Create a real model file for the test
+        model_file = tmp_path / "test_model.hef"
+        model_file.touch()
+
         with patch.object(Path, 'home', return_value=tmp_path):
-            result = cli_runner.invoke(app, ["preview", "--model", "/fake/model.hef"])
+            result = cli_runner.invoke(app, ["preview", "--model", str(model_file)])
 
         # Verify subprocess was called with system Python
         assert mock_popen.called
