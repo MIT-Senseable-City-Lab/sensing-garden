@@ -78,14 +78,13 @@ def main():
     from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
     from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
 
+    # Import the detection handler - edit detection_handler.py to customize behavior
+    from bugcam.detection_handler import process_detections, format_detection_output
+
     # User-defined class to be used in the callback function
     class user_app_callback_class(app_callback_class):
         def __init__(self):
             super().__init__()
-            self.new_variable = 42
-
-        def new_function(self):
-            return "The meaning of life is: "
 
     # Callback function that will be called when data is available from the pipeline
     def app_callback(pad, info, user_data):
@@ -95,7 +94,7 @@ def main():
             return Gst.PadProbeReturn.OK
 
         user_data.increment()
-        string_to_print = f"Frame count: {user_data.get_count()}\n"
+        frame_count = user_data.get_count()
 
         # Get the caps from the pad
         format, width, height = get_caps_from_pad(pad)
@@ -107,29 +106,22 @@ def main():
 
         # Get the detections from the buffer
         roi = hailo.get_roi_from_buffer(buffer)
-        detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+        detections_raw = roi.get_objects_typed(hailo.HAILO_DETECTION)
 
-        # Parse the detections
-        detection_count = 0
-        for detection in detections:
-            label = detection.get_label()
-            bbox = detection.get_bbox()
-            confidence = detection.get_confidence()
-            if label == "person":
-                track_id = 0
-                track = detection.get_objects_typed(hailo.HAILO_UNIQUE_ID)
-                if len(track) == 1:
-                    track_id = track[0].get_id()
-                string_to_print += f"Detection: ID: {track_id} Label: {label} Confidence: {confidence:.2f}\n"
-                detection_count += 1
+        # Process detections through the handler (edit detection_handler.py to customize)
+        result = process_detections(detections_raw, frame_count, hailo)
 
-        if user_data.use_frame:
-            cv2.putText(frame, f"Detections: {detection_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, f"{user_data.new_function()} {user_data.new_variable}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        # Format and print output
+        if result.should_print:
+            output = format_detection_output(result)
+            print(output)
+
+        # Draw on frame if enabled
+        if user_data.use_frame and frame is not None:
+            cv2.putText(frame, f"Detections: {len(result.detections)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             user_data.set_frame(frame)
 
-        print(string_to_print)
         return Gst.PadProbeReturn.OK
 
     # Run the app
