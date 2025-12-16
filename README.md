@@ -112,11 +112,33 @@ bugcam models delete yolov8m
 | `small-generic` | 18 MB | Generic insect detection |
 | `london_141-multitask` | 34 MB | London invertebrates - 141 species classifier |
 
-### `bugcam autostart`
-Manage systemd service for automatic detection on boot.
+### `bugcam record`
+Record videos at intervals (without on-device detection).
 
 ```bash
-bugcam autostart enable
+# Record 60s videos every 10 minutes
+bugcam record start --interval 10 --length 60
+
+# Record for 8 hours then stop
+bugcam record start --duration 480 --interval 10 --length 60
+
+# Record a single test video
+bugcam record single --length 30
+```
+
+Videos are saved to `~/bugcam-videos/` by default with timestamp filenames.
+
+### `bugcam autostart`
+Manage systemd service for automatic detection or recording on boot.
+
+```bash
+# Detection mode (with AI model)
+bugcam autostart enable --mode detect --model small-generic
+
+# Recording mode (video only, no detection)
+bugcam autostart enable --mode record --interval 10 --length 60
+
+# Manage service
 bugcam autostart disable
 bugcam autostart status
 bugcam autostart logs [--follow]

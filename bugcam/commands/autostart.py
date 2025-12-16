@@ -13,7 +13,7 @@ console = Console()
 
 SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/bugcam.service")
 
-SERVICE_TEMPLATE = """[Unit]
+SERVICE_TEMPLATE_DETECT = """[Unit]
 Description=bugcam Insect Detection
 After=multi-user.target
 
@@ -23,6 +23,25 @@ User={user}
 Group=video
 WorkingDirectory={workdir}
 ExecStart={bugcam_path} detect start --model {model} --quiet
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+SERVICE_TEMPLATE_RECORD = """[Unit]
+Description=bugcam Video Recording
+After=multi-user.target
+
+[Service]
+Type=simple
+User={user}
+Group=video
+WorkingDirectory={workdir}
+ExecStart={bugcam_path} record start --interval {interval} --length {length} --output-dir {output_dir} --quiet
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -71,10 +90,24 @@ def _run_systemctl(command: list[str], check: bool = True) -> subprocess.Complet
 
 @app.command()
 def enable(
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use"),
+    mode: str = typer.Option("detect", "--mode", help="Mode: detect or record"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use (detect mode)"),
+    interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings (record mode)"),
+    length: int = typer.Option(60, "--length", "-l", help="Video length in seconds (record mode)"),
+    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o", help="Output directory (record mode)"),
     start_now: bool = typer.Option(True, "--start/--no-start", help="Start service immediately"),
 ) -> None:
-    """Enable auto-start detection on boot."""
+    """Enable auto-start on boot.
+
+    Supports two modes:
+    - detect: Run detection with a model
+    - record: Record videos at intervals
+    """
+    # Validate mode
+    if mode not in ("detect", "record"):
+        console.print(f"[red]Invalid mode: {mode}. Use 'detect' or 'record'[/red]")
+        raise typer.Exit(1)
+
     try:
         # Get bugcam binary path
         bugcam_path = _get_bugcam_path()
@@ -87,23 +120,39 @@ def enable(
         user = os.environ.get("USER", "pi")
         workdir = Path.home()
 
-        # Default model if not specified
-        if model is None:
-            model = "yolov8n"
+        # Generate service file based on mode
+        if mode == "detect":
+            # Default model if not specified
+            if model is None:
+                model = "yolov8n"
 
-        # Validate model name to prevent command injection
-        if not _validate_model_name(model):
-            console.print(f"[red]Error: Invalid model name '{model}'[/red]")
-            console.print("[yellow]Model name must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes[/yellow]")
-            raise typer.Exit(1)
+            # Validate model name to prevent command injection
+            if not _validate_model_name(model):
+                console.print(f"[red]Error: Invalid model name '{model}'[/red]")
+                console.print("[yellow]Model name must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes[/yellow]")
+                raise typer.Exit(1)
 
-        # Generate service file content
-        service_content = SERVICE_TEMPLATE.format(
-            user=user,
-            workdir=workdir,
-            bugcam_path=bugcam_path,
-            model=model,
-        )
+            service_content = SERVICE_TEMPLATE_DETECT.format(
+                user=user,
+                workdir=workdir,
+                bugcam_path=bugcam_path,
+                model=model,
+            )
+            mode_description = f"Detection with model: {model}"
+        else:
+            # Record mode
+            if output_dir is None:
+                output_dir = Path.home() / "bugcam-videos"
+
+            service_content = SERVICE_TEMPLATE_RECORD.format(
+                user=user,
+                workdir=workdir,
+                bugcam_path=bugcam_path,
+                interval=interval,
+                length=length,
+                output_dir=output_dir,
+            )
+            mode_description = f"Recording: {length}s every {interval}min to {output_dir}"
 
         # Write service file (requires sudo)
         console.print(f"[cyan]Creating systemd service at {SYSTEMD_SERVICE_PATH}[/cyan]")
@@ -157,9 +206,8 @@ def enable(
 
         console.print("\n[bold]Service Details:[/bold]")
         console.print(f"  Binary: {bugcam_path}")
-        console.print(f"  Model: {model}")
-        console.print(f"  User: {user}")
-        console.print(f"  Working Directory: {workdir}")
+        console.print(f"  Mode:   {mode_description}")
+        console.print(f"  User:   {user}")
         console.print("\n[dim]View logs with: bugcam autostart logs[/dim]")
 
     except subprocess.CalledProcessError as e:
