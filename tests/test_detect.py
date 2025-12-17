@@ -181,7 +181,7 @@ class TestPythonInterpreterSelection:
     def test_get_python_uses_hailo_venv_when_available(self, mock_system: MagicMock, tmp_path: Path) -> None:
         """On Linux with hailo venv, should use hailo venv Python."""
         # Create fake hailo venv
-        hailo_python = tmp_path / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
+        hailo_python = tmp_path / ".local" / "share" / "bugcam" / "hailo-venv" / "bin" / "python"
         hailo_python.parent.mkdir(parents=True)
         hailo_python.touch()
 

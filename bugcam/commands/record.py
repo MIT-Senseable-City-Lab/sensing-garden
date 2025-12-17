@@ -6,6 +6,7 @@ import platform
 import subprocess
 import tempfile
 import os
+import shutil
 from pathlib import Path
 from datetime import datetime
 from rich.console import Console
@@ -16,6 +17,20 @@ console = Console()
 
 # Default output directory
 DEFAULT_OUTPUT_DIR = Path.home() / "bugcam-videos"
+
+
+def _check_disk_space(output_dir: Path, min_free_mb: int = 300) -> tuple[bool, int]:
+    """Check if output directory has sufficient free disk space.
+
+    Returns tuple of (has_space, free_mb).
+    """
+    try:
+        usage = shutil.disk_usage(output_dir)
+        free_mb = usage.free // (1024 * 1024)
+        return free_mb >= min_free_mb, free_mb
+    except Exception:
+        # If we can't check, assume it's OK
+        return True, -1
 
 
 def _check_camera_available() -> bool:
@@ -146,6 +161,12 @@ def start(
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Check disk space before starting
+    has_space, free_mb = _check_disk_space(output_dir)
+    if not has_space:
+        console.print(f"[red]Insufficient disk space. Need at least 300MB free, have {free_mb}MB.[/red]")
+        raise typer.Exit(1)
+
     # Setup duration timer
     stop_flag = False
 
@@ -174,6 +195,12 @@ def start(
 
     try:
         while not stop_flag:
+            # Check disk space before each recording
+            has_space, free_mb = _check_disk_space(output_dir)
+            if not has_space:
+                console.print(f"[red]Disk space low ({free_mb}MB). Stopping recording.[/red]")
+                break
+
             # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             video_path = output_dir / f"video_{timestamp}.mp4"
@@ -243,6 +270,12 @@ def single(
         output = DEFAULT_OUTPUT_DIR / f"video_{timestamp}.mp4"
     else:
         output.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check disk space before recording
+    has_space, free_mb = _check_disk_space(output.parent)
+    if not has_space:
+        console.print(f"[red]Insufficient disk space. Need at least 300MB free, have {free_mb}MB.[/red]")
+        raise typer.Exit(1)
 
     console.print(f"[cyan]Recording {length}s video to {output}[/cyan]")
 

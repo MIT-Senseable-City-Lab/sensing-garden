@@ -5,13 +5,18 @@ import platform
 from pathlib import Path
 
 
+def get_hailo_venv_dir() -> Path:
+    """Get the directory for the Hailo venv."""
+    return Path.home() / ".local" / "share" / "bugcam" / "hailo-venv"
+
+
 def get_python_for_detection() -> str:
     """Get the Python interpreter to use for detection script.
 
-    Prefers hailo-rpi5-examples venv if available, otherwise system Python.
+    Prefers hailo venv if available, otherwise system Python.
     """
-    # Check for hailo-rpi5-examples venv
-    hailo_venv_python = Path.home() / "hailo-rpi5-examples" / "venv_hailo_rpi_examples" / "bin" / "python"
+    # Check for hailo venv
+    hailo_venv_python = get_hailo_venv_dir() / "bin" / "python"
     if hailo_venv_python.exists():
         return str(hailo_venv_python)
 
@@ -27,11 +32,3 @@ def get_cache_dir() -> Path:
     if xdg_cache:
         return Path(xdg_cache) / "bugcam"
     return Path.home() / ".cache" / "bugcam"
-
-
-def get_hailo_examples_dir() -> Path:
-    """Get the hailo-rpi5-examples directory, respecting HAILO_EXAMPLES_PATH env var."""
-    env_path = os.environ.get("HAILO_EXAMPLES_PATH")
-    if env_path:
-        return Path(env_path)
-    return Path.home() / "hailo-rpi5-examples"

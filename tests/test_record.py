@@ -120,3 +120,61 @@ def test_default_output_dir() -> None:
     """Test default output directory is set correctly."""
     from bugcam.commands.record import DEFAULT_OUTPUT_DIR
     assert DEFAULT_OUTPUT_DIR == Path.home() / "bugcam-videos"
+
+
+def test_check_disk_space_sufficient(tmp_path: Path) -> None:
+    """Test _check_disk_space returns True when sufficient space."""
+    from bugcam.commands.record import _check_disk_space
+
+    with patch('shutil.disk_usage') as mock_usage:
+        # Mock 500MB free
+        mock_usage.return_value = MagicMock(free=500 * 1024 * 1024)
+        has_space, free_mb = _check_disk_space(tmp_path)
+        assert has_space is True
+        assert free_mb == 500
+
+
+def test_check_disk_space_insufficient(tmp_path: Path) -> None:
+    """Test _check_disk_space returns False when insufficient space."""
+    from bugcam.commands.record import _check_disk_space
+
+    with patch('shutil.disk_usage') as mock_usage:
+        # Mock 100MB free (less than 300MB required)
+        mock_usage.return_value = MagicMock(free=100 * 1024 * 1024)
+        has_space, free_mb = _check_disk_space(tmp_path)
+        assert has_space is False
+        assert free_mb == 100
+
+
+def test_record_start_low_disk_space_exits(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test record start exits when disk space is low."""
+    with patch('bugcam.commands.record.platform.system', return_value='Linux'), \
+         patch('bugcam.commands.record._check_camera_available', return_value=True), \
+         patch('bugcam.commands.record._check_disk_space', return_value=(False, 100)):
+        result = cli_runner.invoke(app, [
+            "record", "start",
+            "--output-dir", str(tmp_path),
+            "--duration", "1",
+            "--interval", "1",
+            "--length", "10"
+        ])
+        assert result.exit_code == 1
+        assert "Insufficient disk space" in result.output
+        assert "100MB" in result.output
+
+
+def test_record_single_low_disk_space_exits(cli_runner: CliRunner, tmp_path: Path) -> None:
+    """Test record single exits when disk space is low."""
+    output_file = tmp_path / "test.mp4"
+
+    with patch('bugcam.commands.record.platform.system', return_value='Linux'), \
+         patch('bugcam.commands.record._check_camera_available', return_value=True), \
+         patch('bugcam.commands.record._check_disk_space', return_value=(False, 50)):
+        result = cli_runner.invoke(app, [
+            "record", "single",
+            "--output", str(output_file),
+            "--length", "10"
+        ])
+        assert result.exit_code == 1
+        assert "Insufficient disk space" in result.output
+        assert "50MB" in result.output

@@ -2,9 +2,10 @@
 import typer
 import subprocess
 import platform
+import shutil
 from pathlib import Path
 from rich.console import Console
-from ..config import get_python_for_detection, get_hailo_examples_dir
+from ..config import get_python_for_detection, get_hailo_venv_dir
 
 app = typer.Typer(help="Install dependencies")
 console = Console()
@@ -34,45 +35,60 @@ def setup() -> None:
         console.print(f"Current platform: {platform.system()}")
         raise typer.Exit(1)
 
-    hailo_examples_dir = get_hailo_examples_dir()
+    hailo_venv_dir = get_hailo_venv_dir()
 
-    # Step 1: Clone hailo-rpi5-examples if needed
-    if not hailo_examples_dir.exists():
-        console.print("[cyan]Cloning hailo-rpi5-examples...[/cyan]")
-        console.print(f"[dim]$ git clone {HAILO_RPI5_EXAMPLES_URL} {hailo_examples_dir}[/dim]\n")
+    # Check if venv already exists
+    if hailo_venv_dir.exists():
+        console.print(f"[green]Found Hailo venv at {hailo_venv_dir}[/green]\n")
+        python_exe = get_python_for_detection()
+        if check_import(python_exe, "hailo_apps"):
+            console.print("[green]Setup already complete![/green]")
+            console.print("Run [cyan]bugcam doctor[/cyan] to verify all dependencies.")
+            return
 
+    # Step 1: Clone hailo-rpi5-examples to temp directory with shallow clone
+    temp_clone_dir = Path("/tmp/hailo-rpi5-examples-setup")
+
+    if temp_clone_dir.exists():
+        console.print("[yellow]Removing existing temp directory...[/yellow]")
         try:
-            result = subprocess.run(
-                ["git", "clone", HAILO_RPI5_EXAMPLES_URL, str(hailo_examples_dir)],
-                timeout=120
-            )
-            if result.returncode != 0:
-                console.print("\n[red]Clone failed.[/red]")
-                raise typer.Exit(1)
-            console.print("[green]Clone complete.[/green]\n")
-        except subprocess.TimeoutExpired:
-            console.print("\n[red]Clone timed out.[/red]")
-            raise typer.Exit(1)
+            shutil.rmtree(temp_clone_dir)
         except Exception as e:
-            console.print(f"\n[red]Error cloning: {e}[/red]")
+            console.print(f"[yellow]Warning: Could not remove existing temp directory: {e}[/yellow]")
+
+    console.print("[cyan]Cloning hailo-rpi5-examples (shallow clone)...[/cyan]")
+    console.print(f"[dim]$ git clone --depth 1 {HAILO_RPI5_EXAMPLES_URL} {temp_clone_dir}[/dim]\n")
+
+    try:
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", HAILO_RPI5_EXAMPLES_URL, str(temp_clone_dir)],
+            timeout=120
+        )
+        if result.returncode != 0:
+            console.print("\n[red]Clone failed.[/red]")
             raise typer.Exit(1)
-    else:
-        console.print(f"[green]Found hailo-rpi5-examples at {hailo_examples_dir}[/green]\n")
+        console.print("[green]Clone complete.[/green]\n")
+    except subprocess.TimeoutExpired:
+        console.print("\n[red]Clone timed out.[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"\n[red]Error cloning: {e}[/red]")
+        raise typer.Exit(1)
 
     # Step 2: Run install script (creates venv, installs deps, compiles .so files)
-    install_script = hailo_examples_dir / "install.sh"
+    install_script = temp_clone_dir / "install.sh"
     if not install_script.exists():
         console.print(f"[red]install.sh not found at {install_script}[/red]")
         raise typer.Exit(1)
 
     console.print("[cyan]Running install script (this may take a few minutes)...[/cyan]")
     console.print("[dim]This will create the venv, install dependencies, and compile .so files[/dim]")
-    console.print(f"[dim]$ cd {hailo_examples_dir} && ./install.sh[/dim]\n")
+    console.print(f"[dim]$ cd {temp_clone_dir} && ./install.sh[/dim]\n")
 
     try:
         result = subprocess.run(
             ["./install.sh"],
-            cwd=str(hailo_examples_dir),
+            cwd=str(temp_clone_dir),
             timeout=600  # 10 min timeout
         )
         if result.returncode != 0:
@@ -86,7 +102,23 @@ def setup() -> None:
         console.print(f"\n[red]Error running install script: {e}[/red]")
         raise typer.Exit(1)
 
-    # Step 3: Verify hailo_apps installation
+    # Step 3: Move venv to permanent location
+    temp_venv_dir = temp_clone_dir / "venv_hailo_rpi_examples"
+    if not temp_venv_dir.exists():
+        console.print(f"[red]venv not found at {temp_venv_dir}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[cyan]Moving venv to {hailo_venv_dir}...[/cyan]")
+    hailo_venv_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.move(str(temp_venv_dir), str(hailo_venv_dir))
+        console.print("[green]Venv moved.[/green]\n")
+    except Exception as e:
+        console.print(f"\n[red]Failed to move venv: {e}[/red]")
+        console.print(f"[yellow]Temp files remain at {temp_clone_dir}, manual cleanup may be needed[/yellow]")
+        raise typer.Exit(1)
+
+    # Step 4: Verify hailo_apps installation (before cleanup so we can retry if needed)
     python_exe = get_python_for_detection()
     console.print("[cyan]Verifying hailo_apps installation...[/cyan]")
 
@@ -121,5 +153,14 @@ def setup() -> None:
             console.print("[red]hailo_apps installation verification failed.[/red]")
             raise typer.Exit(1)
 
-    console.print("\n[green]Setup complete![/green]")
+    # Step 5: Clean up temp directory (after verification succeeds)
+    if temp_clone_dir.exists():
+        console.print("[cyan]Cleaning up temporary files...[/cyan]")
+        try:
+            shutil.rmtree(temp_clone_dir)
+            console.print("[green]Cleanup complete.[/green]\n")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to clean temp files at {temp_clone_dir}: {e}[/yellow]\n")
+
+    console.print("[green]Setup complete![/green]")
     console.print("Run [cyan]bugcam doctor[/cyan] to verify all dependencies.")

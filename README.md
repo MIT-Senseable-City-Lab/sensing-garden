@@ -49,11 +49,13 @@ bugcam preview
 ## Commands
 
 ### `bugcam setup` ✓
-Initialize bugcam by installing dependencies and downloading hailo-rpi5-examples.
+Initialize bugcam by installing Hailo dependencies and creating the virtual environment.
 
 ```bash
 bugcam setup
 ```
+
+This clones hailo-rpi5-examples to `/tmp` during setup, runs the installation, then moves only the virtual environment to `~/.local/share/bugcam/hailo-venv`.
 
 ### `bugcam preview` ⚠️
 Run live camera preview with detection overlay.
@@ -171,7 +173,6 @@ bugcam autostart logs [--follow]
 
 Optional configuration:
 
-- `HAILO_EXAMPLES_PATH` - Custom path for hailo-rpi5-examples (default: `~/hailo-rpi5-examples`)
 - `XDG_CACHE_HOME` - Custom cache directory location (default: `~/.cache`)
 
 ## Monitoring
