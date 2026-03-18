@@ -14,7 +14,7 @@ Manage and inspect detection models. Models must be downloaded before use.
 ```bash
 bugcam models download <model_name>
 ```
-Download a model from S3 and cache it locally in `~/.cache/bugcam/models/`.
+Download a model bundle from S3 and cache it locally in `~/.cache/bugcam/models/`.
 
 To see available models, run `bugcam models list`.
 
@@ -27,7 +27,7 @@ bugcam models download london_141-multitask
 ```bash
 bugcam models list
 ```
-Shows all downloaded models in the cache directory.
+Shows all downloaded model bundles in the cache directory.
 
 ### Show model details ✓
 ```bash
@@ -145,8 +145,11 @@ Stream live logs from the running service (like `tail -f`).
 
 ### Model Storage
 
-Models are downloaded from S3 and cached locally:
+Models are downloaded from S3 and cached locally as bundles:
 - **Cache directory**: `~/.cache/bugcam/models/`
+- **Bundle layout**:
+  - `~/.cache/bugcam/models/<bundle>/model.hef`
+  - `~/.cache/bugcam/models/<bundle>/labels.txt`
 
 Download models with `bugcam models download <model_name>` before running detection. Use `bugcam models list` to see available models.
 

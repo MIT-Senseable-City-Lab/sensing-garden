@@ -18,9 +18,13 @@ class TestPreview:
         assert "--model" in result.output or "-m" in result.output
         assert "--timeout" in result.output or "-t" in result.output
 
+    @patch("bugcam.commands.preview.preflight_check", return_value=True)
+    @patch("bugcam.commands.preview.resolve_model_path", return_value=Path("/fake/model.hef"))
     @patch('bugcam.commands.preview.subprocess.Popen')
     @patch('pathlib.Path.exists')
-    def test_preview_calls_subprocess_with_model(self, mock_exists, mock_popen, cli_runner):
+    def test_preview_calls_subprocess_with_model(
+        self, mock_exists, mock_popen, mock_resolve_model_path, mock_preflight, cli_runner
+    ):
         """Test preview calls subprocess with correct args when model exists."""
         mock_exists.return_value = True
         mock_process = MagicMock()
@@ -32,6 +36,7 @@ class TestPreview:
 
         # Verify subprocess was called
         assert mock_popen.called
+        mock_resolve_model_path.assert_called_once_with("/fake/model.hef")
         call_args = mock_popen.call_args[0][0]
         assert "--input" in call_args
         assert "rpi" in call_args
@@ -45,18 +50,44 @@ class TestPreview:
             assert result.exit_code == 1
             assert "not found" in result.output.lower() or "error" in result.output.lower()
 
+    @patch("bugcam.commands.preview.preflight_check", return_value=True)
+    @patch("bugcam.commands.preview.resolve_model_path", return_value=Path("/cache/yolov8s/model.hef"))
+    @patch("bugcam.commands.preview.subprocess.Popen")
+    @patch("pathlib.Path.exists", return_value=True)
+    def test_preview_resolves_bundle_name(
+        self,
+        mock_exists: MagicMock,
+        mock_popen: MagicMock,
+        mock_resolve_model_path: MagicMock,
+        mock_preflight: MagicMock,
+        cli_runner: CliRunner,
+    ) -> None:
+        """Test preview accepts a bundle name and resolves model.hef."""
+        mock_process = MagicMock()
+        mock_process.wait.return_value = 0
+        mock_process.returncode = 0
+        mock_process.communicate.return_value = ("", "")
+        mock_popen.return_value = mock_process
+
+        result = cli_runner.invoke(app, ["preview", "--model", "yolov8s"])
+
+        assert result.exit_code == 0
+        mock_resolve_model_path.assert_called_once_with("yolov8s")
+        call_args = mock_popen.call_args[0][0]
+        assert "/cache/yolov8s/model.hef" in call_args
+
 
 class TestPythonInterpreterSelection:
     """Tests for Python interpreter selection (RPi5 vs Mac)."""
 
-    @patch('bugcam.utils.platform.system', return_value='Linux')
+    @patch('bugcam.config.platform.system', return_value='Linux')
     def test_get_python_returns_system_python_on_linux(self, mock_system: MagicMock, tmp_path: Path) -> None:
         """On Linux (RPi5) without hailo venv, should return /usr/bin/python3."""
         with patch.object(Path, 'home', return_value=tmp_path):
             result = get_python_for_detection()
             assert result == "/usr/bin/python3"
 
-    @patch('bugcam.utils.platform.system', return_value='Linux')
+    @patch('bugcam.config.platform.system', return_value='Linux')
     def test_get_python_uses_hailo_venv_when_available(self, mock_system: MagicMock, tmp_path: Path) -> None:
         """On Linux with hailo venv, should use hailo venv Python."""
         hailo_python = tmp_path / ".local" / "share" / "bugcam" / "hailo-venv" / "bin" / "python"
@@ -67,14 +98,14 @@ class TestPythonInterpreterSelection:
             result = get_python_for_detection()
             assert result == str(hailo_python)
 
-    @patch('bugcam.utils.platform.system', return_value='Darwin')
+    @patch('bugcam.config.platform.system', return_value='Darwin')
     def test_get_python_returns_sys_executable_on_mac(self, mock_system: MagicMock) -> None:
         """On Mac (Darwin), should return sys.executable."""
         result = get_python_for_detection()
         assert result == sys.executable
 
-    @patch('bugcam.utils.preflight_check', return_value=True)
-    @patch('bugcam.utils.platform.system', return_value='Linux')
+    @patch('bugcam.commands.preview.preflight_check', return_value=True)
+    @patch('bugcam.config.platform.system', return_value='Linux')
     @patch('bugcam.commands.preview.subprocess.Popen')
     def test_preview_uses_system_python_on_rpi(
         self, mock_popen: MagicMock, mock_system: MagicMock,
@@ -110,7 +141,7 @@ class TestPreflightCheck:
         assert preflight_check() is True
 
     @patch('bugcam.utils.platform.system', return_value='Linux')
-    @patch('bugcam.commands.preview.get_python_for_detection', return_value='/usr/bin/python3')
+    @patch('bugcam.utils.get_python_for_detection', return_value='/usr/bin/python3')
     @patch('bugcam.utils.subprocess.run')
     def test_preflight_checks_hailo_apps_import(
         self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
@@ -131,7 +162,7 @@ class TestPreflightCheck:
         assert call_args == ['/usr/bin/python3', '-c', 'import gi, hailo, hailo_apps, numpy, cv2']
 
     @patch('bugcam.utils.platform.system', return_value='Linux')
-    @patch('bugcam.commands.preview.get_python_for_detection', return_value='/usr/bin/python3')
+    @patch('bugcam.utils.get_python_for_detection', return_value='/usr/bin/python3')
     @patch('bugcam.utils.subprocess.run')
     def test_preflight_returns_false_on_import_failure(
         self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
@@ -147,7 +178,7 @@ class TestPreflightCheck:
         assert result is False
 
     @patch('bugcam.utils.platform.system', return_value='Linux')
-    @patch('bugcam.commands.preview.get_python_for_detection', return_value='/usr/bin/python3')
+    @patch('bugcam.utils.get_python_for_detection', return_value='/usr/bin/python3')
     @patch('bugcam.utils.subprocess.run', side_effect=Exception("Test error"))
     def test_preflight_returns_false_on_exception(
         self, mock_run: MagicMock, mock_get_python: MagicMock, mock_system: MagicMock
@@ -159,9 +190,10 @@ class TestPreflightCheck:
         assert result is False
 
     @patch('bugcam.commands.preview.preflight_check', return_value=False)
+    @patch("bugcam.commands.preview.resolve_model_path", return_value=Path("/fake/model.hef"))
     @patch('pathlib.Path.exists', return_value=True)
     def test_preview_fails_when_preflight_fails(
-        self, mock_exists: MagicMock, mock_preflight: MagicMock, cli_runner: CliRunner
+        self, mock_exists: MagicMock, mock_resolve_model_path: MagicMock, mock_preflight: MagicMock, cli_runner: CliRunner
     ) -> None:
         """Preview should exit with error when preflight check fails."""
         result = cli_runner.invoke(app, ["preview", "--model", "/fake/model.hef"])

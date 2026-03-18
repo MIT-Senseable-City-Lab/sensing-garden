@@ -2,6 +2,7 @@ import subprocess
 import platform
 from rich.console import Console
 from rich.table import Table
+from .config import get_python_for_detection
 
 console = Console()
 
@@ -27,13 +28,12 @@ def require_linux() -> bool:
         return False
     return True
 
-def preflight_check() -> bool:
+def preflight_check(python_exe: str | None = None) -> bool:
     """Check if detection dependencies are available in the Python interpreter."""
     if platform.system() != "Linux":
         return True  # Can't check on non-Linux
     try:
-        from .config import get_python_for_detection
-        python_exe = get_python_for_detection()
+        python_exe = python_exe or get_python_for_detection()
         result = subprocess.run(
             [python_exe, "-c", "import gi, hailo, hailo_apps, numpy, cv2"],
             capture_output=True,

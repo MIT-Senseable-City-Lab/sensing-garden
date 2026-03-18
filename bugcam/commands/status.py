@@ -1,11 +1,20 @@
 """System status and diagnostics for bugcam."""
+import importlib.util
 import typer
 import subprocess
 import platform
 from pathlib import Path
 from rich.console import Console
-from ..config import get_cache_dir, get_iphone_watch_dir, get_python_for_detection, get_recordings_dir
+from ..config import (
+    get_edge26_labels_path,
+    get_edge26_model_path,
+    get_iphone_watch_dir,
+    get_python_for_detection,
+    get_recordings_dir,
+    is_edge26_classification_enabled,
+)
 from ..jobs import ensure_job_dirs, get_job_counts
+from ..model_bundles import get_installed_bundles
 
 app = typer.Typer(help="Check system status and dependencies")
 console = Console()
@@ -114,10 +123,9 @@ def _check_sensor() -> tuple[bool, str]:
 
 def _check_models() -> tuple[bool, str]:
     """Check for installed models."""
-    models_dir = get_cache_dir() / "models"
-    hef_files = list(models_dir.glob("*.hef")) if models_dir.exists() else []
-    if hef_files:
-        return True, f"{len(hef_files)} installed"
+    bundles = get_installed_bundles(require_labels=True)
+    if bundles:
+        return True, f"{len(bundles)} installed"
     return False, "None installed"
 
 
@@ -132,6 +140,34 @@ def _check_jobs() -> tuple[bool, str]:
         f"failed={counts['failed']}"
     )
     return counts["failed"] == 0, detail
+
+
+def _check_edge26_runtime() -> tuple[bool, str]:
+    """Check edge26-backed processor readiness."""
+    classification_enabled = is_edge26_classification_enabled()
+    details = [f"classification={'on' if classification_enabled else 'off'}"]
+    ok = True
+    bugspot_ok = importlib.util.find_spec("bugspot") is not None
+    details.append(f"bugspot={'ok' if bugspot_ok else 'missing'}")
+    ok = ok and bugspot_ok
+
+    if classification_enabled:
+        model_path = get_edge26_model_path()
+        model_ok = model_path.exists()
+        details.append(f"model={'ok' if model_ok else 'missing'}")
+        ok = ok and model_ok
+
+        labels_path = get_edge26_labels_path(model_path)
+        labels_ok = labels_path.exists()
+        details.append(f"labels={'ok' if labels_ok else 'missing'}")
+        ok = ok and labels_ok
+
+        for module_name in ("requests", "hailo_platform"):
+            module_ok = importlib.util.find_spec(module_name) is not None
+            details.append(f"{module_name}={'ok' if module_ok else 'missing'}")
+            ok = ok and module_ok
+
+    return ok, ", ".join(details)
 
 
 def _print_status(name: str, ok: bool, detail: str) -> None:
@@ -290,10 +326,12 @@ def jobs() -> None:
     console.print("\n[bold cyan]Jobs[/bold cyan]")
     console.print(f"  iPhone watch: [cyan]{get_iphone_watch_dir()}[/cyan]")
     console.print(f"  RPi watch:    [cyan]{get_recordings_dir()}[/cyan]")
-    ok, detail = _check_jobs()
-    _print_status("Queue", ok, detail)
+    queue_ok, queue_detail = _check_jobs()
+    runtime_ok, runtime_detail = _check_edge26_runtime()
+    _print_status("Queue", queue_ok, queue_detail)
+    _print_status("Processor", runtime_ok, runtime_detail)
     console.print()
-    raise typer.Exit(0 if ok else 1)
+    raise typer.Exit(0 if queue_ok and runtime_ok else 1)
 
 
 @app.callback(invoke_without_command=True)
@@ -322,7 +360,7 @@ def status(ctx: typer.Context) -> None:
     models_ok, models_detail = _check_models()
     if not models_ok:
         all_ok = False
-    _print_status("HEF files", models_ok, models_detail)
+    _print_status("Bundles", models_ok, models_detail)
 
     # Jobs
     console.print("\n[cyan]Jobs[/cyan]")
@@ -330,6 +368,10 @@ def status(ctx: typer.Context) -> None:
     if not jobs_ok:
         all_ok = False
     _print_status("Queue", jobs_ok, jobs_detail)
+    runtime_ok, runtime_detail = _check_edge26_runtime()
+    if not runtime_ok:
+        all_ok = False
+    _print_status("Processor", runtime_ok, runtime_detail)
 
     # Devices
     console.print("\n[cyan]Devices[/cyan]")

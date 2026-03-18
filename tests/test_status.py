@@ -127,12 +127,13 @@ def test_check_models_found(tmp_path) -> None:
     """Test _check_models returns True when models exist."""
     from bugcam.commands.status import _check_models
 
-    # Create fake model
-    models_dir = tmp_path / "models"
-    models_dir.mkdir()
-    (models_dir / "test.hef").touch()
+    bundle_dir = tmp_path / "models" / "test"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "model.hef").touch()
+    (bundle_dir / "labels.txt").write_text("species-a\n", encoding="utf-8")
 
-    with patch('bugcam.commands.status.get_cache_dir', return_value=tmp_path):
+    with patch("bugcam.commands.status.get_installed_bundles") as mock_get_installed_bundles:
+        mock_get_installed_bundles.return_value = [object()]
         ok, detail = _check_models()
         assert ok is True
         assert "1 installed" in detail
@@ -142,7 +143,7 @@ def test_check_models_not_found(tmp_path) -> None:
     """Test _check_models returns False when no models."""
     from bugcam.commands.status import _check_models
 
-    with patch('bugcam.commands.status.get_cache_dir', return_value=tmp_path):
+    with patch("bugcam.commands.status.get_installed_bundles", return_value=[]):
         ok, detail = _check_models()
         assert ok is False
         assert "None" in detail
@@ -158,6 +159,7 @@ def test_status_runs_all_checks(cli_runner: CliRunner) -> None:
          patch.object(status, '_check_sensor', return_value=(True, "OK")), \
          patch.object(status, '_check_models', return_value=(True, "1 installed")), \
          patch.object(status, '_check_jobs', return_value=(True, "unprocessed=0, processed=0, upload=0, failed=0")), \
+         patch.object(status, '_check_edge26_runtime', return_value=(True, "model=ok, bugspot=ok, labels=ok, requests=ok, hailo_platform=ok")), \
          patch('platform.system', return_value='Linux'):
         result = cli_runner.invoke(app, ["status"])
         assert "system status" in result.output

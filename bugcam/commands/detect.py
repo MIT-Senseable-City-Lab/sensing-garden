@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from ..config import get_python_for_detection, get_cache_dir
+from ..model_bundles import get_installed_bundles, resolve_model_path
 from ..utils import preflight_check, handle_numpy_error, handle_hailo_lib_error
 
 app = typer.Typer(help="Run insect detection")
@@ -17,7 +18,7 @@ console = Console()
 
 @app.command()
 def start(
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model name or path (default: auto-detect)"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model bundle name or path to model.hef (default: first installed bundle)"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file for detections (JSONL format)"),
     duration: Optional[int] = typer.Option(None, "--duration", "-d", help="Run for N minutes then stop"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress live output"),
@@ -46,7 +47,8 @@ def start(
         raise typer.Exit(1)
 
     # Pre-flight dependency check
-    if not preflight_check():
+    python_exe = get_python_for_detection()
+    if not preflight_check(python_exe):
         console.print("[red]Missing system dependencies for detection.[/red]")
         console.print("Run [cyan]bugcam doctor[/cyan] to see what's missing.")
         raise typer.Exit(1)
@@ -57,7 +59,7 @@ def start(
 
     # Build command - use system Python on Linux to access gi/hailo system packages
     cmd = [
-        get_python_for_detection(),
+        python_exe,
         str(detection_script),
         "--input", "rpi",
         "--hef-path", str(model_path),
@@ -153,52 +155,16 @@ def start(
 
 def _resolve_model_path(model: Optional[str]) -> Optional[Path]:
     """
-    Resolve model path from name or path.
-
-    If model is None, auto-detect first .hef in cache/resources
-    If model is a path, use it directly (NOTE: allows arbitrary paths - this is intentional
-    for a local CLI tool where users are trusted to specify their own model locations)
-    If model is a name, look for it in cache, then resources/
+    Resolve model path from bundle name or explicit .hef path.
     """
-    # Cache and resources directories
-    models_dir = get_cache_dir() / "models"
-    resources_dir = Path(__file__).parent.parent.parent / "resources"
+    return resolve_model_path(model)
 
-    if model is None:
-        # Auto-detect first .hef file - check cache first, then resources
-        if models_dir.exists():
-            hef_files = list(models_dir.glob("*.hef"))
-            if hef_files:
-                return hef_files[0]
 
-        if resources_dir.exists():
-            hef_files = list(resources_dir.glob("*.hef"))
-            if hef_files:
-                return hef_files[0]
-
-        return None
-
-    # Check if it's a direct path
-    # NOTE: Intentionally allows arbitrary paths for user flexibility in a local CLI tool
-    model_path = Path(model)
-    if model_path.exists() and model_path.suffix == ".hef":
-        return model_path
-
-    # Add .hef extension if not present
-    if not model.endswith(".hef"):
-        model = f"{model}.hef"
-
-    # Look in cache directory first
-    cache_model = models_dir / model
-    if cache_model.exists():
-        return cache_model
-
-    # Fall back to resources directory
-    resource_model = resources_dir / model
-    if resource_model.exists():
-        return resource_model
-
-    return None
+def _describe_model(model_path: Path) -> str:
+    """Return a user-facing model description."""
+    if model_path.name == "model.hef" and model_path.parent.name:
+        return model_path.parent.name
+    return model_path.name
 
 
 def _show_startup_banner(model_path: Path, output: Optional[Path], duration: Optional[int]) -> None:
@@ -207,7 +173,7 @@ def _show_startup_banner(model_path: Path, output: Optional[Path], duration: Opt
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(style="white")
 
-    table.add_row("Model:", str(model_path.name))
+    table.add_row("Model:", _describe_model(model_path))
     if output:
         table.add_row("Output:", str(output))
     if duration:
@@ -221,12 +187,15 @@ def _show_startup_banner(model_path: Path, output: Optional[Path], duration: Opt
 def _show_model_not_found_help() -> None:
     """Display helpful message when no model is found."""
     models_dir = get_cache_dir() / "models"
+    bundles = get_installed_bundles(require_labels=False)
+    bundle_list = ", ".join(bundle.name for bundle in bundles) if bundles else "none"
 
     console.print(Panel(
         "[bold red]No model found[/bold red]\n\n"
         "To download a model, run:\n"
-        "[cyan]bugcam model download[/cyan]\n\n"
-        f"Or place a .hef file in:\n{models_dir}",
+        "[cyan]bugcam models download <bundle-name>[/cyan]\n\n"
+        f"Installed bundles: {bundle_list}\n"
+        f"Model bundle cache:\n{models_dir}",
         border_style="red"
     ))
 

@@ -97,7 +97,7 @@ bugcam status models    # Check installed models
 | `hailo` | Hailo AI accelerator is detected | Runs `hailortcli scan` |
 | `camera` | RPi camera is accessible | Imports picamera2 and initializes |
 | `sensor` | I2C sensors are connected | Scans I2C bus for known addresses |
-| `models` | .hef model files installed | Checks cache directory |
+| `models` | Complete model bundles installed | Checks cache directory for `model.hef` + `labels.txt` |
 
 ### `bugcam models` ✓
 Manage detection models.
@@ -117,6 +117,11 @@ bugcam models delete london_141-multitask
 ```
 
 Models are managed by the S3 backend. Run `bugcam models list` to see available models.
+
+Installed models are stored as bundle directories:
+
+- `~/.cache/bugcam/models/<bundle>/model.hef`
+- `~/.cache/bugcam/models/<bundle>/labels.txt`
 
 ### `bugcam record` ✓
 Record videos at intervals (without on-device detection). Useful for collecting training data or when you want to process videos later on a more powerful machine.
@@ -174,6 +179,7 @@ bugcam autostart logs [--follow]
 Optional configuration:
 
 - `XDG_CACHE_HOME` - Custom cache directory location (default: `~/.cache`)
+- `BUGCAM_EDGE26_CLASSIFICATION=1` - Enable edge26 classification in the jobs pipeline. Default is detection-only until a verified classifier bundle is installed.
 
 ## Monitoring
 

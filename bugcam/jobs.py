@@ -12,13 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
+    get_default_device_id,
     get_incoming_dir,
     get_iphone_watch_dir,
     get_jobs_dir,
     get_outputs_dir,
     get_recordings_dir,
 )
-from .processing import get_processor
+from .processing import get_processor_manager
 
 JOB_DIR_NAMES = {
     "unprocessed": "unprocessed",
@@ -154,6 +155,8 @@ def create_job_from_source(source_type: str, source_path: Path) -> dict[str, Any
         "job_id": job_id,
         "stage": "unprocessed",
         "source_type": source_type,
+        "logical_device_id": get_default_device_id(source_type),
+        "continuity_key": get_default_device_id(source_type),
         "source_path": str(source_path),
         "managed_media_path": str(managed_media_path),
         "original_filename": source_path.name,
@@ -212,7 +215,7 @@ def run_ingest() -> dict[str, int]:
 
 
 def _process_job(job: dict[str, Any]) -> dict[str, Any]:
-    processor = get_processor()
+    processor = get_processor_manager()
     media_path = Path(job["managed_media_path"])
     output_dir = ensure_job_dirs()["outputs"] / job["job_id"]
     result = processor.process(media_path, output_dir, job)
@@ -257,7 +260,7 @@ def upload_job(job: dict[str, Any]) -> dict[str, Any]:
     base_url = _require_env("API_BASE_URL")
     aws_access_key_id = _require_env("AWS_ACCESS_KEY_ID")
     aws_secret_access_key = _require_env("AWS_SECRET_ACCESS_KEY")
-    device_id = os.environ.get("DEVICE_ID") or f"bugcam-{job['source_type']}"
+    device_id = os.environ.get("DEVICE_ID") or job.get("logical_device_id") or f"bugcam-{job['source_type']}"
 
     client = SensingGardenClient(
         base_url=base_url,
@@ -269,6 +272,7 @@ def upload_job(job: dict[str, Any]) -> dict[str, Any]:
     metadata = {
         "job_id": job["job_id"],
         "source_type": job["source_type"],
+        "logical_device_id": job.get("logical_device_id"),
         "original_filename": job["original_filename"],
         "processing": job.get("processing", {}),
     }

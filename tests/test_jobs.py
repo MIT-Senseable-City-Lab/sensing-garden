@@ -9,6 +9,24 @@ from bugcam.cli import app
 from bugcam.jobs import ensure_job_dirs, get_job_counts
 
 
+def _mock_processor_process(media_path: Path, output_dir: Path, job: dict) -> dict:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result_path = output_dir / "results.json"
+    result_path.write_text('{"summary":{"total_tracks":1,"confirmed_tracks":1}}', encoding="utf-8")
+    return {
+        "processor": "edge26",
+        "job_id": job["job_id"],
+        "source_type": job["source_type"],
+        "logical_device_id": job["logical_device_id"],
+        "input_media": str(media_path),
+        "output_dir": str(output_dir),
+        "results_path": str(result_path),
+        "summary": {"total_tracks": 1, "confirmed_tracks": 1},
+        "tracks": 1,
+        "confirmed_tracks": 1,
+    }
+
+
 def test_jobs_help(cli_runner: CliRunner) -> None:
     result = cli_runner.invoke(app, ["jobs", "--help"])
     assert result.exit_code == 0
@@ -51,7 +69,11 @@ def test_jobs_ingest_process_flow(cli_runner: CliRunner, tmp_path: Path, monkeyp
     assert ingest.exit_code == 0
     assert "created=1" in ingest.output
 
-    process = cli_runner.invoke(app, ["jobs", "run", "--stage", "process"])
+    mock_manager = MagicMock()
+    mock_manager.process.side_effect = _mock_processor_process
+    process = None
+    with patch("bugcam.jobs.get_processor_manager", return_value=mock_manager):
+        process = cli_runner.invoke(app, ["jobs", "run", "--stage", "process"])
     assert process.exit_code == 0
     assert "processed=1" in process.output
 
@@ -59,7 +81,7 @@ def test_jobs_ingest_process_flow(cli_runner: CliRunner, tmp_path: Path, monkeyp
     assert counts["processed"] == 1
     output_dirs = list((state_dir / "outputs").glob("*"))
     assert len(output_dirs) == 1
-    assert (output_dirs[0] / "result.json").exists()
+    assert (output_dirs[0] / "results.json").exists()
 
 
 def test_jobs_upload_moves_to_completed(cli_runner: CliRunner, tmp_path: Path, monkeypatch) -> None:
@@ -80,7 +102,10 @@ def test_jobs_upload_moves_to_completed(cli_runner: CliRunner, tmp_path: Path, m
     monkeypatch.setenv("DEVICE_ID", "device-123")
 
     cli_runner.invoke(app, ["jobs", "run", "--stage", "ingest"])
-    cli_runner.invoke(app, ["jobs", "run", "--stage", "process"])
+    mock_manager = MagicMock()
+    mock_manager.process.side_effect = _mock_processor_process
+    with patch("bugcam.jobs.get_processor_manager", return_value=mock_manager):
+        cli_runner.invoke(app, ["jobs", "run", "--stage", "process"])
 
     mock_client = MagicMock()
     mock_client.videos.upload_video.return_value = {"id": "video-1"}
@@ -103,6 +128,8 @@ def test_jobs_retry_failed_process(cli_runner: CliRunner, tmp_path: Path, monkey
         "job_id": "job-1",
         "stage": "failed",
         "source_type": "iphone",
+        "logical_device_id": "bugcam-iphone",
+        "continuity_key": "bugcam-iphone",
         "source_path": "/tmp/source.mp4",
         "managed_media_path": "/tmp/managed.mp4",
         "original_filename": "source.mp4",

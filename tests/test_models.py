@@ -1,337 +1,300 @@
 """Tests for bugcam models command."""
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 import urllib.error
+
+import pytest
 from typer.testing import CliRunner
+
 from bugcam.cli import app
+from bugcam.model_bundles import (
+    BUNDLE_LABELS_FILENAME,
+    BUNDLE_MODEL_FILENAME,
+    MODELS_BASE_URL,
+    list_remote_bundle_names,
+)
 
 
 def test_models_list_help(cli_runner: CliRunner) -> None:
-    """Test models list help."""
     result = cli_runner.invoke(app, ["models", "list", "--help"])
     assert result.exit_code == 0
 
 
 def test_models_info_help(cli_runner: CliRunner) -> None:
-    """Test models info help."""
     result = cli_runner.invoke(app, ["models", "info", "--help"])
     assert result.exit_code == 0
 
 
 def test_models_download_help(cli_runner: CliRunner) -> None:
-    """Test models download help."""
     result = cli_runner.invoke(app, ["models", "download", "--help"])
     assert result.exit_code == 0
 
 
-def test_models_list_shows_models(cli_runner: CliRunner, temp_resources_dir: Path) -> None:
-    """Test models list shows available models."""
-    # Patch both cache and local dirs to use our temp directory
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', temp_resources_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', temp_resources_dir):
+def test_models_delete_help(cli_runner: CliRunner) -> None:
+    result = cli_runner.invoke(app, ["models", "delete", "--help"])
+    assert result.exit_code == 0
+
+
+def test_models_list_shows_bundles(cli_runner: CliRunner, temp_resources_dir: Path, tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", temp_resources_dir
+    ):
         result = cli_runner.invoke(app, ["models", "list"])
-        assert result.exit_code == 0
-        # Should show the models we created in temp_resources_dir
-        assert "yolov8m.hef" in result.output
-        assert "yolov8s.hef" in result.output
+
+    assert result.exit_code == 0
+    assert "yolov8m" in result.output
+    assert "yolov8s" in result.output
+    assert "yes" in result.output
 
 
 def test_models_list_no_models(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test models list when no models exist."""
-    empty_dir = tmp_path / "empty_resources"
-    empty_dir.mkdir()
+    cache_dir = tmp_path / "cache"
+    local_dir = tmp_path / "resources"
+    cache_dir.mkdir()
+    local_dir.mkdir()
 
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', empty_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', empty_dir):
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", local_dir
+    ):
         result = cli_runner.invoke(app, ["models", "list"])
-        assert result.exit_code == 0
-        assert "no" in result.output.lower() or "download" in result.output.lower()
+
+    assert result.exit_code == 0
+    assert "no model bundles installed" in result.output.lower()
 
 
-def test_models_info_nonexistent(cli_runner: CliRunner) -> None:
-    """Test models info with nonexistent model shows error."""
-    result = cli_runner.invoke(app, ["models", "info", "nonexistent_model.hef"])
+def test_models_info_nonexistent(cli_runner: CliRunner, tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    local_dir = tmp_path / "resources"
+    cache_dir.mkdir()
+    local_dir.mkdir()
+
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", local_dir
+    ):
+        result = cli_runner.invoke(app, ["models", "info", "nonexistent"])
+
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
 
 
-def test_models_info_existing(cli_runner: CliRunner, temp_resources_dir: Path) -> None:
-    """Test models info shows details for existing model."""
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', temp_resources_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', temp_resources_dir):
-        result = cli_runner.invoke(app, ["models", "info", "yolov8m.hef"])
-        assert result.exit_code == 0
-        assert "yolov8m.hef" in result.output
-        # Should show size, path, etc.
-        assert "Size" in result.output or "KB" in result.output or "MB" in result.output
+def test_models_info_existing(cli_runner: CliRunner, temp_resources_dir: Path, tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
 
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", temp_resources_dir
+    ):
+        result = cli_runner.invoke(app, ["models", "info", "yolov8m"])
 
-@pytest.mark.integration
-def test_s3_models_accessible() -> None:
-    """Verify S3 bucket and models are publicly accessible."""
-    import urllib.request
-    url = "https://scl-sensing-garden-models.s3.amazonaws.com/yolov8s.hef"
-    req = urllib.request.Request(url, method='HEAD')
-    response = urllib.request.urlopen(req)
-    assert response.status == 200
-
-
-def test_models_download_http_404_error(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test download handles HTTP 404 error."""
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef']), \
-         patch('bugcam.commands.models.get_model_size', return_value=10000000), \
-         patch('urllib.request.urlopen') as mock_urlopen:
-        mock_urlopen.side_effect = urllib.error.HTTPError(
-            url='http://test', code=404, msg='Not Found', hdrs={}, fp=None
-        )
-        result = cli_runner.invoke(app, ["models", "download", "yolov8s"])
-        assert result.exit_code == 1
-        assert "404" in result.output or "error" in result.output.lower()
+    assert result.exit_code == 0
+    assert "yolov8m" in result.output
+    assert "model.hef" in result.output
+    assert "labels.txt" in result.output
 
 
 def test_models_download_unknown_model(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test download with unknown model name fails."""
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
-        result = cli_runner.invoke(app, ["models", "download", "nonexistent.hef"])
-        assert result.exit_code == 1
-        assert "unknown" in result.output.lower()
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", tmp_path), patch(
+        "bugcam.commands.models.list_available_models", return_value=["yolov8s", "yolov8m"]
+    ):
+        result = cli_runner.invoke(app, ["models", "download", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "unknown model bundle" in result.output.lower()
 
 
 def test_models_download_no_arguments(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test download without arguments shows available models help text."""
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
-         patch('bugcam.commands.models.get_model_size', return_value=10000000):
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", tmp_path), patch(
+        "bugcam.commands.models.list_available_models", return_value=["yolov8s", "yolov8m"]
+    ), patch("bugcam.commands.models.get_model_size", return_value=10_000_000):
         result = cli_runner.invoke(app, ["models", "download"])
-        assert result.exit_code == 0
-        assert "available models" in result.output.lower()
-        assert "yolov8s" in result.output.lower()
-        assert "yolov8m" in result.output.lower()
+
+    assert result.exit_code == 0
+    assert "available model bundles" in result.output.lower()
+    assert "yolov8s" in result.output
+    assert "yolov8m" in result.output
 
 
-def test_models_download_skips_existing_file(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test download skips file if it already exists."""
-    # Create existing model file
-    existing_file = tmp_path / "yolov8s.hef"
-    existing_file.write_bytes(b"fake model data")
+def test_models_download_skips_existing_bundle(
+    cli_runner: CliRunner, tmp_path: Path, make_bundle
+) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    make_bundle(cache_dir, "yolov8s")
 
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']), \
-         patch('bugcam.commands.models.get_model_size', return_value=10000000):
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.list_available_models", return_value=["yolov8s", "yolov8m"]
+    ), patch("bugcam.commands.models.get_model_size", return_value=10_000_000):
         result = cli_runner.invoke(app, ["models", "download", "yolov8s"])
-        assert result.exit_code == 0
-        assert "skipping" in result.output.lower() or "already exists" in result.output.lower()
+
+    assert result.exit_code == 0
+    assert "already exists" in result.output.lower() or "skipping" in result.output.lower()
 
 
-def test_list_s3_models_queries_bucket(cli_runner: CliRunner) -> None:
-    """Test list_s3_models dynamically queries S3 bucket."""
-    from bugcam.commands.models import list_s3_models
+def test_models_download_http_404_error(cli_runner: CliRunner, tmp_path: Path) -> None:
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", tmp_path), patch(
+        "bugcam.commands.models.list_available_models", return_value=["yolov8s"]
+    ), patch("bugcam.commands.models.get_model_size", return_value=10_000_000), patch(
+        "urllib.request.urlopen"
+    ) as mock_urlopen:
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="http://test", code=404, msg="Not Found", hdrs={}, fp=None
+        )
+        result = cli_runner.invoke(app, ["models", "download", "yolov8s"])
 
-    with patch('bugcam.commands.models.list_s3_bucket_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
-        models = list_s3_models()
-        # Should return models from bucket listing
-        assert isinstance(models, list)
-        assert 'yolov8s.hef' in models
-        assert 'yolov8m.hef' in models
+    assert result.exit_code == 1
+    assert "download failed" in result.output.lower()
 
 
-def test_list_available_models_returns_bucket_contents(cli_runner: CliRunner) -> None:
-    """Test list_available_models returns S3 bucket contents."""
-    from bugcam.commands.models import list_available_models
+def test_models_download_all_uses_available_models(cli_runner: CliRunner, tmp_path: Path) -> None:
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", tmp_path), patch(
+        "bugcam.commands.models.list_available_models", return_value=["yolov8s", "yolov8m"]
+    ) as mock_list, patch("bugcam.commands.models.get_model_size", return_value=10_000_000), patch(
+        "bugcam.commands.models._download_file"
+    ) as mock_download:
+        result = cli_runner.invoke(app, ["models", "download", "all"])
 
-    with patch('bugcam.commands.models.list_s3_bucket_models', return_value=['yolov8s.hef', 'yolov8m.hef']):
+    assert result.exit_code == 0
+    mock_list.assert_called_once()
+    assert mock_download.call_count == 4
+
+
+def test_list_available_models_returns_remote_bundle_names() -> None:
+    with patch("bugcam.commands.models.list_remote_bundle_names", return_value=["yolov8s", "yolov8m"]):
+        from bugcam.commands.models import list_available_models
+
         models = list_available_models()
-        # Should return models from bucket
-        assert isinstance(models, list)
-        assert 'yolov8s.hef' in models
-        assert 'yolov8m.hef' in models
+
+    assert models == ["yolov8s", "yolov8m"]
 
 
-def test_get_model_size_returns_content_length(cli_runner: CliRunner) -> None:
-    """Test get_model_size returns size from Content-Length header."""
-    from bugcam.commands.models import get_model_size
-
-    mock_response = MagicMock()
-    mock_response.headers.get.return_value = "10485760"  # 10 MB
-
-    with patch('urllib.request.urlopen', return_value=mock_response):
-        size = get_model_size("yolov8s.hef")
-        assert size == 10485760
-
-
-def test_get_model_size_returns_none_on_error(cli_runner: CliRunner) -> None:
-    """Test get_model_size returns None when request fails."""
-    from bugcam.commands.models import get_model_size
-
-    with patch('urllib.request.urlopen', side_effect=Exception("Network error")):
-        size = get_model_size("yolov8s.hef")
-        assert size is None
-
-
-def test_get_model_size_uses_head_request(cli_runner: CliRunner) -> None:
-    """Test get_model_size uses HEAD request (not GET)."""
+def test_get_model_size_returns_content_length() -> None:
     from bugcam.commands.models import get_model_size
 
     mock_response = MagicMock()
     mock_response.headers.get.return_value = "10485760"
 
-    with patch('urllib.request.Request') as mock_request, \
-         patch('urllib.request.urlopen', return_value=mock_response):
-        get_model_size("yolov8s.hef")
+    with patch("urllib.request.urlopen", return_value=mock_response):
+        size = get_model_size("yolov8s")
 
-        # Verify HEAD request was used
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args
-        assert call_args[1].get('method') == 'HEAD'
+    assert size == 10_485_760
 
 
-def test_get_model_url_constructs_s3_url(cli_runner: CliRunner) -> None:
-    """Test get_model_url constructs correct S3 URL."""
-    from bugcam.commands.models import get_model_url, MODELS_BASE_URL
+def test_get_model_size_returns_none_on_error() -> None:
+    from bugcam.commands.models import get_model_size
 
-    url = get_model_url("yolov8s.hef")
-    assert url == f"{MODELS_BASE_URL}/yolov8s.hef"
+    with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+        size = get_model_size("yolov8s")
 
-
-def test_models_download_all_uses_available_models(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test 'download all' uses dynamically fetched available models."""
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', tmp_path), \
-         patch('bugcam.commands.models.list_available_models', return_value=['yolov8s.hef', 'yolov8m.hef']) as mock_list, \
-         patch('bugcam.commands.models.get_model_size', return_value=10000000), \
-         patch('urllib.request.urlopen') as mock_urlopen:
-        # Mock successful download
-        mock_response = MagicMock()
-        mock_response.headers.get.return_value = "10000000"
-        mock_response.read.return_value = b""
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-
-        result = cli_runner.invoke(app, ["models", "download", "all"])
-
-        # Should call list_available_models to get models from S3
-        mock_list.assert_called_once()
+    assert size is None
 
 
-def test_list_s3_bucket_models_parses_xml(cli_runner: CliRunner) -> None:
-    """Test list_s3_bucket_models parses S3 bucket XML listing."""
-    from bugcam.commands.models import list_s3_bucket_models
+def test_get_model_size_uses_head_request() -> None:
+    from bugcam.commands.models import get_model_size
 
-    # Mock S3 XML response
-    mock_xml = b'''<?xml version="1.0" encoding="UTF-8"?>
+    mock_response = MagicMock()
+    mock_response.headers.get.return_value = "10485760"
+
+    with patch("urllib.request.Request") as mock_request, patch(
+        "urllib.request.urlopen", return_value=mock_response
+    ):
+        get_model_size("yolov8s")
+
+    assert mock_request.call_count == 1
+    assert mock_request.call_args.kwargs.get("method") == "HEAD"
+
+
+def test_get_model_url_constructs_bundle_url() -> None:
+    from bugcam.commands.models import get_model_url
+
+    url = get_model_url("yolov8s")
+    assert url == f"{MODELS_BASE_URL}/yolov8s/{BUNDLE_MODEL_FILENAME}"
+
+
+def test_list_remote_bundle_names_parses_xml() -> None:
+    mock_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <Contents><Key>yolov8s.hef</Key><Size>10602702</Size></Contents>
-        <Contents><Key>yolov8m.hef</Key><Size>30516142</Size></Contents>
-        <Contents><Key>readme.txt</Key><Size>100</Size></Contents>
-    </ListBucketResult>'''
+        <Contents><Key>yolov8s/{BUNDLE_MODEL_FILENAME}</Key></Contents>
+        <Contents><Key>yolov8s/{BUNDLE_LABELS_FILENAME}</Key></Contents>
+        <Contents><Key>yolov8m/{BUNDLE_MODEL_FILENAME}</Key></Contents>
+        <Contents><Key>readme.txt</Key></Contents>
+    </ListBucketResult>""".encode("utf-8")
 
     mock_response = MagicMock()
     mock_response.read.return_value = mock_xml
-    mock_response.__enter__ = MagicMock(return_value=mock_response)
-    mock_response.__exit__ = MagicMock(return_value=False)
+    mock_response.__enter__.return_value = mock_response
+    mock_response.__exit__.return_value = False
 
-    with patch('urllib.request.urlopen', return_value=mock_response):
-        models = list_s3_bucket_models()
-        # Should include .hef files only
-        assert 'yolov8s.hef' in models
-        assert 'yolov8m.hef' in models
-        # Should not include non-.hef files
-        assert 'readme.txt' not in models
+    with patch("urllib.request.urlopen", return_value=mock_response):
+        bundles = list_remote_bundle_names()
+
+    assert bundles == ["yolov8m", "yolov8s"]
 
 
-def test_models_delete_help(cli_runner: CliRunner) -> None:
-    """Test models delete help."""
-    result = cli_runner.invoke(app, ["models", "delete", "--help"])
-    assert result.exit_code == 0
-    assert "delete" in result.output.lower()
-
-
-def test_models_delete_no_args_shows_models(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test models delete without arguments shows available models."""
+def test_models_delete_no_args_shows_bundles(
+    cli_runner: CliRunner, tmp_path: Path, make_bundle
+) -> None:
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    (cache_dir / "test_model.hef").write_bytes(b"fake model")
-
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
-        result = cli_runner.invoke(app, ["models", "delete"])
-        assert result.exit_code == 0
-        assert "test_model.hef" in result.output
-
-
-def test_models_delete_nonexistent(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test models delete with nonexistent model shows error."""
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    # Create a model so delete doesn't just say "no models installed"
-    (cache_dir / "other_model.hef").write_bytes(b"fake model")
-
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
-        result = cli_runner.invoke(app, ["models", "delete", "nonexistent.hef"])
-        assert result.exit_code == 1
-        assert "not found" in result.output.lower()
-
-
-def test_models_delete_success(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test models delete successfully removes model file."""
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    model_file = cache_dir / "test_model.hef"
-    model_file.write_bytes(b"fake model data")
-    assert model_file.exists()
-
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
-        result = cli_runner.invoke(app, ["models", "delete", "test_model"], input="y\n")
-        assert result.exit_code == 0
-        assert "deleted" in result.output.lower()
-        assert not model_file.exists()
-
-
-def test_models_delete_cancelled(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test models delete can be cancelled."""
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    model_file = cache_dir / "test_model.hef"
-    model_file.write_bytes(b"fake model data")
-
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
-        result = cli_runner.invoke(app, ["models", "delete", "test_model"], input="n\n")
-        assert result.exit_code == 0
-        assert "cancelled" in result.output.lower()
-        assert model_file.exists()  # File should still exist
-
-
-def test_models_delete_local_resources_blocked(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test models delete blocks deletion from local resources directory."""
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    local_dir = tmp_path / "local"
+    local_dir = tmp_path / "resources"
     local_dir.mkdir()
-    local_model = local_dir / "local_model.hef"
-    local_model.write_bytes(b"fake model")
+    make_bundle(cache_dir, "test_model")
 
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', local_dir):
-        result = cli_runner.invoke(app, ["models", "delete", "local_model"])
-        assert result.exit_code == 1
-        assert "cannot delete" in result.output.lower()
-        assert local_model.exists()  # File should still exist
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", local_dir
+    ):
+        result = cli_runner.invoke(app, ["models", "delete"])
+
+    assert result.exit_code == 0
+    assert "test_model" in result.output
 
 
-def test_models_delete_adds_hef_extension(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test models delete adds .hef extension if not provided."""
+def test_models_delete_nonexistent(cli_runner: CliRunner, tmp_path: Path, make_bundle) -> None:
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    model_file = cache_dir / "test_model.hef"
-    model_file.write_bytes(b"fake model data")
+    local_dir = tmp_path / "resources"
+    local_dir.mkdir()
+    make_bundle(cache_dir, "other_model")
 
-    with patch('bugcam.commands.models.MODELS_CACHE_DIR', cache_dir), \
-         patch('bugcam.commands.models.LOCAL_RESOURCES_DIR', tmp_path / "empty"):
-        # Use model name without .hef extension
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", local_dir
+    ):
+        result = cli_runner.invoke(app, ["models", "delete", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
+
+
+def test_models_delete_removes_cache_bundle(
+    cli_runner: CliRunner, tmp_path: Path, make_bundle
+) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    local_dir = tmp_path / "resources"
+    local_dir.mkdir()
+    bundle_dir = make_bundle(cache_dir, "test_model")
+
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", local_dir
+    ):
         result = cli_runner.invoke(app, ["models", "delete", "test_model"], input="y\n")
-        assert result.exit_code == 0
-        assert not model_file.exists()
+
+    assert result.exit_code == 0
+    assert not bundle_dir.exists()
+
+
+def test_models_delete_rejects_local_resource_bundle(
+    cli_runner: CliRunner, temp_resources_dir: Path, tmp_path: Path
+) -> None:
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    with patch("bugcam.commands.models.MODELS_CACHE_DIR", cache_dir), patch(
+        "bugcam.commands.models.LOCAL_BUNDLES_DIR", temp_resources_dir
+    ):
+        result = cli_runner.invoke(app, ["models", "delete", "yolov8m"])
+
+    assert result.exit_code == 1
+    assert "cannot delete" in result.output.lower()
