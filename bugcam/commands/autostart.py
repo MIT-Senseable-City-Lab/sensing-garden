@@ -52,6 +52,25 @@ StandardError=journal
 WantedBy=multi-user.target
 """
 
+SERVICE_TEMPLATE_JOBS = """[Unit]
+Description=bugcam Jobs Worker
+After=multi-user.target
+
+[Service]
+Type=simple
+User={user}
+Group=video
+WorkingDirectory={workdir}
+ExecStart={bugcam_path} jobs run --stage all --watch --poll-interval {poll_interval}{capture_args}
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+
 
 def _get_bugcam_path() -> Path:
     try:
@@ -104,11 +123,13 @@ def _run_systemctl(command: list[str], check: bool = True) -> subprocess.Complet
 
 @app.command()
 def enable(
-    mode: str = typer.Option("detect", "--mode", help="Mode: detect or record"),
+    mode: str = typer.Option("detect", "--mode", help="Mode: detect, record, or jobs"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use (detect mode)"),
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings (record mode)"),
     length: int = typer.Option(60, "--length", "-l", help="Video length in seconds (record mode)"),
     output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o", help="Output directory (record mode)"),
+    poll_interval: int = typer.Option(10, "--poll-interval", help="Worker poll interval in seconds (jobs mode)"),
+    capture_record: bool = typer.Option(False, "--capture-record", help="Run record producer alongside jobs worker"),
     start_now: bool = typer.Option(True, "--start/--no-start", help="Start service immediately"),
 ) -> None:
     """Enable auto-start on boot.
@@ -116,10 +137,11 @@ def enable(
     Supports two modes:
     - detect: Run detection with a model
     - record: Record videos at intervals
+    - jobs: Run the queue worker, optionally with record capture
     """
     # Validate mode
-    if mode not in ("detect", "record"):
-        console.print(f"[red]Invalid mode: {mode}. Use 'detect' or 'record'[/red]")
+    if mode not in ("detect", "record", "jobs"):
+        console.print(f"[red]Invalid mode: {mode}. Use 'detect', 'record', or 'jobs'[/red]")
         raise typer.Exit(1)
 
     try:
@@ -167,7 +189,7 @@ def enable(
                 model=model,
             )
             mode_description = f"Detection with model: {model}"
-        else:
+        elif mode == "record":
             # Record mode
             if output_dir is None:
                 output_dir = Path.home() / "bugcam-videos"
@@ -187,6 +209,31 @@ def enable(
                 output_dir=output_dir,
             )
             mode_description = f"Recording: {length}s every {interval}min to {output_dir}"
+        else:
+            capture_args = ""
+            if capture_record:
+                if output_dir is None:
+                    output_dir = Path.home() / "bugcam-videos"
+                if not _validate_path(output_dir):
+                    console.print(f"[red]Error: Invalid output directory path[/red]")
+                    raise typer.Exit(1)
+                capture_args = (
+                    f" --capture-record"
+                    f" --record-interval {interval}"
+                    f" --record-length {length}"
+                    f" --record-output-dir {output_dir}"
+                )
+
+            service_content = SERVICE_TEMPLATE_JOBS.format(
+                user=user,
+                workdir=workdir,
+                bugcam_path=bugcam_path,
+                poll_interval=poll_interval,
+                capture_args=capture_args,
+            )
+            mode_description = "Jobs worker"
+            if capture_record:
+                mode_description += f" with record producer: {length}s every {interval}min to {output_dir}"
 
         # Write service file (requires sudo)
         console.print(f"[cyan]Creating systemd service at {SYSTEMD_SERVICE_PATH}[/cyan]")

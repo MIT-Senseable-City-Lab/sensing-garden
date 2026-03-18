@@ -51,6 +51,12 @@ def test_status_models_help(cli_runner: CliRunner) -> None:
     assert result.exit_code == 0
 
 
+def test_status_jobs_help(cli_runner: CliRunner) -> None:
+    """Test status jobs subcommand help."""
+    result = cli_runner.invoke(app, ["status", "jobs", "--help"])
+    assert result.exit_code == 0
+
+
 def test_check_hailo_device_success() -> None:
     """Test _check_hailo_device returns True when device found."""
     from bugcam.commands.status import _check_hailo_device
@@ -151,6 +157,7 @@ def test_status_runs_all_checks(cli_runner: CliRunner) -> None:
          patch.object(status, '_check_camera', return_value=(True, "OK")), \
          patch.object(status, '_check_sensor', return_value=(True, "OK")), \
          patch.object(status, '_check_models', return_value=(True, "1 installed")), \
+         patch.object(status, '_check_jobs', return_value=(True, "unprocessed=0, processed=0, upload=0, failed=0")), \
          patch('platform.system', return_value='Linux'):
         result = cli_runner.invoke(app, ["status"])
         assert "system status" in result.output

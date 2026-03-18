@@ -32,3 +32,46 @@ def get_cache_dir() -> Path:
     if xdg_cache:
         return Path(xdg_cache) / "bugcam"
     return Path.home() / ".cache" / "bugcam"
+
+
+def get_state_dir() -> Path:
+    """Get the state directory for bugcam, respecting XDG_DATA_HOME."""
+    state_dir = os.environ.get("BUGCAM_STATE_DIR")
+    if state_dir:
+        return Path(state_dir)
+
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return Path(xdg_data) / "bugcam"
+    return Path.home() / ".local" / "share" / "bugcam"
+
+
+def get_jobs_dir() -> Path:
+    """Get the job state root directory."""
+    return get_state_dir() / "jobs"
+
+
+def get_incoming_dir() -> Path:
+    """Get the managed incoming media directory."""
+    return get_state_dir() / "incoming"
+
+
+def get_outputs_dir() -> Path:
+    """Get the processed output directory."""
+    return get_state_dir() / "outputs"
+
+
+def get_iphone_watch_dir() -> Path:
+    """Get the watched directory for iPhone-origin media."""
+    watch_dir = os.environ.get("BUGCAM_IPHONE_WATCH_DIR")
+    if watch_dir:
+        return Path(watch_dir)
+    return get_state_dir() / "incoming-iphone"
+
+
+def get_recordings_dir() -> Path:
+    """Get the default RPi recordings directory."""
+    record_dir = os.environ.get("BUGCAM_RECORDINGS_DIR")
+    if record_dir:
+        return Path(record_dir)
+    return Path.home() / "bugcam-videos"

@@ -1,6 +1,6 @@
 import typer
 from rich.console import Console
-from bugcam.commands import models, detect, preview, autostart, setup, status, record
+from bugcam.commands import autostart, detect, jobs, models, preview, record, setup, status
 
 app = typer.Typer(
     name="bugcam",
@@ -17,6 +17,7 @@ app.add_typer(preview.app, name="preview")
 app.add_typer(autostart.app, name="autostart")
 app.add_typer(setup.app, name="setup")
 app.add_typer(status.app, name="status")
+app.add_typer(jobs.app, name="jobs")
 
 @app.callback()
 def main():

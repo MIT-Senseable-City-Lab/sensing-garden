@@ -4,8 +4,8 @@ import subprocess
 import platform
 from pathlib import Path
 from rich.console import Console
-from rich.table import Table
-from ..config import get_python_for_detection, get_cache_dir
+from ..config import get_cache_dir, get_iphone_watch_dir, get_python_for_detection, get_recordings_dir
+from ..jobs import ensure_job_dirs, get_job_counts
 
 app = typer.Typer(help="Check system status and dependencies")
 console = Console()
@@ -119,6 +119,19 @@ def _check_models() -> tuple[bool, str]:
     if hef_files:
         return True, f"{len(hef_files)} installed"
     return False, "None installed"
+
+
+def _check_jobs() -> tuple[bool, str]:
+    """Check the local queue state."""
+    ensure_job_dirs()
+    counts = get_job_counts()
+    detail = (
+        f"unprocessed={counts['unprocessed']}, "
+        f"processed={counts['processed']}, "
+        f"upload={counts['upload']}, "
+        f"failed={counts['failed']}"
+    )
+    return counts["failed"] == 0, detail
 
 
 def _print_status(name: str, ok: bool, detail: str) -> None:
@@ -271,6 +284,18 @@ def models() -> None:
     raise typer.Exit(0 if ok else 1)
 
 
+@app.command()
+def jobs() -> None:
+    """Check local job queue status."""
+    console.print("\n[bold cyan]Jobs[/bold cyan]")
+    console.print(f"  iPhone watch: [cyan]{get_iphone_watch_dir()}[/cyan]")
+    console.print(f"  RPi watch:    [cyan]{get_recordings_dir()}[/cyan]")
+    ok, detail = _check_jobs()
+    _print_status("Queue", ok, detail)
+    console.print()
+    raise typer.Exit(0 if ok else 1)
+
+
 @app.callback(invoke_without_command=True)
 def status(ctx: typer.Context) -> None:
     """Run all system checks."""
@@ -299,6 +324,13 @@ def status(ctx: typer.Context) -> None:
         all_ok = False
     _print_status("HEF files", models_ok, models_detail)
 
+    # Jobs
+    console.print("\n[cyan]Jobs[/cyan]")
+    jobs_ok, jobs_detail = _check_jobs()
+    if not jobs_ok:
+        all_ok = False
+    _print_status("Queue", jobs_ok, jobs_detail)
+
     # Devices
     console.print("\n[cyan]Devices[/cyan]")
     if platform.system() != "Linux":
@@ -326,6 +358,7 @@ def status(ctx: typer.Context) -> None:
         console.print("[yellow]Some checks failed. Run subcommands for details:[/yellow]")
         console.print("  [cyan]bugcam status deps[/cyan]    - Software dependencies")
         console.print("  [cyan]bugcam status devices[/cyan] - Hardware connections")
-        console.print("  [cyan]bugcam status models[/cyan]  - Installed models\n")
+        console.print("  [cyan]bugcam status models[/cyan]  - Installed models")
+        console.print("  [cyan]bugcam status jobs[/cyan]    - Local queue state\n")
 
     raise typer.Exit(0 if all_ok else 1)

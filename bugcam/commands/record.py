@@ -11,12 +11,13 @@ from pathlib import Path
 from datetime import datetime
 from rich.console import Console
 from typing import Optional
+from ..config import get_recordings_dir
 
 app = typer.Typer(help="Record videos from camera")
 console = Console()
 
 # Default output directory
-DEFAULT_OUTPUT_DIR = Path.home() / "bugcam-videos"
+DEFAULT_OUTPUT_DIR = get_recordings_dir()
 
 
 def _check_disk_space(output_dir: Path, min_free_mb: int = 300) -> tuple[bool, int]:
