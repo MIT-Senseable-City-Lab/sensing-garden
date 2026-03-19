@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from typing import Optional
 import xml.etree.ElementTree as ET
@@ -156,6 +157,18 @@ def resolve_labels_path(reference: Optional[str]) -> Optional[Path]:
 def get_remote_bundle_file_url(bundle_name: str, filename: str) -> str:
     """Build the URL for a file inside a remote model bundle."""
     return f"{MODELS_BASE_URL}/{bundle_name}/{filename}"
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA256 for a local file."""
+    hasher = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def list_remote_bundle_names() -> list[str]:

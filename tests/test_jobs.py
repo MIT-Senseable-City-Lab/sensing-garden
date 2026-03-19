@@ -22,6 +22,11 @@ def _mock_processor_process(media_path: Path, output_dir: Path, job: dict) -> di
         "output_dir": str(output_dir),
         "results_path": str(result_path),
         "summary": {"total_tracks": 1, "confirmed_tracks": 1},
+        "bundle": {
+            "model_id": "bundle-a",
+            "model_sha256": "abc123",
+            "labels_sha256": "def456",
+        },
         "tracks": 1,
         "confirmed_tracks": 1,
     }
@@ -116,6 +121,9 @@ def test_jobs_upload_moves_to_completed(cli_runner: CliRunner, tmp_path: Path, m
     counts = get_job_counts()
     assert counts["completed"] == 1
     assert counts["failed"] == 0
+    metadata = mock_client.videos.upload_video.call_args.kwargs["metadata"]
+    assert metadata["processing"]["bundle"]["model_id"] == "bundle-a"
+    assert metadata["processing"]["bundle"]["model_sha256"] == "abc123"
 
 
 def test_jobs_retry_failed_process(cli_runner: CliRunner, tmp_path: Path, monkeypatch) -> None:

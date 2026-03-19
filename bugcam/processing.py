@@ -15,6 +15,7 @@ from .config import (
     is_edge26_continuous_tracking_enabled,
 )
 from .edge26_runtime import ResultsWriter, VideoProcessor
+from .model_bundles import sha256_file
 
 EDGE26_DETECTION_DEFAULTS = {
     "gmm_history": 500,
@@ -76,6 +77,18 @@ def build_edge26_config(output_root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def build_bundle_provenance(model_path: Path, labels_path: Path) -> dict[str, Any]:
+    """Build technical provenance for the active bundle."""
+    provenance = {
+        "model_id": model_path.parent.name,
+        "model_path": str(model_path),
+        "labels_path": str(labels_path),
+        "model_sha256": sha256_file(model_path),
+        "labels_sha256": sha256_file(labels_path),
+    }
+    return provenance
+
+
 @dataclass
 class Edge26ProcessResult:
     """Structured summary returned to the jobs pipeline."""
@@ -88,6 +101,7 @@ class Edge26ProcessResult:
     output_dir: str
     results_path: str
     summary: dict[str, Any]
+    bundle: dict[str, Any]
     tracks: int
     confirmed_tracks: int
 
@@ -101,6 +115,7 @@ class Edge26ProcessResult:
             "output_dir": self.output_dir,
             "results_path": self.results_path,
             "summary": self.summary,
+            "bundle": self.bundle,
             "tracks": self.tracks,
             "confirmed_tracks": self.confirmed_tracks,
         }
@@ -121,6 +136,11 @@ class Edge26ProcessorAdapter:
         results = self.runtime.process_video(media_path, output_dir)
         output_paths = self.writer.write_results(results=results, output_dir=output_dir)
         summary = results.get("summary", {})
+        classification_config = self.config["classification"]
+        bundle = build_bundle_provenance(
+            model_path=Path(classification_config["model"]),
+            labels_path=Path(classification_config["labels"]),
+        )
         return Edge26ProcessResult(
             processor=self.name,
             job_id=job["job_id"],
@@ -130,6 +150,7 @@ class Edge26ProcessorAdapter:
             output_dir=str(output_dir),
             results_path=str(output_paths["json"]),
             summary=summary,
+            bundle=bundle,
             tracks=summary.get("total_tracks", 0),
             confirmed_tracks=summary.get("confirmed_tracks", 0),
         ).as_dict()

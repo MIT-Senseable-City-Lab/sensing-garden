@@ -1,8 +1,9 @@
 """Tests for BugCam edge26 processing integration."""
+import hashlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from bugcam.processing import ProcessorManager, build_edge26_config
+from bugcam.processing import ProcessorManager, build_bundle_provenance, build_edge26_config
 
 
 def test_build_edge26_config_resolves_paths(tmp_path: Path, monkeypatch) -> None:
@@ -19,6 +20,21 @@ def test_build_edge26_config_resolves_paths(tmp_path: Path, monkeypatch) -> None
     assert config["classification"]["model"].endswith("test-bundle/model.hef")
     assert config["classification"]["labels"].endswith("labels.txt")
     assert config["output"]["results_dir"].endswith("outputs")
+
+
+def test_build_bundle_provenance_hashes_active_bundle(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle-a"
+    bundle_dir.mkdir()
+    model_path = bundle_dir / "model.hef"
+    labels_path = bundle_dir / "labels.txt"
+    model_path.write_bytes(b"hef-data")
+    labels_path.write_text("species-a\n", encoding="utf-8")
+
+    provenance = build_bundle_provenance(model_path, labels_path)
+
+    assert provenance["model_id"] == "bundle-a"
+    assert provenance["model_sha256"] == hashlib.sha256(b"hef-data").hexdigest()
+    assert provenance["labels_sha256"] == hashlib.sha256(b"species-a\n").hexdigest()
 
 
 def test_processor_manager_reuses_processor_for_same_continuity_key(monkeypatch, tmp_path: Path) -> None:
