@@ -8,7 +8,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from bugcam.commands.heartbeat import upload_heartbeat
+from bugcam.commands.heartbeat import write_heartbeat_snapshot
 from bugcam.commands.upload import upload_ready_results, watch_uploads
 from bugcam.config import (
     DEFAULT_API_URL,
@@ -27,9 +27,15 @@ console = Console()
 HEARTBEAT_INTERVAL_SECONDS = 3600
 
 
-def _heartbeat_loop(api_url: str, api_key: str, device_id: str, input_dir: Path, dot_ids: list[str], stop_event: threading.Event) -> None:
+def _heartbeat_loop(
+    device_id: str,
+    input_dir: Path,
+    output_dir: Path,
+    dot_ids: list[str],
+    stop_event: threading.Event,
+) -> None:
     while not stop_event.is_set():
-        upload_heartbeat(api_url, api_key, device_id, input_dir, dot_ids)
+        write_heartbeat_snapshot(output_dir, device_id, input_dir, dot_ids)
         stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
 
 
@@ -141,10 +147,9 @@ def run(
     heartbeat_thread = threading.Thread(
         target=_heartbeat_loop,
         args=(
-            settings["api_url"],
-            settings["api_key"],
             settings["device_id"],
             input_dir,
+            output_dir,
             settings["dot_ids"],
             heartbeat_stop_event,
         ),

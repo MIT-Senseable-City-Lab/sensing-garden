@@ -27,10 +27,15 @@ from bugcam.s3_upload import (
 
 app = typer.Typer(help="Upload processed output to S3", invoke_without_command=True, no_args_is_help=False)
 console = Console()
+HEARTBEAT_STATE_FILENAME = ".uploaded-heartbeats"
 
 
 def _list_result_directories(output_dir: Path) -> list[Path]:
     return sorted(results_path.parent for results_path in output_dir.rglob(RESULTS_FILENAME))
+
+
+def _list_heartbeat_directories(output_dir: Path) -> list[Path]:
+    return sorted(path for path in output_dir.glob("*/heartbeats") if path.is_dir())
 
 
 def _is_dot_results_dir(results_dir: Path, dot_ids: list[str]) -> bool:
@@ -52,6 +57,29 @@ def _save_uploaded_state(results_dir: Path, state: dict[str, list[str]]) -> None
     _uploaded_state_path(results_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
+def _heartbeat_state_path(heartbeat_dir: Path) -> Path:
+    return heartbeat_dir / HEARTBEAT_STATE_FILENAME
+
+
+def _heartbeat_fingerprint(path: Path) -> str:
+    stat = path.stat()
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def _load_heartbeat_state(heartbeat_dir: Path) -> dict[str, str]:
+    state_path = _heartbeat_state_path(heartbeat_dir)
+    if not state_path.exists():
+        return {}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError(f"Heartbeat upload state must be a JSON object: {state_path}")
+    return {str(name): str(fingerprint) for name, fingerprint in state.items()}
+
+
+def _save_heartbeat_state(heartbeat_dir: Path, uploaded_files: dict[str, str]) -> None:
+    _heartbeat_state_path(heartbeat_dir).write_text(json.dumps(uploaded_files, indent=2), encoding="utf-8")
+
+
 def _load_result_track_ids(results_dir: Path) -> list[str]:
     payload = json.loads((results_dir / RESULTS_FILENAME).read_text(encoding="utf-8"))
     return [track["track_id"] for track in payload.get("tracks", [])]
@@ -59,6 +87,30 @@ def _load_result_track_ids(results_dir: Path) -> list[str]:
 
 def _upload_relative_file(results_dir: Path, api_url: str, api_key: str, s3_prefix: str, relative_path: Path) -> None:
     upload_file(api_url, api_key, results_dir / relative_path, f"{s3_prefix}/{relative_path.as_posix()}")
+
+
+def _upload_heartbeat_files(output_dir: Path, api_url: str, api_key: str) -> int:
+    uploaded_count = 0
+    for heartbeat_dir in _list_heartbeat_directories(output_dir):
+        device_id = heartbeat_dir.parent.name
+        uploaded_files = _load_heartbeat_state(heartbeat_dir)
+        changed = False
+        for heartbeat_path in sorted(heartbeat_dir.glob("*.json")):
+            fingerprint = _heartbeat_fingerprint(heartbeat_path)
+            if uploaded_files.get(heartbeat_path.name) == fingerprint:
+                continue
+            upload_file(
+                api_url,
+                api_key,
+                heartbeat_path,
+                f"v1/{device_id}/heartbeats/{heartbeat_path.name}",
+            )
+            uploaded_files[heartbeat_path.name] = fingerprint
+            changed = True
+            uploaded_count += 1
+        if changed:
+            _save_heartbeat_state(heartbeat_dir, dict(sorted(uploaded_files.items())))
+    return uploaded_count
 
 
 def _upload_new_dot_files(
@@ -117,7 +169,7 @@ def upload_ready_results(
     manifest_uploaded: bool,
 ) -> tuple[int, bool]:
     """Upload all ready result directories once."""
-    processed_count = 0
+    processed_count = _upload_heartbeat_files(output_dir, api_url, api_key)
     if not manifest_uploaded and _list_result_directories(output_dir):
         upload_manifest(api_url, api_key, flick_id, dot_ids)
         manifest_uploaded = True
