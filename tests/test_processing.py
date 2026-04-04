@@ -1,6 +1,7 @@
 """Tests for BugCam edge26 processing integration."""
 import hashlib
 from pathlib import Path
+from unittest.mock import patch
 
 from bugcam.processing import build_bundle_provenance, build_edge26_config
 
@@ -49,3 +50,34 @@ def test_build_bundle_provenance_hashes_active_bundle(tmp_path: Path) -> None:
     assert provenance["model_id"] == "bundle-a"
     assert provenance["model_sha256"] == hashlib.sha256(b"hef-data").hexdigest()
     assert provenance["labels_sha256"] == hashlib.sha256(b"species-a\n").hexdigest()
+
+
+def test_process_uses_device_config_flick_id(tmp_path: Path) -> None:
+    from bugcam.commands import process as process_command
+
+    with patch('bugcam.commands.process.load_device_config') as mock_device_config, \
+         patch('bugcam.commands.process.resolve_bundle_provenance', return_value={"model_id": "bundle", "model_sha256": "abc123456789"}), \
+         patch('bugcam.commands.process.build_pipeline') as mock_build_pipeline:
+        mock_device_config.return_value.flick_id = "flick-config"
+        mock_device_config.return_value.dot_ids = ["dot01"]
+
+        process_command.process(
+            input_dir=tmp_path / "input",
+            output_dir=tmp_path / "output",
+            model="bundle",
+            flick_id=None,
+            classification=True,
+            continuous_tracking=True,
+        )
+
+    assert mock_build_pipeline.call_args.kwargs["flick_id"] == "flick-config"
+    assert mock_build_pipeline.call_args.kwargs["dot_ids"] == ["dot01"]
+
+
+def test_run_resolves_flick_id_from_config() -> None:
+    from bugcam.commands.run import _resolve_runtime_settings
+
+    with patch('bugcam.commands.run.load_config', return_value={"flick_id": "flick-config", "api_key": "key", "device_id": "device", "s3_bucket": "bucket"}):
+        settings = _resolve_runtime_settings(None, None, None, None, None, None)
+
+    assert settings["flick_id"] == "flick-config"

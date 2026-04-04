@@ -11,7 +11,8 @@ from pathlib import Path
 from datetime import datetime
 from rich.console import Console
 from typing import Optional
-from ..config import get_default_flick_id, get_input_storage_dir
+from ..config import get_input_storage_dir
+from ..device_config import resolve_flick_id
 from ..processing import parse_capture_resolution
 
 app = typer.Typer(help="Record videos from camera")
@@ -24,6 +25,10 @@ DEFAULT_OUTPUT_DIR = get_input_storage_dir()
 def _build_recording_path(output_dir: Path, flick_id: str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return output_dir / f"{flick_id}_{timestamp}.mp4"
+
+
+def _resolve_recording_flick_id(flick_id: Optional[str]) -> str:
+    return resolve_flick_id(flick_id)
 
 
 def _parse_resolution_option(value: str) -> tuple[int, int]:
@@ -141,7 +146,7 @@ def start(
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
     length: int = typer.Option(60, "--length", "-l", help="Length of each video in seconds"),
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, "--output-dir", "-o", help="Directory to save videos"),
-    flick_id: str = typer.Option(get_default_flick_id(), "--flick-id", help="FLICK device ID for output filenames"),
+    flick_id: Optional[str] = typer.Option(None, "--flick-id", help="FLICK device ID for output filenames"),
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output"),
 ) -> None:
@@ -163,6 +168,7 @@ def start(
         console.print("[red]Video length cannot exceed interval[/red]")
         raise typer.Exit(1)
     parsed_resolution = _parse_resolution_option(resolution)
+    resolved_flick_id = _resolve_recording_flick_id(flick_id)
 
     # Check platform
     if platform.system() != "Linux":
@@ -220,7 +226,7 @@ def start(
                 break
 
             # Generate filename with timestamp
-            video_path = _build_recording_path(output_dir, flick_id)
+            video_path = _build_recording_path(output_dir, resolved_flick_id)
 
             # Record video
             if _record_single_video(video_path, length, quiet, parsed_resolution):
@@ -267,7 +273,7 @@ def start(
 def single(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
     length: int = typer.Option(60, "--length", "-l", help="Length of video in seconds"),
-    flick_id: str = typer.Option(get_default_flick_id(), "--flick-id", help="FLICK device ID for generated filenames"),
+    flick_id: Optional[str] = typer.Option(None, "--flick-id", help="FLICK device ID for generated filenames"),
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
 ) -> None:
     """Record a single video.
@@ -282,11 +288,12 @@ def single(
         console.print("[red]Camera not accessible[/red]")
         raise typer.Exit(1)
     parsed_resolution = _parse_resolution_option(resolution)
+    resolved_flick_id = _resolve_recording_flick_id(flick_id)
 
     # Generate output path if not specified
     if output is None:
         DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        output = _build_recording_path(DEFAULT_OUTPUT_DIR, flick_id)
+        output = _build_recording_path(DEFAULT_OUTPUT_DIR, resolved_flick_id)
     else:
         output.parent.mkdir(parents=True, exist_ok=True)
 

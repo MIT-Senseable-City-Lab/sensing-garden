@@ -18,6 +18,7 @@ from bugcam.config import (
     load_config,
     parse_dot_ids,
 )
+from bugcam.device_config import resolve_flick_id
 from bugcam.processing import parse_capture_resolution
 from bugcam.runtime import build_pipeline, resolve_bundle_provenance
 
@@ -51,7 +52,7 @@ def _resolve_runtime_settings(
     resolved_api_url = api_url or str(config.get("api_url") or DEFAULT_API_URL)
     resolved_api_key = api_key or str(config.get("api_key") or "")
     resolved_device_id = device_id or str(config.get("device_id") or "")
-    resolved_flick_id = flick_id or str(config.get("flick_id") or "")
+    resolved_flick_id = resolve_flick_id(flick_id)
     resolved_dot_ids = parse_dot_ids(dot_ids) if dot_ids is not None else parse_dot_ids(config.get("dot_ids"))
     resolved_bucket = bucket or str(config.get("s3_bucket") or DEFAULT_S3_BUCKET)
 

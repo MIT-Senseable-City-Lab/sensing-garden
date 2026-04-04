@@ -181,3 +181,25 @@ def test_record_single_low_disk_space_exits(cli_runner: CliRunner, tmp_path: Pat
         assert result.exit_code == 1
         assert "Insufficient disk space" in result.output
         assert "50MB" in result.output
+
+
+def test_record_single_uses_resolved_flick_id_for_generated_filename(tmp_path: Path) -> None:
+    from bugcam.commands import record
+
+    captured = {}
+    original_output_dir = record.DEFAULT_OUTPUT_DIR
+    record.DEFAULT_OUTPUT_DIR = tmp_path
+
+    try:
+        with patch('bugcam.commands.record.platform.system', return_value='Linux'), \
+             patch('bugcam.commands.record._check_camera_available', return_value=True), \
+             patch('bugcam.commands.record._check_disk_space', return_value=(True, 1000)), \
+             patch('bugcam.commands.record.resolve_flick_id', return_value='flick-config'), \
+             patch('bugcam.commands.record._remux_video', return_value=True), \
+             patch('bugcam.commands.record._record_single_video') as mock_record:
+            mock_record.side_effect = lambda output, length, quiet, resolution: captured.setdefault("name", output.name) or True
+            record.single(output=None, length=1, flick_id=None, resolution="1080x1080")
+    finally:
+        record.DEFAULT_OUTPUT_DIR = original_output_dir
+
+    assert captured["name"].startswith("flick-config_")
