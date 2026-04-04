@@ -18,9 +18,28 @@ def test_models_subcommand_help(cli_runner):
     assert "model" in result.output.lower()
 
 
-def test_detect_subcommand_help(cli_runner):
-    """Test detect subcommand is accessible."""
-    result = cli_runner.invoke(app, ["detect", "--help"])
+def test_run_subcommand_help(cli_runner):
+    """Test run subcommand is accessible."""
+    result = cli_runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--resolution" in result.output
+
+
+def test_process_subcommand_help(cli_runner):
+    """Test process subcommand is accessible."""
+    result = cli_runner.invoke(app, ["process", "--help"])
+    assert result.exit_code == 0
+
+
+def test_upload_subcommand_help(cli_runner):
+    """Test upload subcommand is accessible."""
+    result = cli_runner.invoke(app, ["upload", "--help"])
+    assert result.exit_code == 0
+
+
+def test_heartbeat_subcommand_help(cli_runner):
+    """Test heartbeat subcommand is accessible."""
+    result = cli_runner.invoke(app, ["heartbeat", "--help"])
     assert result.exit_code == 0
 
 
@@ -39,12 +58,6 @@ def test_autostart_subcommand_help(cli_runner):
 def test_status_subcommand_help(cli_runner):
     """Test status subcommand is accessible."""
     result = cli_runner.invoke(app, ["status", "--help"])
-    assert result.exit_code == 0
-
-
-def test_jobs_subcommand_help(cli_runner):
-    """Test jobs subcommand is accessible."""
-    result = cli_runner.invoke(app, ["jobs", "--help"])
     assert result.exit_code == 0
 
 

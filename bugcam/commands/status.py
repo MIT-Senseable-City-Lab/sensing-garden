@@ -8,12 +8,11 @@ from rich.console import Console
 from ..config import (
     get_edge26_labels_path,
     get_edge26_model_path,
-    get_iphone_watch_dir,
+    get_input_storage_dir,
+    get_output_storage_dir,
     get_python_for_detection,
-    get_recordings_dir,
     is_edge26_classification_enabled,
 )
-from ..jobs import ensure_job_dirs, get_job_counts
 from ..model_bundles import get_installed_bundles
 
 app = typer.Typer(help="Check system status and dependencies")
@@ -129,20 +128,16 @@ def _check_models() -> tuple[bool, str]:
     return False, "None installed"
 
 
-def _check_jobs() -> tuple[bool, str]:
-    """Check the local queue state."""
-    ensure_job_dirs()
-    counts = get_job_counts()
-    detail = (
-        f"unprocessed={counts['unprocessed']}, "
-        f"processed={counts['processed']}, "
-        f"upload={counts['upload']}, "
-        f"failed={counts['failed']}"
-    )
-    return counts["failed"] == 0, detail
+def _check_storage_paths() -> tuple[bool, str]:
+    """Check the configured input and output storage directories."""
+    input_dir = get_input_storage_dir()
+    output_dir = get_output_storage_dir()
+    paths_ok = input_dir.exists() and output_dir.exists()
+    detail = f"input={input_dir}, output={output_dir}"
+    return paths_ok, detail
 
 
-def _check_edge26_runtime() -> tuple[bool, str]:
+def _check_edge26_processor() -> tuple[bool, str]:
     """Check edge26-backed processor readiness."""
     classification_enabled = is_edge26_classification_enabled()
     details = [f"classification={'on' if classification_enabled else 'off'}"]
@@ -321,14 +316,12 @@ def models() -> None:
 
 
 @app.command()
-def jobs() -> None:
-    """Check local job queue status."""
-    console.print("\n[bold cyan]Jobs[/bold cyan]")
-    console.print(f"  iPhone watch: [cyan]{get_iphone_watch_dir()}[/cyan]")
-    console.print(f"  RPi watch:    [cyan]{get_recordings_dir()}[/cyan]")
-    queue_ok, queue_detail = _check_jobs()
-    runtime_ok, runtime_detail = _check_edge26_runtime()
-    _print_status("Queue", queue_ok, queue_detail)
+def storage() -> None:
+    """Check edge26 storage directories and processor readiness."""
+    console.print("\n[bold cyan]Storage[/bold cyan]")
+    queue_ok, queue_detail = _check_storage_paths()
+    runtime_ok, runtime_detail = _check_edge26_processor()
+    _print_status("Paths", queue_ok, queue_detail)
     _print_status("Processor", runtime_ok, runtime_detail)
     console.print()
     raise typer.Exit(0 if queue_ok and runtime_ok else 1)
@@ -362,13 +355,13 @@ def status(ctx: typer.Context) -> None:
         all_ok = False
     _print_status("Bundles", models_ok, models_detail)
 
-    # Jobs
-    console.print("\n[cyan]Jobs[/cyan]")
-    jobs_ok, jobs_detail = _check_jobs()
-    if not jobs_ok:
+    # Storage
+    console.print("\n[cyan]Storage[/cyan]")
+    storage_ok, storage_detail = _check_storage_paths()
+    if not storage_ok:
         all_ok = False
-    _print_status("Queue", jobs_ok, jobs_detail)
-    runtime_ok, runtime_detail = _check_edge26_runtime()
+    _print_status("Paths", storage_ok, storage_detail)
+    runtime_ok, runtime_detail = _check_edge26_processor()
     if not runtime_ok:
         all_ok = False
     _print_status("Processor", runtime_ok, runtime_detail)
@@ -401,6 +394,6 @@ def status(ctx: typer.Context) -> None:
         console.print("  [cyan]bugcam status deps[/cyan]    - Software dependencies")
         console.print("  [cyan]bugcam status devices[/cyan] - Hardware connections")
         console.print("  [cyan]bugcam status models[/cyan]  - Installed models")
-        console.print("  [cyan]bugcam status jobs[/cyan]    - Local queue state\n")
+        console.print("  [cyan]bugcam status storage[/cyan] - Input/output paths\n")
 
     raise typer.Exit(0 if all_ok else 1)

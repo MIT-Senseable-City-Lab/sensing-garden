@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from .model_bundles import BUNDLE_LABELS_FILENAME, BUNDLE_MODEL_FILENAME
 
@@ -45,12 +45,12 @@ def build_bundle_upload_objects(
     ]
 
 
-def object_exists(s3_client, bucket: str, key: str) -> bool:
+def object_exists(s3_client: Any, bucket: str, key: str) -> bool:
     """Return True if the object already exists."""
     try:
         s3_client.head_object(Bucket=bucket, Key=key)
         return True
-    except Exception as exc:  # boto3/botocore exception typing is noisy here
+    except Exception as exc:
         error_code = getattr(exc, "response", {}).get("Error", {}).get("Code")
         if error_code in {"404", "NoSuchKey", "NotFound"}:
             return False
@@ -67,7 +67,7 @@ def publish_bundle(
     overwrite: bool = False,
     verify: bool = True,
     dry_run: bool = False,
-    s3_client=None,
+    s3_client: Any = None,
 ) -> list[str]:
     """Upload a bundle to S3 and optionally verify it."""
     objects = build_bundle_upload_objects(
@@ -81,11 +81,8 @@ def publish_bundle(
         return [obj.key for obj in objects]
 
     if s3_client is None:
-        import boto3
-
-        client = boto3.client("s3")
-    else:
-        client = s3_client
+        raise ValueError("s3_client is required for publish_bundle")
+    client = s3_client
 
     if not overwrite:
         existing = [obj.key for obj in objects if object_exists(client, bucket, obj.key)]

@@ -51,9 +51,9 @@ def test_status_models_help(cli_runner: CliRunner) -> None:
     assert result.exit_code == 0
 
 
-def test_status_jobs_help(cli_runner: CliRunner) -> None:
-    """Test status jobs subcommand help."""
-    result = cli_runner.invoke(app, ["status", "jobs", "--help"])
+def test_status_storage_help(cli_runner: CliRunner) -> None:
+    """Test status storage subcommand help."""
+    result = cli_runner.invoke(app, ["status", "storage", "--help"])
     assert result.exit_code == 0
 
 
@@ -158,8 +158,8 @@ def test_status_runs_all_checks(cli_runner: CliRunner) -> None:
          patch.object(status, '_check_camera', return_value=(True, "OK")), \
          patch.object(status, '_check_sensor', return_value=(True, "OK")), \
          patch.object(status, '_check_models', return_value=(True, "1 installed")), \
-         patch.object(status, '_check_jobs', return_value=(True, "unprocessed=0, processed=0, upload=0, failed=0")), \
-         patch.object(status, '_check_edge26_runtime', return_value=(True, "model=ok, bugspot=ok, labels=ok, requests=ok, hailo_platform=ok")), \
+         patch.object(status, '_check_storage_paths', return_value=(True, "input=/tmp/in output=/tmp/out")), \
+         patch.object(status, '_check_edge26_processor', return_value=(True, "model=ok, bugspot=ok, labels=ok, requests=ok, hailo_platform=ok")), \
          patch('platform.system', return_value='Linux'):
         result = cli_runner.invoke(app, ["status"])
         assert "system status" in result.output

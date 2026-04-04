@@ -1,9 +1,45 @@
 """Shared configuration utilities for bugcam."""
+import json
 import os
-import sys
 import platform
+import sys
 from pathlib import Path
+from typing import Any
 
+
+DEFAULT_API_URL = "https://nxdp0npcb2.execute-api.us-east-1.amazonaws.com"
+DEFAULT_S3_BUCKET = "scl-sensing-garden"
+
+
+def get_config_path() -> Path:
+    """Return the persistent BugCam config file path."""
+    return Path.home() / ".config" / "bugcam" / "config.json"
+
+
+def load_config() -> dict[str, Any]:
+    """Load persistent BugCam config."""
+    path = get_config_path()
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("BugCam config must be a JSON object")
+    return data
+
+
+def save_config(config: dict[str, Any]) -> None:
+    """Persist BugCam config."""
+    path = get_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def parse_dot_ids(value: str | list[str] | None) -> list[str]:
+    """Normalize dot IDs from CLI or config values."""
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else str(value).split(",")
+    return [str(item).strip() for item in items if str(item).strip()]
 
 def get_hailo_venv_dir() -> Path:
     """Get the directory for the Hailo venv."""
@@ -49,19 +85,30 @@ def get_state_dir() -> Path:
     return Path.home() / ".local" / "share" / "bugcam"
 
 
-def get_jobs_dir() -> Path:
-    """Get the job state root directory."""
-    return get_state_dir() / "jobs"
-
-
 def get_incoming_dir() -> Path:
     """Get the managed incoming media directory."""
     return get_state_dir() / "incoming"
 
 
+def get_input_storage_dir() -> Path:
+    """Get the edge26 input storage directory."""
+    input_dir = os.environ.get("BUGCAM_INPUT_DIR")
+    if input_dir:
+        return Path(input_dir)
+    return get_incoming_dir()
+
+
 def get_outputs_dir() -> Path:
     """Get the processed output directory."""
     return get_state_dir() / "outputs"
+
+
+def get_output_storage_dir() -> Path:
+    """Get the edge26 output storage directory."""
+    output_dir = os.environ.get("BUGCAM_OUTPUT_DIR")
+    if output_dir:
+        return Path(output_dir)
+    return get_outputs_dir()
 
 
 def get_iphone_watch_dir() -> Path:
@@ -84,6 +131,17 @@ def get_default_device_id(source_type: str) -> str:
     """Get the logical device identifier for a source type."""
     env_name = f"BUGCAM_{source_type.upper()}_DEVICE_ID"
     return os.environ.get(env_name, f"bugcam-{source_type}")
+
+
+def get_default_flick_id() -> str:
+    """Get the configured FLICK device identifier."""
+    return os.environ.get("BUGCAM_FLICK_ID", get_default_device_id("rpi"))
+
+
+def get_default_dot_ids() -> list[str]:
+    """Get configured DOT device identifiers."""
+    raw_value = os.environ.get("BUGCAM_DOT_IDS", "")
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
 def get_edge26_model_path() -> Path:

@@ -22,6 +22,8 @@ def test_record_start_help(cli_runner: CliRunner) -> None:
     assert "--interval" in result.output
     assert "--length" in result.output
     assert "--output-dir" in result.output
+    assert "--flick-id" in result.output
+    assert "--resolution" in result.output
     assert "--quiet" in result.output
 
 
@@ -31,6 +33,7 @@ def test_record_single_help(cli_runner: CliRunner) -> None:
     assert result.exit_code == 0
     assert "--length" in result.output
     assert "--output" in result.output
+    assert "--resolution" in result.output
 
 
 def test_record_start_requires_linux(cli_runner: CliRunner) -> None:
@@ -119,7 +122,7 @@ def test_remux_video_no_ffmpeg(tmp_path: Path) -> None:
 def test_default_output_dir() -> None:
     """Test default output directory is set correctly."""
     from bugcam.commands.record import DEFAULT_OUTPUT_DIR
-    assert DEFAULT_OUTPUT_DIR == Path.home() / "bugcam-videos"
+    assert DEFAULT_OUTPUT_DIR == Path.home() / ".local" / "share" / "bugcam" / "incoming"
 
 
 def test_check_disk_space_sufficient(tmp_path: Path) -> None:

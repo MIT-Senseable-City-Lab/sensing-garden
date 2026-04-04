@@ -1,21 +1,17 @@
-"""BugCam processing adapter layer backed by vendored edge26 runtime."""
+"""BugCam edge26 configuration bridge."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .config import (
-    get_default_device_id,
-    get_edge26_labels_path,
-    get_edge26_model_path,
     get_edge26_taxonomy_cache_path,
-    get_outputs_dir,
-    is_edge26_classification_enabled,
-    is_edge26_continuous_tracking_enabled,
 )
-from .edge26_runtime import ResultsWriter, VideoProcessor
 from .model_bundles import sha256_file
+
+DEFAULT_CAPTURE_RESOLUTION = (1080, 1080)
+MAX_CAPTURE_WIDTH = 3840
+MAX_CAPTURE_HEIGHT = 2160
 
 EDGE26_DETECTION_DEFAULTS = {
     "gmm_history": 500,
@@ -46,31 +42,74 @@ EDGE26_TRACKING_DEFAULTS = {
 }
 
 
-def build_edge26_config(output_root: Path | None = None) -> dict[str, Any]:
-    """Build the edge26 runtime config from BugCam-owned settings."""
-    model_path = get_edge26_model_path()
-    labels_path = get_edge26_labels_path(model_path)
+def parse_capture_resolution(value: str) -> tuple[int, int]:
+    """Parse a capture resolution in WxH format."""
+    parts = value.lower().split("x")
+    if len(parts) != 2:
+        raise ValueError("resolution must be in WxH format")
+
+    width = int(parts[0])
+    height = int(parts[1])
+    if width < 1 or height < 1:
+        raise ValueError("resolution values must be positive")
+    if width > MAX_CAPTURE_WIDTH or height > MAX_CAPTURE_HEIGHT:
+        raise ValueError(f"resolution cannot exceed {MAX_CAPTURE_WIDTH}x{MAX_CAPTURE_HEIGHT}")
+    return width, height
+
+
+def build_edge26_config(
+    flick_id: str,
+    dot_ids: list[str],
+    input_dir: str,
+    output_dir: str,
+    model_path: str,
+    labels_path: str,
+    recording_mode: str = "continuous",
+    recording_interval: int = 5,
+    chunk_duration: int = 60,
+    fps: int = 30,
+    resolution: tuple[int, int] = DEFAULT_CAPTURE_RESOLUTION,
+    enable_recording: bool = True,
+    enable_processing: bool = True,
+    enable_classification: bool = True,
+    continuous_tracking: bool = True,
+) -> dict[str, Any]:
+    """Build the edge26 pipeline config from BugCam-owned settings."""
+    results_dir = Path(output_dir)
     return {
         "device": {
-            "flick_id": get_default_device_id("rpi"),
-            "dot_ids": [],
+            "flick_id": flick_id,
+            "dot_ids": dot_ids,
+        },
+        "paths": {
+            "input_storage": input_dir,
+            "logs_dir": str(results_dir / "_logs"),
         },
         "pipeline": {
-            "enable_recording": False,
-            "enable_processing": True,
-            "enable_classification": is_edge26_classification_enabled(),
-            "continuous_tracking": is_edge26_continuous_tracking_enabled(),
+            "enable_recording": enable_recording,
+            "enable_processing": enable_processing,
+            "enable_classification": enable_classification,
+            "continuous_tracking": continuous_tracking,
+            "recording_mode": recording_mode,
+            "recording_interval_minutes": recording_interval,
+        },
+        "capture": {
+            "camera_index": 0,
+            "use_picamera": True,
+            "fps": fps,
+            "chunk_duration_seconds": chunk_duration,
+            "resolution": list(resolution),
         },
         "detection": dict(EDGE26_DETECTION_DEFAULTS),
         "tracking": dict(EDGE26_TRACKING_DEFAULTS),
         "classification": {
-            "model": str(model_path),
-            "labels": str(labels_path),
+            "model": model_path,
+            "labels": labels_path,
             "taxonomy_cache": str(get_edge26_taxonomy_cache_path()),
             "normalize": False,
         },
         "output": {
-            "results_dir": str(output_root or get_outputs_dir()),
+            "results_dir": output_dir,
             "save_crops": True,
             "save_composites": True,
         },
@@ -87,121 +126,3 @@ def build_bundle_provenance(model_path: Path, labels_path: Path) -> dict[str, An
         "labels_sha256": sha256_file(labels_path),
     }
     return provenance
-
-
-@dataclass
-class Edge26ProcessResult:
-    """Structured summary returned to the jobs pipeline."""
-
-    processor: str
-    job_id: str
-    source_type: str
-    logical_device_id: str
-    input_media: str
-    output_dir: str
-    results_path: str
-    summary: dict[str, Any]
-    bundle: dict[str, Any]
-    tracks: int
-    confirmed_tracks: int
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "processor": self.processor,
-            "job_id": self.job_id,
-            "source_type": self.source_type,
-            "logical_device_id": self.logical_device_id,
-            "input_media": self.input_media,
-            "output_dir": self.output_dir,
-            "results_path": self.results_path,
-            "summary": self.summary,
-            "bundle": self.bundle,
-            "tracks": self.tracks,
-            "confirmed_tracks": self.confirmed_tracks,
-        }
-
-
-class Edge26ProcessorAdapter:
-    """BugCam adapter around vendored edge26 processor and writer."""
-
-    name = "edge26"
-
-    def __init__(self, output_root: Path | None = None):
-        self.config = build_edge26_config(output_root=output_root)
-        self.output_root = output_root or get_outputs_dir()
-        self.runtime = VideoProcessor(self.config)
-        self.writer = ResultsWriter(self.output_root)
-
-    def process(self, media_path: Path, output_dir: Path, job: dict[str, Any]) -> dict[str, Any]:
-        results = self.runtime.process_video(media_path, output_dir)
-        output_paths = self.writer.write_results(results=results, output_dir=output_dir)
-        summary = results.get("summary", {})
-        classification_config = self.config["classification"]
-        bundle = build_bundle_provenance(
-            model_path=Path(classification_config["model"]),
-            labels_path=Path(classification_config["labels"]),
-        )
-        return Edge26ProcessResult(
-            processor=self.name,
-            job_id=job["job_id"],
-            source_type=job["source_type"],
-            logical_device_id=job["logical_device_id"],
-            input_media=str(media_path),
-            output_dir=str(output_dir),
-            results_path=str(output_paths["json"]),
-            summary=summary,
-            bundle=bundle,
-            tracks=summary.get("total_tracks", 0),
-            confirmed_tracks=summary.get("confirmed_tracks", 0),
-        ).as_dict()
-
-    def reset(self) -> None:
-        self.runtime.reset_tracker()
-
-    def clear(self) -> None:
-        self.runtime.clear_video_detections()
-
-
-class ProcessorManager:
-    """Manage one persistent edge26-backed processor across queued jobs."""
-
-    def __init__(self):
-        self._processor: Optional[Edge26ProcessorAdapter] = None
-        self._continuity_key: Optional[str] = None
-
-    def process(self, media_path: Path, output_dir: Path, job: dict[str, Any]) -> dict[str, Any]:
-        continuity_key = job.get("continuity_key") or job.get("logical_device_id") or job["source_type"]
-        if self._processor is None:
-            self._processor = Edge26ProcessorAdapter(output_root=get_outputs_dir())
-        elif not is_edge26_continuous_tracking_enabled() or continuity_key != self._continuity_key:
-            self._processor.reset()
-
-        self._continuity_key = continuity_key
-        try:
-            return self._processor.process(media_path, output_dir, job)
-        finally:
-            self._processor.clear()
-
-    def reset(self) -> None:
-        if self._processor is not None:
-            self._processor.reset()
-        self._continuity_key = None
-
-
-_PROCESSOR_MANAGER: Optional[ProcessorManager] = None
-
-
-def get_processor_manager() -> ProcessorManager:
-    """Return the process-wide processor manager."""
-    global _PROCESSOR_MANAGER
-    if _PROCESSOR_MANAGER is None:
-        _PROCESSOR_MANAGER = ProcessorManager()
-    return _PROCESSOR_MANAGER
-
-
-def reset_processor_manager() -> None:
-    """Reset the process-wide processor manager."""
-    global _PROCESSOR_MANAGER
-    if _PROCESSOR_MANAGER is not None:
-        _PROCESSOR_MANAGER.reset()
-    _PROCESSOR_MANAGER = None

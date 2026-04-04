@@ -40,34 +40,3 @@ def make_bundle():
         return bundle_dir
 
     return _make_bundle
-
-
-@pytest.fixture
-def temp_detection_script(tmp_path):
-    """Create a mock detection.py script."""
-    pipelines = tmp_path / "pipelines"
-    pipelines.mkdir()
-    script = pipelines / "detection.py"
-    script.write_text('''
-import sys
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--input")
-parser.add_argument("--hef-path")
-args = parser.parse_args()
-
-print(f"Mock detection with input={args.input}, model={args.hef_path}")
-sys.exit(0)
-''')
-    return script
-
-
-@pytest.fixture
-def mock_bugcam_structure(tmp_path, temp_resources_dir, temp_detection_script):
-    """Create a complete mock bugcam structure."""
-    return {
-        "root": tmp_path,
-        "resources": temp_resources_dir,
-        "detection_script": temp_detection_script,
-    }
