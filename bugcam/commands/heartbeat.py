@@ -58,7 +58,7 @@ def upload_heartbeat(api_url: str, api_key: str, device_id: str, input_dir: Path
     """Upload a heartbeat JSON document through a presigned URL."""
     payload = build_heartbeat_payload(device_id, input_dir, dot_ids)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    s3_key = f"heartbeats/{device_id}/{timestamp}.json"
+    s3_key = f"v1/heartbeats/{device_id}/{timestamp}.json"
     upload_json(api_url, api_key, payload, s3_key)
     return s3_key
 
