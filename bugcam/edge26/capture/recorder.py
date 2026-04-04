@@ -16,6 +16,7 @@ import time
 import queue
 import threading
 import logging
+import numpy as np
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple
@@ -130,7 +131,9 @@ class VideoRecorder:
         
         # Create requested video config and read final applied resolution
         config = self.camera.create_video_configuration(
-            main={"size": self.requested_resolution}
+            # Request a deterministic 3-channel format and convert to BGR
+            # before handing frames to OpenCV's VideoWriter.
+            main={"size": self.requested_resolution, "format": "RGB888"}
         )
         self.camera.configure(config)
         
@@ -173,17 +176,32 @@ class VideoRecorder:
             return
         
         if self.use_picamera:
-            self.camera.stop()
+            try:
+                self.camera.stop()
+            finally:
+                self.camera.close()
         else:
             self.camera.release()
         
         self.camera = None
         logger.info("Camera released")
+
+    def _prepare_frame_for_writer(self, frame: np.ndarray) -> np.ndarray:
+        """Convert camera frames to a BGR layout compatible with OpenCV."""
+        if not self.use_picamera:
+            return frame
+        if frame.ndim != 3:
+            raise ValueError(f"Unexpected PiCamera frame shape: {frame.shape}")
+        if frame.shape[2] == 3:
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        if frame.shape[2] == 4:
+            return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        raise ValueError(f"Unexpected PiCamera channel count: {frame.shape}")
     
     def _grab_frame(self):
         """Capture a single frame from the camera."""
         if self.use_picamera:
-            return self.camera.capture_array()
+            return self._prepare_frame_for_writer(self.camera.capture_array())
         else:
             ret, frame = self.camera.read()
             if not ret:
