@@ -10,7 +10,7 @@ fi
 sudo apt update
 sudo apt install -y hailo-all pipx i2c-tools libcjson-dev build-essential
 
-pipx install 'git+https://github.com/daydemir/sensing-garden.git@bugcam-cli'
+pipx install bugcam
 pipx ensurepath
 
 echo ""
