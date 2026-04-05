@@ -10,6 +10,8 @@ Default API endpoint: `https://api.sensinggarden.com/v1`
 ```bash
 curl -sSL https://raw.githubusercontent.com/MIT-Senseable-City-Lab/sensing-garden/main/install.sh | bash
 bugcam setup
+bugcam models list
+bugcam models download <model-name>
 bugcam run
 ```
 
