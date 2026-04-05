@@ -28,6 +28,8 @@ from bugcam.s3_upload import (
 app = typer.Typer(help="Upload processed output to S3", invoke_without_command=True, no_args_is_help=False)
 console = Console()
 HEARTBEAT_STATE_FILENAME = ".uploaded-heartbeats"
+LOG_STATE_FILENAME = ".uploaded-logs"
+MAX_RETRY_DELAY_SECONDS = 300
 
 
 def _list_result_directories(output_dir: Path) -> list[Path]:
@@ -36,6 +38,10 @@ def _list_result_directories(output_dir: Path) -> list[Path]:
 
 def _list_heartbeat_directories(output_dir: Path) -> list[Path]:
     return sorted(path for path in output_dir.glob("*/heartbeats") if path.is_dir())
+
+
+def _list_log_directories(output_dir: Path) -> list[Path]:
+    return sorted(path for path in output_dir.glob("*/logs") if path.is_dir())
 
 
 def _is_dot_results_dir(results_dir: Path, dot_ids: list[str]) -> bool:
@@ -61,6 +67,10 @@ def _heartbeat_state_path(heartbeat_dir: Path) -> Path:
     return heartbeat_dir / HEARTBEAT_STATE_FILENAME
 
 
+def _log_state_path(log_dir: Path) -> Path:
+    return log_dir / LOG_STATE_FILENAME
+
+
 def _heartbeat_fingerprint(path: Path) -> str:
     stat = path.stat()
     return f"{stat.st_mtime_ns}:{stat.st_size}"
@@ -78,6 +88,20 @@ def _load_heartbeat_state(heartbeat_dir: Path) -> dict[str, str]:
 
 def _save_heartbeat_state(heartbeat_dir: Path, uploaded_files: dict[str, str]) -> None:
     _heartbeat_state_path(heartbeat_dir).write_text(json.dumps(uploaded_files, indent=2), encoding="utf-8")
+
+
+def _load_log_state(log_dir: Path) -> dict[str, str]:
+    state_path = _log_state_path(log_dir)
+    if not state_path.exists():
+        return {}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError(f"Log upload state must be a JSON object: {state_path}")
+    return {str(name): str(fingerprint) for name, fingerprint in state.items()}
+
+
+def _save_log_state(log_dir: Path, uploaded_files: dict[str, str]) -> None:
+    _log_state_path(log_dir).write_text(json.dumps(uploaded_files, indent=2), encoding="utf-8")
 
 
 def _load_result_track_ids(results_dir: Path) -> list[str]:
@@ -110,6 +134,30 @@ def _upload_heartbeat_files(output_dir: Path, api_url: str, api_key: str) -> int
             uploaded_count += 1
         if changed:
             _save_heartbeat_state(heartbeat_dir, dict(sorted(uploaded_files.items())))
+    return uploaded_count
+
+
+def _upload_log_files(output_dir: Path, api_url: str, api_key: str) -> int:
+    uploaded_count = 0
+    for log_dir in _list_log_directories(output_dir):
+        device_id = log_dir.parent.name
+        uploaded_files = _load_log_state(log_dir)
+        changed = False
+        for log_path in sorted(path for path in log_dir.iterdir() if path.is_file() and path.name != LOG_STATE_FILENAME):
+            fingerprint = _heartbeat_fingerprint(log_path)
+            if uploaded_files.get(log_path.name) == fingerprint:
+                continue
+            upload_file(
+                api_url,
+                api_key,
+                log_path,
+                f"v1/{device_id}/logs/{log_path.name}",
+            )
+            uploaded_files[log_path.name] = fingerprint
+            changed = True
+            uploaded_count += 1
+        if changed:
+            _save_log_state(log_dir, dict(sorted(uploaded_files.items())))
     return uploaded_count
 
 
@@ -170,6 +218,7 @@ def upload_ready_results(
 ) -> tuple[int, bool]:
     """Upload all ready result directories once."""
     processed_count = _upload_heartbeat_files(output_dir, api_url, api_key)
+    processed_count += _upload_log_files(output_dir, api_url, api_key)
     if not manifest_uploaded and _list_result_directories(output_dir):
         upload_manifest(api_url, api_key, flick_id, dot_ids)
         manifest_uploaded = True
@@ -204,17 +253,25 @@ def watch_uploads(
 ) -> None:
     """Poll an output directory and upload ready results."""
     manifest_uploaded = False
+    consecutive_failures = 0
     while not stop_event.is_set():
-        _, manifest_uploaded = upload_ready_results(
-            output_dir,
-            api_url,
-            api_key,
-            flick_id,
-            dot_ids,
-            delete_after_upload,
-            manifest_uploaded,
-        )
-        stop_event.wait(poll_interval)
+        try:
+            _, manifest_uploaded = upload_ready_results(
+                output_dir,
+                api_url,
+                api_key,
+                flick_id,
+                dot_ids,
+                delete_after_upload,
+                manifest_uploaded,
+            )
+            consecutive_failures = 0
+            stop_event.wait(poll_interval)
+        except Exception as exc:
+            consecutive_failures += 1
+            retry_delay = min(poll_interval * (2 ** consecutive_failures), MAX_RETRY_DELAY_SECONDS)
+            console.print(f"[red]Upload failed[/red] {exc}. Retrying in {retry_delay}s.")
+            stop_event.wait(retry_delay)
 
 
 def _resolve_runtime_settings(
@@ -227,7 +284,7 @@ def _resolve_runtime_settings(
     config = load_config()
     resolved_api_url = api_url or str(config.get("api_url") or DEFAULT_API_URL)
     resolved_api_key = api_key or str(config.get("api_key") or "")
-    resolved_flick_id = flick_id or str(config.get("flick_id") or "")
+    resolved_flick_id = flick_id or str(config.get("flick_id") or config.get("device_id") or "")
     resolved_dot_ids = parse_dot_ids(dot_ids) if dot_ids is not None else parse_dot_ids(config.get("dot_ids"))
     resolved_bucket = bucket or str(config.get("s3_bucket") or DEFAULT_S3_BUCKET)
 
@@ -260,7 +317,11 @@ def upload(
     api_key: str | None = typer.Option(None, "--api-key", help="Per-device API key"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
     poll_interval: int = typer.Option(30, "--poll-interval", help="Seconds between upload polls"),
-    delete_after_upload: bool = typer.Option(False, "--delete-after-upload", help="Delete uploaded non-DOT result directories"),
+    delete_after_upload: bool = typer.Option(
+        True,
+        "--delete-after-upload/--no-delete-after-upload",
+        help="Delete uploaded non-DOT result directories",
+    ),
     flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     dot_ids: str | None = typer.Option(None, "--dot-ids", help="Comma-separated DOT IDs"),
 ) -> None:

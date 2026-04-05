@@ -15,14 +15,13 @@ from rich.console import Console
 from ..config import (
     DEFAULT_API_URL,
     DEFAULT_S3_BUCKET,
-    get_default_dot_ids,
     get_default_flick_id,
     get_hailo_venv_dir,
     get_python_for_detection,
     load_config,
-    parse_dot_ids,
     save_config,
 )
+from ..device_config import build_dot_ids
 
 app = typer.Typer(help="Install dependencies")
 console = Console()
@@ -114,35 +113,94 @@ def _install_hailo_environment() -> None:
         console.print("[green]Cleanup complete.[/green]\n")
 
 
+def _existing_flick_id(existing_config: dict[str, Any]) -> str:
+    return str(existing_config.get("flick_id") or existing_config.get("device_id") or get_default_flick_id())
+
+
+def _existing_dot_count(existing_config: dict[str, Any]) -> int:
+    dot_ids = existing_config.get("dot_ids")
+    if isinstance(dot_ids, list):
+        return len(dot_ids)
+    return 0
+
+
 def _prompt_registration_settings(existing_config: dict[str, Any]) -> dict[str, Any]:
-    dot_ids_value = typer.prompt(
-        "DOT IDs (comma-separated, optional)",
-        default=",".join(parse_dot_ids(existing_config.get("dot_ids")) or get_default_dot_ids()),
-        show_default=False,
-    )
     return {
         "api_url": typer.prompt("API URL", default=str(existing_config.get("api_url") or DEFAULT_API_URL)),
-        "setup_code": typer.prompt("Setup code", hide_input=True),
-        "device_name": typer.prompt("Device name", default=str(existing_config.get("device_name") or platform.node() or "bugcam-pi")),
-        "flick_id": typer.prompt("FLICK ID", default=str(existing_config.get("flick_id") or get_default_flick_id())),
-        "dot_ids": parse_dot_ids(dot_ids_value),
+        "flick_id": typer.prompt("Flick ID", default=_existing_flick_id(existing_config)),
+        "dot_count": typer.prompt("Number of dots", default=_existing_dot_count(existing_config), type=int),
     }
 
 
-def _register_device(api_url: str, setup_code: str, device_name: str) -> dict[str, Any]:
-    response = requests.post(
-        f"{api_url.rstrip('/')}/devices/register",
-        json={"setup_code": setup_code, "device_name": device_name},
-        timeout=30,
-    )
-    response.raise_for_status()
+def _register_device(api_url: str, setup_code: str, flick_id: str, dot_count: int) -> dict[str, Any]:
+    try:
+        response = requests.post(
+            f"{api_url.rstrip('/')}/devices/register",
+            json={"setup_code": setup_code, "flick_id": flick_id, "dot_count": dot_count},
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.ConnectionError as exc:
+        raise ValueError("Cannot reach the BugCam server. Check your WiFi connection.") from exc
+    except requests.Timeout as exc:
+        raise ValueError("Cannot reach the BugCam server. The request timed out.") from exc
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else "unknown"
+        if status_code in {401, 403}:
+            raise ValueError("Invalid setup code. Check that you copied it correctly.") from exc
+        error_message = _extract_registration_error(exc.response)
+        raise ValueError(f"Registration failed: {status_code} — {error_message}") from exc
+
     payload = response.json()
-    required_fields = ("device_id", "api_key", "device_name", "created")
+    required_fields = ("device_id", "api_key", "flick_id", "dot_ids")
     missing_fields = [field for field in required_fields if field not in payload]
     if missing_fields:
         joined = ", ".join(missing_fields)
         raise ValueError(f"Registration response missing fields: {joined}")
     return payload
+
+
+def _extract_registration_error(response: requests.Response | None) -> str:
+    if response is None:
+        return "Unknown server error"
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text.strip() or "Unknown server error"
+    message = payload.get("error") if isinstance(payload, dict) else None
+    return str(message or response.text.strip() or "Unknown server error")
+
+
+def _should_reregister(existing_config: dict[str, Any], flick_id: str) -> bool:
+    existing_api_key = str(existing_config.get("api_key") or "")
+    existing_flick_id = _existing_flick_id(existing_config)
+    if not existing_api_key or not existing_flick_id:
+        return True
+    if flick_id != existing_flick_id:
+        return True
+    return typer.confirm(f"Already registered as {existing_flick_id}. Re-register?", default=False)
+
+
+def _build_saved_config(
+    existing_config: dict[str, Any],
+    api_url: str,
+    api_key: str,
+    flick_id: str,
+    dot_ids: list[str],
+) -> dict[str, Any]:
+    preserved = {
+        key: value
+        for key, value in existing_config.items()
+        if key not in {"api_url", "api_key", "device_id", "device_name", "flick_id", "dot_ids", "s3_bucket"}
+    }
+    return {
+        **preserved,
+        "api_url": api_url.rstrip("/"),
+        "api_key": api_key,
+        "flick_id": flick_id,
+        "dot_ids": dot_ids,
+        "s3_bucket": str(existing_config.get("s3_bucket") or DEFAULT_S3_BUCKET),
+    }
 
 
 def _download_default_model() -> None:
@@ -173,22 +231,42 @@ def setup() -> None:
         _install_hailo_environment()
         existing_config = load_config()
         settings = _prompt_registration_settings(existing_config)
-        registration = _register_device(settings["api_url"], settings["setup_code"], settings["device_name"])
-        saved_config = {
-            **existing_config,
-            "api_url": settings["api_url"].rstrip("/"),
-            "api_key": registration["api_key"],
-            "device_id": registration["device_id"],
-            "device_name": registration["device_name"],
-            "s3_bucket": str(existing_config.get("s3_bucket") or DEFAULT_S3_BUCKET),
-            "flick_id": settings["flick_id"],
-            "dot_ids": settings["dot_ids"],
-        }
+        if settings["dot_count"] < 0:
+            raise ValueError("Number of dots must be >= 0")
+
+        if _should_reregister(existing_config, settings["flick_id"]):
+            setup_code = typer.prompt("Setup code", hide_input=True)
+            registration = _register_device(
+                settings["api_url"],
+                setup_code,
+                settings["flick_id"],
+                settings["dot_count"],
+            )
+            api_key = str(registration["api_key"])
+            flick_id = str(registration["flick_id"])
+            dot_ids = [str(dot_id) for dot_id in registration["dot_ids"]]
+        else:
+            api_key = str(existing_config.get("api_key") or "")
+            flick_id = settings["flick_id"]
+            dot_ids = build_dot_ids(flick_id, settings["dot_count"])
+
+        saved_config = _build_saved_config(
+            existing_config=existing_config,
+            api_url=settings["api_url"],
+            api_key=api_key,
+            flick_id=flick_id,
+            dot_ids=dot_ids,
+        )
         save_config(saved_config)
-        console.print(f"[green]Saved config to {saved_config['device_name']} ({saved_config['device_id']})[/green]\n")
+        console.print(f"[green]Saved config for {saved_config['flick_id']}[/green]\n")
         _download_default_model()
         _run_status_check()
         console.print("[green]Setup complete![/green]")
+        console.print(f"To start BugCam: [cyan]bugcam run --model {DEFAULT_MODEL_BUNDLE}[/cyan]")
+        console.print(
+            "To auto-start on boot: "
+            f"[cyan]bugcam autostart enable --model {DEFAULT_MODEL_BUNDLE} --bucket {saved_config['s3_bucket']}[/cyan]"
+        )
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc

@@ -8,6 +8,7 @@ from pathlib import Path
 from rich.console import Console
 from typing import Optional
 from ..config import get_default_dot_ids, get_default_flick_id, get_input_storage_dir, get_output_storage_dir
+from ..runtime import select_model_reference
 from ..utils import handle_numpy_error
 
 app = typer.Typer(help="Manage auto-start on boot")
@@ -100,7 +101,11 @@ def enable(
     length: int = typer.Option(60, "--length", "-l", help="Chunk duration in seconds"),
     output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", "-o", help="Output directory"),
     poll_interval: int = typer.Option(10, "--poll-interval", help="Upload poll interval in seconds"),
-    delete_after_upload: bool = typer.Option(False, "--delete-after-upload", help="Delete uploaded non-DOT result directories"),
+    delete_after_upload: bool = typer.Option(
+        True,
+        "--delete-after-upload/--no-delete-after-upload",
+        help="Delete uploaded non-DOT result directories",
+    ),
     start_now: bool = typer.Option(True, "--start/--no-start", help="Start service immediately"),
 ) -> None:
     """Enable auto-start on boot.
@@ -143,9 +148,7 @@ def enable(
             console.print(f"[red]Error: Invalid DOT IDs '{dot_ids}'[/red]")
             raise typer.Exit(1)
 
-        if model is None:
-            console.print("[red]Error: --model is required[/red]")
-            raise typer.Exit(1)
+        selected_model = select_model_reference(model)
         if bucket is None:
             console.print("[red]Error: --bucket is required[/red]")
             raise typer.Exit(1)
@@ -153,8 +156,8 @@ def enable(
             console.print(f"[red]Error: Invalid bucket name '{bucket}'[/red]")
             raise typer.Exit(1)
 
-        if not _validate_model_name(model):
-            console.print(f"[red]Error: Invalid model name '{model}'[/red]")
+        if not _validate_model_name(selected_model):
+            console.print(f"[red]Error: Invalid model name '{selected_model}'[/red]")
             console.print("[yellow]Model name must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes[/yellow]")
             raise typer.Exit(1)
 
@@ -170,15 +173,15 @@ def enable(
             dot_ids=dot_ids,
             input_dir=input_dir,
             output_dir=output_dir,
-            model=model,
+            model=selected_model,
             recording_mode=recording_mode,
             interval=interval,
             chunk_duration=length,
             bucket=bucket,
             poll_interval=poll_interval,
-            delete_after_upload_arg=" --delete-after-upload" if delete_after_upload else "",
+            delete_after_upload_arg="" if delete_after_upload else " --no-delete-after-upload",
         )
-        mode_description = f"Run pipeline for {flick_id} to bucket {bucket}"
+        mode_description = f"Run pipeline for {flick_id} to bucket {bucket} with {selected_model}"
 
         # Write service file (requires sudo)
         console.print(f"[cyan]Creating systemd service at {SYSTEMD_SERVICE_PATH}[/cyan]")

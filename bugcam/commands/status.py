@@ -17,6 +17,13 @@ from ..model_bundles import get_installed_bundles
 
 app = typer.Typer(help="Check system status and dependencies")
 console = Console()
+I2C_SENSOR_MAP = {
+    "61": "SCD30",
+    "62": "SCD40",
+    "69": "SEN55",
+    "76": "BME280",
+    "77": "BME280",
+}
 
 
 # --- Check Functions ---
@@ -103,13 +110,10 @@ def _check_sensor() -> tuple[bool, str]:
             return True, "I2C enabled (scan unavailable)"
 
         output = result.stdout.decode()
-        sensors = []
-        if "61" in output:
-            sensors.append("SCD30")
-        if "62" in output:
-            sensors.append("SCD40")
-        if "76" in output or "77" in output:
-            sensors.append("BME280")
+        sensors: list[str] = []
+        for address, sensor_name in I2C_SENSOR_MAP.items():
+            if address in output and sensor_name not in sensors:
+                sensors.append(sensor_name)
 
         if sensors:
             return True, ", ".join(sensors)
@@ -118,6 +122,29 @@ def _check_sensor() -> tuple[bool, str]:
         return True, "I2C enabled (i2cdetect missing)"
     except Exception as e:
         return False, str(e)[:50]
+
+
+def _check_time_sync() -> tuple[bool, str]:
+    """Check whether system NTP synchronization is active."""
+    if platform.system() != "Linux":
+        return False, "Skipped (Linux only)"
+    try:
+        result = subprocess.run(
+            ["timedatectl", "show", "--property=NTPSynchronized"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        synced = "NTPSynchronized=yes" in result.stdout
+        if synced:
+            return True, "NTP synchronized"
+        return False, "Clock NOT synchronized — timestamps may be wrong"
+    except FileNotFoundError:
+        return False, "timedatectl not available"
+    except subprocess.TimeoutExpired:
+        return False, "timedatectl timeout"
+    except Exception as exc:
+        return False, str(exc)[:50]
 
 
 def _check_models() -> tuple[bool, str]:
@@ -327,6 +354,16 @@ def storage() -> None:
     raise typer.Exit(0 if queue_ok and runtime_ok else 1)
 
 
+@app.command()
+def time() -> None:
+    """Check system clock synchronization."""
+    console.print("\n[bold cyan]Time Sync[/bold cyan]")
+    ok, detail = _check_time_sync()
+    _print_status("NTP", ok, detail)
+    console.print()
+    raise typer.Exit(0 if ok else 1)
+
+
 @app.callback(invoke_without_command=True)
 def status(ctx: typer.Context) -> None:
     """Run all system checks."""
@@ -366,6 +403,12 @@ def status(ctx: typer.Context) -> None:
         all_ok = False
     _print_status("Processor", runtime_ok, runtime_detail)
 
+    console.print("\n[cyan]Time[/cyan]")
+    time_ok, time_detail = _check_time_sync()
+    if not time_ok:
+        all_ok = False
+    _print_status("NTP", time_ok, time_detail)
+
     # Devices
     console.print("\n[cyan]Devices[/cyan]")
     if platform.system() != "Linux":
@@ -395,5 +438,6 @@ def status(ctx: typer.Context) -> None:
         console.print("  [cyan]bugcam status devices[/cyan] - Hardware connections")
         console.print("  [cyan]bugcam status models[/cyan]  - Installed models")
         console.print("  [cyan]bugcam status storage[/cyan] - Input/output paths\n")
+        console.print("  [cyan]bugcam status time[/cyan]    - Clock synchronization\n")
 
     raise typer.Exit(0 if all_ok else 1)

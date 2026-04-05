@@ -73,6 +73,7 @@ def build_edge26_config(
     enable_processing: bool = True,
     enable_classification: bool = True,
     continuous_tracking: bool = True,
+    model_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the edge26 pipeline config from BugCam-owned settings."""
     results_dir = Path(output_dir)
@@ -83,7 +84,7 @@ def build_edge26_config(
         },
         "paths": {
             "input_storage": input_dir,
-            "logs_dir": str(results_dir / "_logs"),
+            "logs_dir": str(results_dir / flick_id / "logs"),
         },
         "pipeline": {
             "enable_recording": enable_recording,
@@ -108,6 +109,7 @@ def build_edge26_config(
             "taxonomy_cache": str(get_edge26_taxonomy_cache_path()),
             "normalize": False,
         },
+        "model": dict(model_metadata or {}),
         "output": {
             "results_dir": output_dir,
             "save_crops": True,

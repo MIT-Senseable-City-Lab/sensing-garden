@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from bugcam.config import get_input_storage_dir, get_output_storage_dir, load_co
 
 app = typer.Typer(help="Write a heartbeat snapshot", invoke_without_command=True, no_args_is_help=False)
 console = Console()
+SEN55_I2C_ADDRESS = 0x69
 
 
 def _read_cpu_temperature_celsius() -> float:
@@ -40,8 +42,49 @@ def _build_dot_status(input_dir: Path, dot_ids: list[str]) -> list[dict[str, str
     return status
 
 
+def _read_environmental_sensor() -> dict[str, float] | None:
+    """Read a SEN55 on I2C-1 at address 0x69, or return None if unavailable."""
+    try:
+        linux_module = import_module("sensirion_i2c_driver.linux_i2c_transceiver")
+        sen5x_module = import_module("sensirion_i2c_sen5x.device")
+    except ImportError:
+        return None
+
+    transceiver = None
+    try:
+        LinuxI2cTransceiver = getattr(linux_module, "LinuxI2cTransceiver")
+        Sen5xDevice = getattr(sen5x_module, "Sen5xDevice")
+        I2cChannel = getattr(import_module("sensirion_i2c_driver"), "I2cChannel")
+        transceiver = LinuxI2cTransceiver("/dev/i2c-1")
+        channel = I2cChannel(transceiver)
+        sensor = Sen5xDevice(channel, slave_address=SEN55_I2C_ADDRESS)
+        sensor.device_reset()
+        sensor.start_measurement()
+        time_module = import_module("time")
+        time_module.sleep(1.0)
+        measurements = sensor.read_measured_values()
+        return {
+            "pm1p0": float(measurements.mass_concentration_pm1p0),
+            "pm2p5": float(measurements.mass_concentration_pm2p5),
+            "pm4p0": float(measurements.mass_concentration_pm4p0),
+            "pm10p0": float(measurements.mass_concentration_pm10p0),
+            "voc_index": float(measurements.voc_index),
+            "nox_index": float(measurements.nox_index),
+            "temperature": float(measurements.ambient_temperature),
+            "humidity": float(measurements.relative_humidity),
+        }
+    except Exception:
+        return None
+    finally:
+        if transceiver is not None:
+            try:
+                transceiver.close()
+            except Exception:
+                pass
+
+
 def build_heartbeat_payload(
-    device_id: str,
+    flick_id: str,
     input_dir: Path,
     dot_ids: list[str],
     *,
@@ -51,9 +94,10 @@ def build_heartbeat_payload(
     heartbeat_time = timestamp or datetime.now(timezone.utc)
     disk_usage = shutil.disk_usage(input_dir)
     return {
-        "device_id": device_id,
+        "device_id": flick_id,
         "timestamp": heartbeat_time.isoformat(),
         "cpu_temperature_celsius": _read_cpu_temperature_celsius(),
+        "environment": _read_environmental_sensor(),
         "storage_free_bytes": disk_usage.free,
         "storage_total_bytes": disk_usage.total,
         "uptime_seconds": _read_uptime_seconds(),
@@ -61,29 +105,29 @@ def build_heartbeat_payload(
     }
 
 
-def write_heartbeat_snapshot(output_dir: Path, device_id: str, input_dir: Path, dot_ids: list[str]) -> Path:
+def write_heartbeat_snapshot(output_dir: Path, flick_id: str, input_dir: Path, dot_ids: list[str]) -> Path:
     """Write a heartbeat JSON document to the output directory."""
     heartbeat_time = datetime.now(timezone.utc)
-    payload = build_heartbeat_payload(device_id, input_dir, dot_ids, timestamp=heartbeat_time)
-    heartbeat_dir = output_dir / device_id / "heartbeats"
+    payload = build_heartbeat_payload(flick_id, input_dir, dot_ids, timestamp=heartbeat_time)
+    heartbeat_dir = output_dir / flick_id / "heartbeats"
     heartbeat_dir.mkdir(parents=True, exist_ok=True)
-    heartbeat_path = heartbeat_dir / f"{heartbeat_time.strftime('%H%M%S')}.json"
+    heartbeat_path = heartbeat_dir / f"{heartbeat_time.strftime('%Y%m%d_%H%M%S')}.json"
     heartbeat_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return heartbeat_path
 
 
 def _resolve_runtime_settings(
-    device_id: str | None,
+    flick_id: str | None,
     dot_ids: str | None,
 ) -> dict[str, Any]:
     config = load_config()
-    resolved_device_id = device_id or str(config.get("device_id") or "")
+    resolved_flick_id = flick_id or str(config.get("flick_id") or config.get("device_id") or "")
     resolved_dot_ids = parse_dot_ids(dot_ids) if dot_ids is not None else parse_dot_ids(config.get("dot_ids"))
 
     missing_fields = [
         field_name
         for field_name, value in (
-            ("device_id", resolved_device_id),
+            ("flick_id", resolved_flick_id),
         )
         if not value
     ]
@@ -92,23 +136,23 @@ def _resolve_runtime_settings(
         raise typer.BadParameter(f"Missing required config values: {joined}. Run `bugcam setup` or pass CLI flags.")
 
     return {
-        "device_id": resolved_device_id,
+        "flick_id": resolved_flick_id,
         "dot_ids": resolved_dot_ids,
     }
 
 
 @app.callback()
 def heartbeat(
-    device_id: str | None = typer.Option(None, "--device-id", help="Registered device ID"),
+    flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     dot_ids: str | None = typer.Option(None, "--dot-ids", help="Comma-separated DOT IDs"),
     input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Directory containing DOT inputs"),
     output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", help="Directory for processed output"),
 ) -> None:
     """Write a single heartbeat snapshot."""
-    settings = _resolve_runtime_settings(device_id, dot_ids)
+    settings = _resolve_runtime_settings(flick_id, dot_ids)
     heartbeat_path = write_heartbeat_snapshot(
         output_dir=output_dir,
-        device_id=settings["device_id"],
+        flick_id=settings["flick_id"],
         input_dir=input_dir,
         dot_ids=settings["dot_ids"],
     )

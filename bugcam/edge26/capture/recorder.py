@@ -12,6 +12,7 @@ Architecture:
 """
 
 import cv2
+import shutil
 import time
 import queue
 import threading
@@ -22,6 +23,7 @@ from datetime import datetime
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
+MIN_FREE_DISK_BYTES = 500 * 1024 * 1024
 
 
 class VideoRecorder:
@@ -255,11 +257,11 @@ class VideoRecorder:
         """
         Generate a unique path for a new video chunk.
         
-        Filename format: {device_id}_{YYYYMMDD}_{HHMMSS}.mp4
+        Filename format: {device_id}_{YYYYMMDD}_{HHMMSS}_{ffffff}.mp4
         Timestamp reflects when recording started (real-time).
         """
         now = datetime.now()
-        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
         filename = f"{self.device_id}_{timestamp}.mp4"
         return self.output_dir / filename
     
@@ -270,6 +272,14 @@ class VideoRecorder:
         Returns:
             Path to the completed chunk, or None if stopped early.
         """
+        free_bytes = shutil.disk_usage(self.output_dir).free
+        if free_bytes < MIN_FREE_DISK_BYTES:
+            logger.warning(
+                "Skipping chunk because free space is low: %.1fMB available",
+                free_bytes / (1024 * 1024),
+            )
+            return None
+
         chunk_path = self._generate_chunk_path()
         logger.info(f"Recording chunk: {chunk_path.name}")
         

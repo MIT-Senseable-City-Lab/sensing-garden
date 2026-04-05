@@ -49,6 +49,12 @@ def test_autostart_subcommand_help(cli_runner):
     assert result.exit_code == 0
 
 
+def test_update_subcommand_help(cli_runner):
+    """Test update subcommand is accessible."""
+    result = cli_runner.invoke(app, ["update", "--help"])
+    assert result.exit_code == 0
+
+
 def test_status_subcommand_help(cli_runner):
     """Test status subcommand is accessible."""
     result = cli_runner.invoke(app, ["status", "--help"])

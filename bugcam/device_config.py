@@ -10,23 +10,24 @@ from .config import DEFAULT_API_URL, DEFAULT_S3_BUCKET, get_default_dot_ids, get
 class DeviceConfig:
     api_url: str = DEFAULT_API_URL
     api_key: str = ""
-    device_id: str = ""
-    device_name: str = ""
     s3_bucket: str = DEFAULT_S3_BUCKET
     flick_id: str = ""
     dot_ids: list[str] | None = None
 
 
+def build_dot_ids(flick_id: str, dot_count: int) -> list[str]:
+    """Build deterministic DOT identifiers for a FLICK device."""
+    return [f"{flick_id}-dot{index:02d}" for index in range(1, dot_count + 1)]
+
+
 def load_device_config() -> DeviceConfig:
     """Load persisted device config with defaults applied."""
     config = load_config()
-    flick_id = str(config.get("flick_id") or get_default_flick_id())
+    flick_id = str(config.get("flick_id") or config.get("device_id") or get_default_flick_id())
     dot_ids = parse_dot_ids(config.get("dot_ids")) or get_default_dot_ids()
     return DeviceConfig(
         api_url=str(config.get("api_url") or DEFAULT_API_URL),
         api_key=str(config.get("api_key") or ""),
-        device_id=str(config.get("device_id") or ""),
-        device_name=str(config.get("device_name") or ""),
         s3_bucket=str(config.get("s3_bucket") or DEFAULT_S3_BUCKET),
         flick_id=flick_id,
         dot_ids=dot_ids,

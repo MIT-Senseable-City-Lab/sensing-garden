@@ -25,3 +25,14 @@ def test_resolve_flick_id_prefers_cli_override(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     assert resolve_flick_id("flick-cli") == "flick-cli"
+
+
+def test_load_device_config_falls_back_to_legacy_device_id(tmp_path: Path, monkeypatch) -> None:
+    config_dir = tmp_path / ".config" / "bugcam"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text('{"device_id": "legacy-flick"}', encoding="utf-8")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    device_config = load_device_config()
+
+    assert device_config.flick_id == "legacy-flick"

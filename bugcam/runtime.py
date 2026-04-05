@@ -43,6 +43,7 @@ def build_pipeline(
 ) -> Pipeline:
     """Create a configured edge26 pipeline instance."""
     model_path, labels_path = resolve_model_assets(model_reference)
+    provenance = build_bundle_provenance(model_path, labels_path)
     config = build_edge26_config(
         flick_id=flick_id,
         dot_ids=dot_ids,
@@ -59,6 +60,7 @@ def build_pipeline(
         enable_processing=enable_processing,
         enable_classification=enable_classification,
         continuous_tracking=continuous_tracking,
+        model_metadata=provenance,
     )
     setup_logging(Path(config["paths"]["logs_dir"]))
     return Pipeline(config)
@@ -68,3 +70,14 @@ def resolve_bundle_provenance(model_reference: str) -> dict[str, str]:
     """Resolve provenance metadata for the active bundle."""
     model_path, labels_path = resolve_model_assets(model_reference)
     return build_bundle_provenance(model_path, labels_path)
+
+
+def select_model_reference(model_reference: str | None) -> str:
+    """Return the requested model reference or the first installed bundle."""
+    if model_reference:
+        return model_reference
+
+    bundle = resolve_bundle_reference(None, require_labels=True)
+    if bundle is None:
+        raise ValueError("No installed model bundles with labels were found. Download one with `bugcam models download <bundle>` or pass --model.")
+    return bundle.name

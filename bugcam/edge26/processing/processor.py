@@ -44,6 +44,7 @@ class VideoProcessor:
         self.classification_config = config.get("classification", {})
         self.tracking_config = config.get("tracking", {})
         self.output_config = config.get("output", {})
+        self.model_metadata = config.get("model", {})
         
         # Build bugspot config (merge detection + tracking params)
         bugspot_config = dict(self.detection_config)
@@ -390,11 +391,7 @@ class VideoProcessor:
     def _build_output(self, video_path: Path, video_timestamp: Optional[datetime],
                       pipeline_result, aggregated: List[Dict]) -> Dict:
         """Build final JSON output structure."""
-        # Parse device_id, date, time from filename: {device}_{YYYYMMDD}_{HHMMSS}.mp4
-        parts = video_path.stem.split("_")
-        source_device = "_".join(parts[:-2]) if len(parts) >= 3 else parts[0]
-        date_str = parts[-2] if len(parts) >= 2 else None
-        time_str = parts[-1] if len(parts) >= 2 else None
+        source_device, date_str, time_str = self._parse_video_identity(video_path.stem)
         
         tracks_data = []
         
@@ -450,6 +447,7 @@ class VideoProcessor:
         return {
             "source_device": source_device,
             "date": date_str,
+            "model_id": self.model_metadata.get("model_id"),
             "video_file": video_path.name,
             "video_timestamp": video_timestamp.isoformat() if video_timestamp else None,
             "processing_timestamp": datetime.now().isoformat(),
@@ -466,13 +464,22 @@ class VideoProcessor:
             },
             "tracks": tracks_data,
         }
-    
+
+    def _parse_video_identity(self, filename_stem: str) -> tuple[str, Optional[str], Optional[str]]:
+        """Parse device id and timestamp parts from old and new chunk filenames."""
+        parts = filename_stem.split("_")
+        if len(parts) >= 4 and len(parts[-3]) == 8 and len(parts[-2]) == 6 and len(parts[-1]) == 6:
+            return "_".join(parts[:-3]), parts[-3], parts[-2]
+        if len(parts) >= 3 and len(parts[-2]) == 8 and len(parts[-1]) == 6:
+            return "_".join(parts[:-2]), parts[-2], parts[-1]
+        return filename_stem, None, None
+
     def _parse_timestamp(self, filename_stem: str) -> Optional[datetime]:
         """Parse timestamp from video filename."""
         try:
-            parts = filename_stem.split("_")
-            if len(parts) >= 2:
-                return datetime.strptime(f"{parts[-2]}_{parts[-1]}", "%Y%m%d_%H%M%S")
+            _, date_str, time_str = self._parse_video_identity(filename_stem)
+            if date_str and time_str:
+                return datetime.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M%S")
         except (ValueError, IndexError):
             pass
         return None

@@ -77,7 +77,8 @@ def test_process_uses_device_config_flick_id(tmp_path: Path) -> None:
 def test_run_resolves_flick_id_from_config() -> None:
     from bugcam.commands.run import _resolve_runtime_settings
 
-    with patch('bugcam.commands.run.load_config', return_value={"flick_id": "flick-config", "api_key": "key", "device_id": "device", "s3_bucket": "bucket"}):
-        settings = _resolve_runtime_settings(None, None, None, None, None, None)
+    with patch('bugcam.commands.run.load_config', return_value={"api_key": "key", "s3_bucket": "bucket"}), \
+         patch('bugcam.commands.run.resolve_flick_id', return_value="flick-config"):
+        settings = _resolve_runtime_settings(None, None, None, None, None)
 
     assert settings["flick_id"] == "flick-config"
