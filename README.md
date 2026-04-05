@@ -69,6 +69,32 @@ Models are stored in `~/.cache/bugcam/models/<bundle>/` (each bundle contains `m
 - Raspberry Pi OS Bookworm 64-bit
 - `build-essential` and `libcjson-dev` for building the bundled SEN55 reader
 
+## DOT Sensors
+
+DOTs are mobile devices (iPhones) that detect insects and send data to a FLICK (Raspberry Pi) for classification. Run `bugcam dot-info` on the FLICK to see full setup instructions.
+
+Each DOT puts files in the FLICK's input folder using this structure:
+
+```
+{dot_id}_{YYYYMMDD}/
+├── crops/{track_id}_{HHMMSS}/
+│   ├── frame_000001.jpg
+│   └── done.txt                ← signals track is ready to process
+├── labels/{track_id}.json      ← bounding boxes per frame
+├── videos/{dot_id}_{YYYYMMDD}_{HHMMSS}.mp4
+└── {HHMMSS}_background.jpg     ← reference frame without insects
+```
+
+DOTs also write heartbeat and environment data to the output folder:
+
+```
+{dot_id}/
+├── heartbeats/{YYYYMMDD_HHMMSS}.json
+└── environment/{YYYYMMDD_HHMMSS}.json
+```
+
+DOT IDs are auto-generated during `bugcam setup` (e.g. `garden-london-1-dot01`).
+
 ## Development
 
 ```bash
