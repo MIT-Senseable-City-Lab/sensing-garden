@@ -22,6 +22,7 @@ bugcam run
 | `bugcam process` | Process existing videos with edge26 |
 | `bugcam upload` | Upload processed output to S3 |
 | `bugcam heartbeat` | Write a heartbeat snapshot |
+| `bugcam environment` | Collect one environmental sensor reading |
 | `bugcam models list` | List available and installed models |
 | `bugcam models download <name>` | Download a model bundle |
 | `bugcam models info <name>` | Show model details |

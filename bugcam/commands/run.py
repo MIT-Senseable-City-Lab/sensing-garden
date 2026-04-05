@@ -160,7 +160,7 @@ def run(
     input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Directory for recorded input"),
     output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", help="Directory for processed output"),
     model: str | None = typer.Option(None, "--model", help="Model bundle name or model.hef path"),
-    mode: str = typer.Option("continuous", "--mode", help="Recording mode: continuous or interval"),
+    mode: str = typer.Option("continuous", "--mode", help="'continuous' (always recording) or 'interval' (record periodically)"),
     interval: int = typer.Option(5, "--interval", help="Minutes between recordings in interval mode"),
     chunk_duration: int = typer.Option(60, "--chunk-duration", help="Length of each recorded chunk in seconds"),
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
@@ -169,7 +169,7 @@ def run(
     delete_after_upload: bool = typer.Option(
         True,
         "--delete-after-upload/--no-delete-after-upload",
-        help="Delete uploaded non-DOT result directories",
+        help="Clean up results after uploading",
     ),
 ) -> None:
     """Run recording, processing, uploading, and hourly heartbeat emission."""
@@ -193,9 +193,9 @@ def run(
         selected_model = select_model_reference(model)
         provenance = resolve_bundle_provenance(selected_model)
         if model is None:
-            console.print(f"[dim]Auto-selected model[/dim] {provenance['model_id']}")
+            console.print(f"[dim]Using model[/dim] {provenance['model_id']}")
         console.print(f"[cyan]Running[/cyan] flick={settings['flick_id']} dots={settings['dot_ids'] or '[]'}")
-        console.print(f"[dim]Model[/dim] {provenance['model_id']} {provenance['model_sha256'][:12]}")
+        console.print(f"[dim]Model[/dim] {provenance['model_id']}")
 
         pipeline = build_pipeline(
             flick_id=settings["flick_id"],

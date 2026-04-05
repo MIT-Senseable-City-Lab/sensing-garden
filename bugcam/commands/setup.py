@@ -55,7 +55,7 @@ def _install_hailo_environment() -> None:
     hailo_venv_dir = get_hailo_venv_dir()
 
     if hailo_venv_dir.exists():
-        console.print(f"[green]Found Hailo venv at {hailo_venv_dir}[/green]\n")
+        console.print(f"[green]Found Hailo environment at {hailo_venv_dir}[/green]\n")
         python_exe = get_python_for_detection()
         if check_import(python_exe, "hailo_apps"):
             console.print("[green]Hailo setup already complete[/green]\n")
@@ -76,7 +76,7 @@ def _install_hailo_environment() -> None:
         raise FileNotFoundError(f"install.sh not found at {install_script}")
 
     console.print("[cyan]Running install script (this may take a few minutes)...[/cyan]")
-    console.print("[dim]This will create the venv, install dependencies, and compile .so files[/dim]")
+    console.print("[dim]This will create the environment, install dependencies, and compile .so files[/dim]")
     console.print(f"[dim]$ cd {temp_clone_dir} && ./install.sh[/dim]\n")
     _run_command(["./install.sh"], cwd=str(temp_clone_dir), timeout=600)
     console.print("[green]Install script complete.[/green]\n")
@@ -85,12 +85,12 @@ def _install_hailo_environment() -> None:
     if not temp_venv_dir.exists():
         raise FileNotFoundError(f"venv not found at {temp_venv_dir}")
 
-    console.print(f"[cyan]Moving venv to {hailo_venv_dir}...[/cyan]")
+    console.print(f"[cyan]Moving Hailo environment to {hailo_venv_dir}...[/cyan]")
     hailo_venv_dir.parent.mkdir(parents=True, exist_ok=True)
     if hailo_venv_dir.exists():
         shutil.rmtree(hailo_venv_dir)
     shutil.move(str(temp_venv_dir), str(hailo_venv_dir))
-    console.print("[green]Venv moved.[/green]\n")
+    console.print("[green]Hailo environment moved.[/green]\n")
 
     python_exe = get_python_for_detection()
     console.print("[cyan]Verifying hailo_apps installation...[/cyan]")
@@ -128,8 +128,8 @@ def _existing_dot_count(existing_config: dict[str, Any]) -> int:
 def _prompt_registration_settings(existing_config: dict[str, Any]) -> dict[str, Any]:
     return {
         "api_url": typer.prompt("API URL", default=str(existing_config.get("api_url") or DEFAULT_API_URL)),
-        "flick_id": typer.prompt("Flick ID", default=_existing_flick_id(existing_config)),
-        "dot_count": typer.prompt("Number of dots", default=_existing_dot_count(existing_config), type=int),
+        "flick_id": typer.prompt("Device ID (unique name for this device)", default=_existing_flick_id(existing_config)),
+        "dot_count": typer.prompt("Number of DOT sensors (0 if none)", default=_existing_dot_count(existing_config), type=int),
     }
 
 
@@ -226,6 +226,17 @@ def _install_sen55_binary() -> None:
         console.print(f"[yellow]SEN55 reader compilation skipped:[/yellow] {exc}\n")
 
 
+def _print_registration_summary(flick_id: str, dot_ids: list[str]) -> None:
+    console.print(f"Registered device: [cyan]{flick_id}[/cyan]")
+    if not dot_ids:
+        console.print()
+        return
+    console.print("DOT sensors:")
+    for dot_id in dot_ids:
+        console.print(f"  [cyan]{dot_id}[/cyan]")
+    console.print("Share these IDs with your DOT sensor operators.\n")
+
+
 @app.callback(invoke_without_command=True)
 def setup() -> None:
     """Install Hailo dependencies, register the device, and save local config."""
@@ -237,12 +248,13 @@ def setup() -> None:
     try:
         _install_hailo_environment()
         existing_config = load_config()
+        did_register = False
         settings = _prompt_registration_settings(existing_config)
         if settings["dot_count"] < 0:
             raise ValueError("Number of dots must be >= 0")
 
         if _should_reregister(existing_config, settings["flick_id"]):
-            setup_code = typer.prompt("Setup code", hide_input=True)
+            setup_code = typer.prompt("Setup code (from your project lead)", hide_input=True)
             registration = _register_device(
                 settings["api_url"],
                 setup_code,
@@ -252,6 +264,7 @@ def setup() -> None:
             api_key = str(registration["api_key"])
             flick_id = str(registration["flick_id"])
             dot_ids = [str(dot_id) for dot_id in registration["dot_ids"]]
+            did_register = True
         else:
             api_key = str(existing_config.get("api_key") or "")
             flick_id = settings["flick_id"]
@@ -266,16 +279,16 @@ def setup() -> None:
         )
         save_config(saved_config)
         console.print(f"[green]Saved config for {saved_config['flick_id']}[/green]\n")
+        if did_register:
+            _print_registration_summary(flick_id, dot_ids)
         _install_sen55_binary()
         _run_status_check()
-        console.print("[green]Setup complete![/green]")
-        console.print("Install a model bundle: [cyan]bugcam models list[/cyan]")
-        console.print("Then download one: [cyan]bugcam models download <name>[/cyan]")
-        console.print("To start BugCam: [cyan]bugcam run --model <name>[/cyan]")
-        console.print(
-            "To auto-start on boot: "
-            f"[cyan]bugcam autostart enable --model <name> --bucket {saved_config['s3_bucket']}[/cyan]"
-        )
+        console.print("[green]Setup complete![/green]\n")
+        console.print("[bold]Next steps[/bold]")
+        console.print("[cyan]bugcam models list[/cyan]")
+        console.print("[cyan]bugcam models download <name>[/cyan]")
+        console.print("[cyan]bugcam run --model <name>[/cyan]")
+        console.print(f"[cyan]bugcam autostart enable --model <name> --bucket {saved_config['s3_bucket']}[/cyan]")
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc

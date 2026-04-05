@@ -17,7 +17,7 @@ console = Console()
 SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/bugcam.service")
 
 SERVICE_TEMPLATE_RUN = """[Unit]
-Description=bugcam Edge26 Pipeline
+Description=BugCam: recording and processing insects
 After=multi-user.target
 
 [Service]
@@ -99,7 +99,7 @@ def enable(
     delete_after_upload: bool = typer.Option(
         True,
         "--delete-after-upload/--no-delete-after-upload",
-        help="Delete uploaded non-DOT result directories",
+        help="Clean up results after uploading",
     ),
     start_now: bool = typer.Option(True, "--start/--no-start", help="Start service immediately"),
 ) -> None:

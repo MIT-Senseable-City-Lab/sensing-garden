@@ -11,6 +11,8 @@ from ..config import (
     get_input_storage_dir,
     get_output_storage_dir,
     get_python_for_detection,
+    load_config,
+    parse_dot_ids,
     is_edge26_classification_enabled,
 )
 from ..model_bundles import get_installed_bundles
@@ -98,7 +100,7 @@ def _check_sensor() -> tuple[bool, str]:
     """Test I2C sensor connection."""
     i2c_device = Path("/dev/i2c-1")
     if not i2c_device.exists():
-        return False, "I2C not enabled"
+        return False, "Sensor connection not enabled. Enable: sudo raspi-config → Interface Options → I2C"
 
     i2cdetect_paths = ["i2cdetect", "/usr/sbin/i2cdetect"]
     for i2cdetect_bin in i2cdetect_paths:
@@ -125,11 +127,11 @@ def _check_sensor() -> tuple[bool, str]:
         except Exception as e:
             return False, str(e)[:50]
 
-    return False, "I2C enabled but i2cdetect not installed (apt install i2c-tools)"
+    return False, "Sensor detection tool missing. Install: sudo apt install i2c-tools"
 
 
 def _check_time_sync() -> tuple[bool, str]:
-    """Check whether system NTP synchronization is active."""
+    """Check whether the system clock is synchronized."""
     if platform.system() != "Linux":
         return False, "Skipped (Linux only)"
     try:
@@ -141,8 +143,8 @@ def _check_time_sync() -> tuple[bool, str]:
         )
         synced = "NTPSynchronized=yes" in result.stdout
         if synced:
-            return True, "NTP synchronized"
-        return False, "Clock NOT synchronized — timestamps may be wrong"
+            return True, "Clock synchronized"
+        return False, "System clock not synced — check internet connection"
     except FileNotFoundError:
         return False, "timedatectl not available"
     except subprocess.TimeoutExpired:
@@ -169,7 +171,7 @@ def _check_storage_paths() -> tuple[bool, str]:
 
 
 def _check_edge26_processor() -> tuple[bool, str]:
-    """Check edge26-backed processor readiness."""
+    """Check pipeline readiness."""
     classification_enabled = is_edge26_classification_enabled()
     details = [f"classification={'on' if classification_enabled else 'off'}"]
     ok = True
@@ -200,6 +202,33 @@ def _print_status(name: str, ok: bool, detail: str) -> None:
     """Print a status row."""
     status = "[green]OK[/green]" if ok else "[red]FAIL[/red]"
     console.print(f"  {name:.<20} {status}  {detail}")
+
+
+def _display_api_url(api_url: str) -> str:
+    return api_url.removeprefix("https://").removeprefix("http://")
+
+
+def _print_device_row(name: str, value: str) -> None:
+    console.print(f"  {name:.<20} {value}")
+
+
+def _print_device_section() -> bool:
+    config = load_config()
+    flick_id = str(config.get("flick_id") or config.get("device_id") or "").strip()
+    dot_ids = parse_dot_ids(config.get("dot_ids"))
+    api_url = str(config.get("api_url") or "").strip()
+    registered = bool(flick_id and api_url and str(config.get("api_key") or "").strip())
+
+    console.print("\n[cyan]Device[/cyan]")
+    if not registered:
+        console.print("  Not registered. Run bugcam setup")
+        return False
+
+    _print_device_row("ID", flick_id)
+    _print_device_row("DOTs", ", ".join(dot_ids) if dot_ids else "none")
+    _print_device_row("API", _display_api_url(api_url))
+    _print_device_row("Registered", "yes")
+    return True
 
 
 # --- Subcommands ---
@@ -323,8 +352,6 @@ def sensor() -> None:
         console.print(f"[green]  ✓ {detail}[/green]")
     else:
         console.print(f"[red]  ✗ {detail}[/red]")
-        if "I2C not enabled" in detail:
-            console.print("\n[yellow]Enable I2C:[/yellow] [cyan]sudo raspi-config[/cyan]")
 
     console.print()
     raise typer.Exit(0 if ok else 1)
@@ -348,12 +375,12 @@ def models() -> None:
 
 @app.command()
 def storage() -> None:
-    """Check edge26 storage directories and processor readiness."""
+    """Check storage directories and pipeline readiness."""
     console.print("\n[bold cyan]Storage[/bold cyan]")
     queue_ok, queue_detail = _check_storage_paths()
     runtime_ok, runtime_detail = _check_edge26_processor()
     _print_status("Paths", queue_ok, queue_detail)
-    _print_status("Processor", runtime_ok, runtime_detail)
+    _print_status("Pipeline", runtime_ok, runtime_detail)
     console.print()
     raise typer.Exit(0 if queue_ok and runtime_ok else 1)
 
@@ -361,9 +388,9 @@ def storage() -> None:
 @app.command()
 def time() -> None:
     """Check system clock synchronization."""
-    console.print("\n[bold cyan]Time Sync[/bold cyan]")
+    console.print("\n[bold cyan]Clock[/bold cyan]")
     ok, detail = _check_time_sync()
-    _print_status("NTP", ok, detail)
+    _print_status("Clock", ok, detail)
     console.print()
     raise typer.Exit(0 if ok else 1)
 
@@ -377,6 +404,10 @@ def status(ctx: typer.Context) -> None:
     console.print("\n[bold]bugcam system status[/bold]")
 
     all_ok = True
+
+    device_ok = _print_device_section()
+    if not device_ok:
+        all_ok = False
 
     # Dependencies
     console.print("\n[cyan]Dependencies[/cyan]")
@@ -405,13 +436,13 @@ def status(ctx: typer.Context) -> None:
     runtime_ok, runtime_detail = _check_edge26_processor()
     if not runtime_ok:
         all_ok = False
-    _print_status("Processor", runtime_ok, runtime_detail)
+    _print_status("Pipeline", runtime_ok, runtime_detail)
 
-    console.print("\n[cyan]Time[/cyan]")
+    console.print("\n[cyan]Clock[/cyan]")
     time_ok, time_detail = _check_time_sync()
     if not time_ok:
         all_ok = False
-    _print_status("NTP", time_ok, time_detail)
+    _print_status("Clock", time_ok, time_detail)
 
     # Devices
     console.print("\n[cyan]Devices[/cyan]")

@@ -368,7 +368,7 @@ def upload(
     delete_after_upload: bool = typer.Option(
         True,
         "--delete-after-upload/--no-delete-after-upload",
-        help="Delete uploaded non-DOT result directories",
+        help="Clean up results after uploading",
     ),
     flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     dot_ids: str | None = typer.Option(None, "--dot-ids", help="Comma-separated DOT IDs"),
