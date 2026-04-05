@@ -18,6 +18,7 @@ from ..config import (
     get_default_flick_id,
     get_hailo_venv_dir,
     get_python_for_detection,
+    get_state_dir,
     load_config,
     save_config,
 )
@@ -29,6 +30,7 @@ console = Console()
 HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-rpi5-examples.git"
 HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps-infra.git"
 DEFAULT_MODEL_BUNDLE = "london_141-multitask"
+SEN55_SOURCE_DIR = Path(__file__).resolve().parents[1] / "sensors" / "sen55"
 
 
 def check_import(python_exe: str, module: str) -> bool:
@@ -219,6 +221,19 @@ def _run_status_check() -> None:
         console.print("[yellow]Status check reported issues. Review the output above.[/yellow]")
 
 
+def _install_sen55_binary() -> None:
+    """Compile and install the bundled SEN55 helper binary without blocking setup on failure."""
+    binary_dir = get_state_dir() / "bin"
+    binary_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        console.print("[cyan]Compiling SEN55 reader...[/cyan]")
+        _run_command(["make"], cwd=str(SEN55_SOURCE_DIR), timeout=120)
+        shutil.copy2(SEN55_SOURCE_DIR / "sen55_reader", binary_dir / "sen55_reader")
+        console.print(f"[green]Installed SEN55 reader to {binary_dir / 'sen55_reader'}[/green]\n")
+    except Exception as exc:
+        console.print(f"[yellow]SEN55 reader compilation skipped:[/yellow] {exc}\n")
+
+
 @app.callback(invoke_without_command=True)
 def setup() -> None:
     """Install Hailo dependencies, register the device, and save local config."""
@@ -259,6 +274,7 @@ def setup() -> None:
         )
         save_config(saved_config)
         console.print(f"[green]Saved config for {saved_config['flick_id']}[/green]\n")
+        _install_sen55_binary()
         _download_default_model()
         _run_status_check()
         console.print("[green]Setup complete![/green]")

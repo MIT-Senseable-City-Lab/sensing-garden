@@ -22,12 +22,14 @@ from bugcam.config import (
 )
 from bugcam.commands.status import _check_time_sync
 from bugcam.device_config import resolve_flick_id
+from bugcam.environment_sensor import collect_environment_reading
 from bugcam.processing import parse_capture_resolution
 from bugcam.runtime import build_pipeline, resolve_bundle_provenance, select_model_reference
 
 app = typer.Typer(help="Record, process, upload, and emit heartbeats", invoke_without_command=True, no_args_is_help=False)
 console = Console()
 HEARTBEAT_INTERVAL_SECONDS = 3600
+ENVIRONMENT_INTERVAL_SECONDS = 60
 PID_FILE_PATH = get_state_dir() / "bugcam.pid"
 
 
@@ -41,6 +43,23 @@ def _heartbeat_loop(
     while not stop_event.is_set():
         write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids)
         stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
+
+
+def _environment_loop(
+    flick_id: str,
+    output_dir: Path,
+    stop_event: threading.Event,
+) -> None:
+    warning_emitted = False
+    while not stop_event.is_set():
+        try:
+            collect_environment_reading(output_dir=output_dir, flick_id=flick_id)
+            warning_emitted = False
+        except Exception as exc:
+            if not warning_emitted:
+                console.print(f"[yellow]Environment sensor warning[/yellow] {exc}")
+                warning_emitted = True
+        stop_event.wait(ENVIRONMENT_INTERVAL_SECONDS)
 
 
 def _parse_resolution_option(value: str) -> tuple[int, int]:
@@ -172,6 +191,7 @@ def run(
         )
         upload_stop_event = threading.Event()
         heartbeat_stop_event = threading.Event()
+        environment_stop_event = threading.Event()
         upload_thread = threading.Thread(
             target=watch_uploads,
             args=(
@@ -199,10 +219,21 @@ def run(
             daemon=True,
             name="BugCamHeartbeat",
         )
+        environment_thread = threading.Thread(
+            target=_environment_loop,
+            args=(
+                settings["flick_id"],
+                output_dir,
+                environment_stop_event,
+            ),
+            daemon=True,
+            name="BugCamEnvironment",
+        )
 
         pipeline.start()
         upload_thread.start()
         heartbeat_thread.start()
+        environment_thread.start()
 
         pipeline.wait()
     except KeyboardInterrupt:
@@ -214,10 +245,14 @@ def run(
             upload_stop_event.set()
         if "heartbeat_stop_event" in locals():
             heartbeat_stop_event.set()
+        if "environment_stop_event" in locals():
+            environment_stop_event.set()
         if "upload_thread" in locals():
             upload_thread.join(timeout=upload_poll + 1)
         if "heartbeat_thread" in locals():
             heartbeat_thread.join(timeout=1)
+        if "environment_thread" in locals():
+            environment_thread.join(timeout=1)
         if "settings" in locals():
             upload_ready_results(
                 output_dir,

@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import shutil
 from datetime import datetime, timezone
-from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +14,6 @@ from bugcam.config import get_input_storage_dir, get_output_storage_dir, load_co
 
 app = typer.Typer(help="Write a heartbeat snapshot", invoke_without_command=True, no_args_is_help=False)
 console = Console()
-SEN55_I2C_ADDRESS = 0x69
 
 
 def _read_cpu_temperature_celsius() -> float:
@@ -42,47 +40,6 @@ def _build_dot_status(input_dir: Path, dot_ids: list[str]) -> list[dict[str, str
     return status
 
 
-def _read_environmental_sensor() -> dict[str, float] | None:
-    """Read a SEN55 on I2C-1 at address 0x69, or return None if unavailable."""
-    try:
-        linux_module = import_module("sensirion_i2c_driver.linux_i2c_transceiver")
-        sen5x_module = import_module("sensirion_i2c_sen5x.device")
-    except ImportError:
-        return None
-
-    transceiver = None
-    try:
-        LinuxI2cTransceiver = getattr(linux_module, "LinuxI2cTransceiver")
-        Sen5xDevice = getattr(sen5x_module, "Sen5xDevice")
-        I2cChannel = getattr(import_module("sensirion_i2c_driver"), "I2cChannel")
-        transceiver = LinuxI2cTransceiver("/dev/i2c-1")
-        channel = I2cChannel(transceiver)
-        sensor = Sen5xDevice(channel, slave_address=SEN55_I2C_ADDRESS)
-        sensor.device_reset()
-        sensor.start_measurement()
-        time_module = import_module("time")
-        time_module.sleep(1.0)
-        measurements = sensor.read_measured_values()
-        return {
-            "pm1p0": float(measurements.mass_concentration_pm1p0),
-            "pm2p5": float(measurements.mass_concentration_pm2p5),
-            "pm4p0": float(measurements.mass_concentration_pm4p0),
-            "pm10p0": float(measurements.mass_concentration_pm10p0),
-            "voc_index": float(measurements.voc_index),
-            "nox_index": float(measurements.nox_index),
-            "temperature": float(measurements.ambient_temperature),
-            "humidity": float(measurements.relative_humidity),
-        }
-    except Exception:
-        return None
-    finally:
-        if transceiver is not None:
-            try:
-                transceiver.close()
-            except Exception:
-                pass
-
-
 def build_heartbeat_payload(
     flick_id: str,
     input_dir: Path,
@@ -97,7 +54,6 @@ def build_heartbeat_payload(
         "device_id": flick_id,
         "timestamp": heartbeat_time.isoformat(),
         "cpu_temperature_celsius": _read_cpu_temperature_celsius(),
-        "environment": _read_environmental_sensor(),
         "storage_free_bytes": disk_usage.free,
         "storage_total_bytes": disk_usage.total,
         "uptime_seconds": _read_uptime_seconds(),

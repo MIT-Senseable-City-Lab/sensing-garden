@@ -28,6 +28,7 @@ from bugcam.s3_upload import (
 app = typer.Typer(help="Upload processed output to S3", invoke_without_command=True, no_args_is_help=False)
 console = Console()
 HEARTBEAT_STATE_FILENAME = ".uploaded-heartbeats"
+ENVIRONMENT_STATE_FILENAME = ".uploaded-environment"
 LOG_STATE_FILENAME = ".uploaded-logs"
 MAX_RETRY_DELAY_SECONDS = 300
 
@@ -38,6 +39,10 @@ def _list_result_directories(output_dir: Path) -> list[Path]:
 
 def _list_heartbeat_directories(output_dir: Path) -> list[Path]:
     return sorted(path for path in output_dir.glob("*/heartbeats") if path.is_dir())
+
+
+def _list_environment_directories(output_dir: Path) -> list[Path]:
+    return sorted(path for path in output_dir.glob("*/environment") if path.is_dir())
 
 
 def _list_log_directories(output_dir: Path) -> list[Path]:
@@ -67,6 +72,10 @@ def _heartbeat_state_path(heartbeat_dir: Path) -> Path:
     return heartbeat_dir / HEARTBEAT_STATE_FILENAME
 
 
+def _environment_state_path(environment_dir: Path) -> Path:
+    return environment_dir / ENVIRONMENT_STATE_FILENAME
+
+
 def _log_state_path(log_dir: Path) -> Path:
     return log_dir / LOG_STATE_FILENAME
 
@@ -88,6 +97,20 @@ def _load_heartbeat_state(heartbeat_dir: Path) -> dict[str, str]:
 
 def _save_heartbeat_state(heartbeat_dir: Path, uploaded_files: dict[str, str]) -> None:
     _heartbeat_state_path(heartbeat_dir).write_text(json.dumps(uploaded_files, indent=2), encoding="utf-8")
+
+
+def _load_environment_state(environment_dir: Path) -> dict[str, str]:
+    state_path = _environment_state_path(environment_dir)
+    if not state_path.exists():
+        return {}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict):
+        raise ValueError(f"Environment upload state must be a JSON object: {state_path}")
+    return {str(name): str(fingerprint) for name, fingerprint in state.items()}
+
+
+def _save_environment_state(environment_dir: Path, uploaded_files: dict[str, str]) -> None:
+    _environment_state_path(environment_dir).write_text(json.dumps(uploaded_files, indent=2), encoding="utf-8")
 
 
 def _load_log_state(log_dir: Path) -> dict[str, str]:
@@ -134,6 +157,30 @@ def _upload_heartbeat_files(output_dir: Path, api_url: str, api_key: str) -> int
             uploaded_count += 1
         if changed:
             _save_heartbeat_state(heartbeat_dir, dict(sorted(uploaded_files.items())))
+    return uploaded_count
+
+
+def _upload_environment_files(output_dir: Path, api_url: str, api_key: str) -> int:
+    uploaded_count = 0
+    for environment_dir in _list_environment_directories(output_dir):
+        device_id = environment_dir.parent.name
+        uploaded_files = _load_environment_state(environment_dir)
+        changed = False
+        for environment_path in sorted(environment_dir.glob("*.json")):
+            fingerprint = _heartbeat_fingerprint(environment_path)
+            if uploaded_files.get(environment_path.name) == fingerprint:
+                continue
+            upload_file(
+                api_url,
+                api_key,
+                environment_path,
+                f"v1/{device_id}/environment/{environment_path.name}",
+            )
+            uploaded_files[environment_path.name] = fingerprint
+            changed = True
+            uploaded_count += 1
+        if changed:
+            _save_environment_state(environment_dir, dict(sorted(uploaded_files.items())))
     return uploaded_count
 
 
@@ -218,6 +265,7 @@ def upload_ready_results(
 ) -> tuple[int, bool]:
     """Upload all ready result directories once."""
     processed_count = _upload_heartbeat_files(output_dir, api_url, api_key)
+    processed_count += _upload_environment_files(output_dir, api_url, api_key)
     processed_count += _upload_log_files(output_dir, api_url, api_key)
     if not manifest_uploaded and _list_result_directories(output_dir):
         upload_manifest(api_url, api_key, flick_id, dot_ids)

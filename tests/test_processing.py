@@ -27,6 +27,7 @@ def test_build_edge26_config_resolves_paths(tmp_path: Path, monkeypatch) -> None
     assert config["device"]["flick_id"] == "flick01"
     assert config["device"]["dot_ids"] == ["dot01", "dot02"]
     assert config["paths"]["input_storage"].endswith("input")
+    assert config["paths"]["logs_dir"].endswith("outputs/flick01/logs")
     assert config["output"]["results_dir"].endswith("outputs")
     assert config["pipeline"]["recording_mode"] == "interval"
     assert config["pipeline"]["recording_interval_minutes"] == 7

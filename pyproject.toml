@@ -18,6 +18,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
 ]
 packages = [{include = "bugcam"}]
+include = ["bugcam/sensors/sen55/*"]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -28,7 +29,6 @@ setproctitle = "*"
 opencv-python = "*"
 requests = ">=2.28.0"
 bugspot = "^0.1.1"
-sensirion-i2c-sen5x = {version = "*", optional = true}
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0.0"
