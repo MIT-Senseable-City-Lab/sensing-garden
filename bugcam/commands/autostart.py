@@ -25,7 +25,7 @@ Type=simple
 User={user}
 Group=video
 WorkingDirectory={workdir}
-ExecStart={bugcam_path} run --flick-id {flick_id} --dot-ids {dot_ids} --input-dir {input_dir} --output-dir {output_dir} --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --bucket {bucket} --upload-poll {poll_interval}{delete_after_upload_arg}
+ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --upload-poll {poll_interval}{delete_after_upload_arg}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -92,14 +92,9 @@ def _run_systemctl(command: list[str], check: bool = True) -> subprocess.Complet
 @app.command()
 def enable(
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use"),
-    bucket: Optional[str] = typer.Option(None, "--bucket", help="S3 bucket"),
-    flick_id: str = typer.Option(get_default_flick_id(), "--flick-id", help="FLICK device ID"),
-    dot_ids: str = typer.Option(",".join(get_default_dot_ids()), "--dot-ids", help="Comma-separated DOT IDs"),
-    input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Input storage directory"),
     recording_mode: str = typer.Option("continuous", "--recording-mode", help="Recording mode: continuous or interval"),
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
     length: int = typer.Option(60, "--length", "-l", help="Chunk duration in seconds"),
-    output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", "-o", help="Output directory"),
     poll_interval: int = typer.Option(10, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
         True,
@@ -141,47 +136,24 @@ def enable(
         if not _validate_path(workdir):
             console.print(f"[red]Error: Invalid working directory path[/red]")
             raise typer.Exit(1)
-        if not _validate_model_name(flick_id):
-            console.print(f"[red]Error: Invalid flick ID '{flick_id}'[/red]")
-            raise typer.Exit(1)
-        if dot_ids and not _validate_identifier_list(dot_ids):
-            console.print(f"[red]Error: Invalid DOT IDs '{dot_ids}'[/red]")
-            raise typer.Exit(1)
-
         selected_model = select_model_reference(model)
-        if bucket is None:
-            console.print("[red]Error: --bucket is required[/red]")
-            raise typer.Exit(1)
-        if not _validate_model_name(bucket):
-            console.print(f"[red]Error: Invalid bucket name '{bucket}'[/red]")
-            raise typer.Exit(1)
-
         if not _validate_model_name(selected_model):
             console.print(f"[red]Error: Invalid model name '{selected_model}'[/red]")
             console.print("[yellow]Model name must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes[/yellow]")
-            raise typer.Exit(1)
-
-        if not _validate_path(input_dir) or not _validate_path(output_dir):
-            console.print("[red]Error: Invalid input/output directory path[/red]")
             raise typer.Exit(1)
 
         service_content = SERVICE_TEMPLATE_RUN.format(
             user=user,
             workdir=workdir,
             bugcam_path=bugcam_path,
-            flick_id=flick_id,
-            dot_ids=dot_ids,
-            input_dir=input_dir,
-            output_dir=output_dir,
             model=selected_model,
             recording_mode=recording_mode,
             interval=interval,
             chunk_duration=length,
-            bucket=bucket,
             poll_interval=poll_interval,
             delete_after_upload_arg="" if delete_after_upload else " --no-delete-after-upload",
         )
-        mode_description = f"Run pipeline for {flick_id} to bucket {bucket} with {selected_model}"
+        mode_description = f"Run pipeline with {selected_model}"
 
         # Write service file (requires sudo)
         console.print(f"[cyan]Creating systemd service at {SYSTEMD_SERVICE_PATH}[/cyan]")
