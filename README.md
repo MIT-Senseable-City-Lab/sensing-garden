@@ -1,219 +1,67 @@
-[![PyPI version](https://img.shields.io/pypi/v/bugcam.svg)](https://pypi.org/project/bugcam/)
-[![Python versions](https://img.shields.io/pypi/pyversions/bugcam.svg)](https://pypi.org/project/bugcam/)
-[![License](https://img.shields.io/pypi/l/bugcam.svg)](https://pypi.org/project/bugcam/)
-[![Downloads](https://static.pepy.tech/badge/bugcam)](https://pepy.tech/project/bugcam)
-[![Downloads](https://static.pepy.tech/badge/bugcam/month)](https://pepy.tech/project/bugcam)
-[![Downloads](https://static.pepy.tech/badge/bugcam/week)](https://pepy.tech/project/bugcam)
+# bugcam
 
-# bugcam - Raspberry Pi Insect Detection
-
-CLI for running insect detection on Raspberry Pi with Hailo AI HAT+.
-
-## Feature Status
-
-**Legend:** ✓ Tested & working on device | ⚠️ In development (not yet verified on device)
-
-## Requirements
-
-### Hardware
-- **Raspberry Pi**: Raspberry Pi 5 (required - Pi 4 not supported due to PCIe requirement)
-- **RAM**: 8GB recommended
-- **Storage**: 32GB microSD minimum (64GB recommended for multiple models)
-- **AI Accelerator**: Raspberry Pi AI HAT+ with Hailo-8L (13 TOPS) or Hailo-8 (26 TOPS)
-- **Camera**: Raspberry Pi High Quality Camera (recommended, tested) or Raspberry Pi Camera Module 3 (likely supported, not yet tested)
-- **Cooling**: Active Cooler required (thermal management essential under AI workload)
-- **Power Supply**: Official 27W USB-C power supply recommended
-
-### Software
-- **OS**: Raspberry Pi OS Bookworm 64-bit (latest version)
-- **Kernel**: 6.6.31 or newer (run `sudo apt full-upgrade` if needed)
-- **PCIe**: Gen 3 enabled via `raspi-config` (required for optimal performance)
-
+Raspberry Pi insect detection CLI using Hailo AI accelerator and the edge26 processing pipeline.
+Records video, detects and classifies insects on-device, and uploads results to S3.
 
 ## Quick Start
 
 ```bash
-# 1. Install system dependencies
-sudo apt update && sudo apt install hailo-all
-
-# 2. Install bugcam
-pipx install bugcam
-
-# 3. Download detection model
-bugcam models download london_141-multitask
-
-# 4. Run detection
-bugcam preview
+curl -sSL https://raw.githubusercontent.com/MIT-Senseable-City-Lab/sensing-garden/main/install.sh | bash
+bugcam setup
+bugcam run
 ```
 
 ## Commands
 
-### `bugcam setup` ✓
-Initialize bugcam by installing Hailo dependencies and creating the virtual environment.
+| Command | Description |
+|---------|-------------|
+| `bugcam run` | Full pipeline: record + process + upload + heartbeat |
+| `bugcam record single` | Record a single video |
+| `bugcam process` | Process existing videos with edge26 |
+| `bugcam upload` | Upload processed output to S3 |
+| `bugcam heartbeat` | Write a heartbeat snapshot |
+| `bugcam models list` | List available and installed models |
+| `bugcam models download <name>` | Download a model bundle |
+| `bugcam models info <name>` | Show model details |
+| `bugcam models delete <name>` | Delete a model bundle |
+| `bugcam status` | System diagnostics (hardware, deps, camera, Hailo) |
+| `bugcam setup` | Device registration + Hailo installation |
+| `bugcam autostart enable` | Enable systemd service for boot |
+| `bugcam autostart disable` | Disable systemd service |
+| `bugcam autostart status` | Show service status |
+| `bugcam autostart logs` | View service logs |
+| `bugcam update` | Update to latest version |
+| `bugcam --version` | Show installed version |
 
-```bash
-bugcam setup
-```
+## Architecture
 
-This clones hailo-rpi5-examples to `/tmp` during setup, runs the installation, then moves only the virtual environment to `~/.local/share/bugcam/hailo-venv`.
+- **edge26 pipeline** lives in `bugcam/edge26/` (vendored from the edge26 repo). Handles recording, processing, and output formatting.
+- **BugSpot** library handles motion detection and insect tracking.
+- **Hailo accelerator** runs classification on detected insects.
+- **Upload** sends results to S3 via presigned URLs obtained from the backend API. No AWS credentials are stored on-device -- only a per-device API key issued during `bugcam setup`.
+- **S3 trigger Lambda** indexes uploaded results into DynamoDB.
 
-### `bugcam preview` ⚠️
-Run live camera preview with detection overlay.
+## Configuration
 
-```bash
-bugcam preview [--model london_141-multitask]
-```
+Config file: `~/.config/bugcam/config.json`
 
-### `bugcam detect` ⚠️
-Run continuous detection and save results.
+| Field | Description |
+|-------|-------------|
+| `api_url` | Backend API endpoint |
+| `api_key` | Per-device API key (from registration) |
+| `flick_id` | FLICK device identifier |
+| `dot_ids` | List of DOT device identifiers |
+| `s3_bucket` | Output S3 bucket name |
 
-```bash
-bugcam detect start [--output detections.jsonl] [--duration 30] [--quiet]
-```
+Models are stored in `~/.cache/bugcam/models/<bundle>/` (each bundle contains `model.hef` + `labels.txt`).
 
-Output format (JSONL):
-```json
-{"timestamp": "2025-12-14T10:30:45", "class": "insect", "confidence": 0.92, "bbox": [100, 200, 150, 250]}
-```
+## Requirements
 
-### `bugcam status` ✓
-Check system status, dependencies, and hardware connections.
-
-```bash
-bugcam status           # Run all checks
-bugcam status deps      # Check software dependencies
-bugcam status devices   # Check hardware connections
-bugcam status hailo     # Check Hailo AI accelerator
-bugcam status camera    # Check camera connection
-bugcam status sensor    # Check I2C sensors
-bugcam status models    # Check installed models
-```
-
-**Checks performed:**
-
-| Check | What it tests | How |
-|-------|---------------|-----|
-| `deps` | Python packages (gi, hailo, numpy, cv2, hailo_apps) | Imports in detection Python |
-| `hailo` | Hailo AI accelerator is detected | Runs `hailortcli scan` |
-| `camera` | RPi camera is accessible | Imports picamera2 and initializes |
-| `sensor` | I2C sensors are connected | Scans I2C bus for known addresses |
-| `models` | Complete model bundles installed | Checks cache directory for `model.hef` + `labels.txt` |
-
-### `bugcam models` ✓
-Manage detection models.
-
-```bash
-# Download a model
-bugcam models download london_141-multitask
-
-# List available and installed models
-bugcam models list
-
-# Show model details
-bugcam models info london_141-multitask
-
-# Delete a model
-bugcam models delete london_141-multitask
-```
-
-Models are managed by the S3 backend. Run `bugcam models list` to see available models.
-
-Installed models are stored as bundle directories:
-
-- `~/.cache/bugcam/models/<bundle>/model.hef`
-- `~/.cache/bugcam/models/<bundle>/labels.txt`
-
-### `bugcam record` ✓
-Record videos at intervals (without on-device detection). Useful for collecting training data or when you want to process videos later on a more powerful machine.
-
-```bash
-# Record 60s videos every 10 minutes
-bugcam record start --interval 10 --length 60
-
-# Record for 8 hours then stop
-bugcam record start --duration 480 --interval 10 --length 60
-
-# Save to custom directory
-bugcam record start --output-dir /mnt/usb/videos --interval 10 --length 60
-
-# Record a single test video
-bugcam record single --length 30
-
-# Save single video to specific path
-bugcam record single --output /tmp/test.mp4 --length 10
-```
-
-**Parameters:**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--interval`, `-i` | 10 | Minutes between recordings |
-| `--length`, `-l` | 60 | Length of each video in seconds |
-| `--duration`, `-d` | 0 | Total runtime in minutes (0 = run forever) |
-| `--output-dir`, `-o` | `~/bugcam-videos` | Directory to save videos |
-| `--quiet`, `-q` | false | Suppress console output |
-
-Videos are saved with timestamp filenames like `video_20251216_153045.mp4`.
-
-### `bugcam autostart`
-Manage systemd service for automatic detection or recording on boot.
-
-```bash
-# Detection mode (with AI model) ⚠️
-bugcam autostart enable --mode detect --model small-generic
-
-# Recording mode (video only, no detection) ✓
-bugcam autostart enable --mode record --interval 10 --length 60
-
-# Recording to external storage ✓
-bugcam autostart enable --mode record --interval 10 --length 60 --output-dir /mnt/usb/videos
-
-# Manage service ✓
-bugcam autostart disable
-bugcam autostart status
-bugcam autostart logs [--follow]
-```
-
-## Environment Variables
-
-Optional configuration:
-
-- `XDG_CACHE_HOME` - Custom cache directory location (default: `~/.cache`)
-- `BUGCAM_EDGE26_CLASSIFICATION=1` - Enable edge26 classification in the jobs pipeline. Default is detection-only until a verified classifier bundle is installed.
-
-## Monitoring
-
-```bash
-# Hailo hardware monitoring
-hailortcli monitor
-
-# System temperature
-vcgencmd measure_temp
-
-# Service logs
-bugcam autostart logs --follow
-```
-
-## Troubleshooting
-
-```bash
-# Run all system checks
-bugcam status
-
-# Command not found after install
-pipx ensurepath  # then close and reopen terminal
-
-# Camera not detected
-rpicam-hello
-sudo raspi-config  # Enable camera in Interface Options
-
-# Hailo driver issues
-sudo apt install --reinstall hailo-all
-hailortcli scan
-
-# Service logs
-bugcam autostart logs
-```
+- Raspberry Pi 5 with 8GB RAM
+- Raspberry Pi AI HAT+ (Hailo-8L or Hailo-8)
+- Pi Camera (HQ Camera recommended)
+- Python 3.11+
+- Raspberry Pi OS Bookworm 64-bit
 
 ## Development
 
@@ -221,7 +69,6 @@ bugcam autostart logs
 git clone https://github.com/MIT-Senseable-City-Lab/sensing-garden.git
 cd sensing-garden
 poetry install
-poetry run pytest tests/ -v
 poetry run bugcam --help
 ```
 
