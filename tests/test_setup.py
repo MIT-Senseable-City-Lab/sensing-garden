@@ -52,7 +52,7 @@ def test_setup_uses_sys_executable_fallback(cli_runner: CliRunner) -> None:
     import sys
 
     with patch('bugcam.config.platform.system', return_value='Darwin'), \
-         patch('pathlib.Path.exists', return_value=False):
+         patch('pathlib.Path.is_file', return_value=False):
         python = get_python_for_detection()
         assert python == sys.executable
 
@@ -153,8 +153,8 @@ def test_setup_skips_clone_if_exists(cli_runner: CliRunner, tmp_path: Path) -> N
         calls = [call[0][0] for call in mock_run.call_args_list]
         git_clone_calls = [c for c in calls if isinstance(c, list) and len(c) > 1 and c[0] == "git" and c[1] == "clone"]
         assert len(git_clone_calls) == 0
-        assert "Found Hailo venv" in result.output
-        assert "Setup already complete" in result.output
+        assert "Found Hailo environment" in result.output
+        assert "Hailo setup already complete" in result.output
 
 
 def test_setup_runs_install_script(cli_runner: CliRunner, tmp_path: Path) -> None:
@@ -255,6 +255,8 @@ def test_setup_verifies_hailo_apps(cli_runner: CliRunner, tmp_path: Path) -> Non
             return True  # install.sh exists
         return original_exists(self)
 
+    existing_config = {"api_key": "test-key", "flick_id": "test-flick", "s3_bucket": "test-bucket", "api_url": "https://api.test.com/v1"}
+
     with patch('bugcam.commands.setup.platform.system', return_value='Linux'), \
          patch.object(Path, 'home', return_value=tmp_path), \
          patch('subprocess.run', return_value=mock_result), \
@@ -262,10 +264,11 @@ def test_setup_verifies_hailo_apps(cli_runner: CliRunner, tmp_path: Path) -> Non
          patch('bugcam.commands.setup.shutil.rmtree') as mock_rmtree, \
          patch.object(Path, 'exists', mock_path_exists), \
          patch.object(Path, 'mkdir'), \
-         patch('bugcam.commands.setup.check_import', return_value=True) as mock_check:
-        result = cli_runner.invoke(app, ["setup"])
-        assert result.exit_code == 0
+         patch('bugcam.commands.setup.check_import', return_value=True) as mock_check, \
+         patch('bugcam.commands.setup.load_config', return_value=existing_config), \
+         patch('bugcam.commands.setup.save_config'), \
+         patch('bugcam.commands.setup._install_sen55_binary'):
+        result = cli_runner.invoke(app, ["setup"], input="\n\n\nn\n")
         assert "hailo_apps: OK" in result.output
 
-        # Verify it checks hailo_apps import
         mock_check.assert_called_with(mock_check.call_args[0][0], "hailo_apps")

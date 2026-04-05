@@ -141,7 +141,7 @@ class TestAutostart:
         """Test autostart enable help."""
         result = cli_runner.invoke(app, ["autostart", "enable", "--help"])
         assert result.exit_code == 0
-        assert "--bucket" in result.output
+        assert "--model" in result.output
 
     def test_autostart_disable_help(self, cli_runner):
         """Test autostart disable help."""
