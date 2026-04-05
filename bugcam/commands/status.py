@@ -100,28 +100,32 @@ def _check_sensor() -> tuple[bool, str]:
     if not i2c_device.exists():
         return False, "I2C not enabled"
 
-    try:
-        result = subprocess.run(
-            ["i2cdetect", "-y", "1"],
-            capture_output=True,
-            timeout=5
-        )
-        if result.returncode != 0:
-            return True, "I2C enabled (scan unavailable)"
+    i2cdetect_paths = ["i2cdetect", "/usr/sbin/i2cdetect"]
+    for i2cdetect_bin in i2cdetect_paths:
+        try:
+            result = subprocess.run(
+                [i2cdetect_bin, "-y", "1"],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                continue
 
-        output = result.stdout.decode()
-        sensors: list[str] = []
-        for address, sensor_name in I2C_SENSOR_MAP.items():
-            if address in output and sensor_name not in sensors:
-                sensors.append(sensor_name)
+            output = result.stdout.decode()
+            sensors: list[str] = []
+            for address, sensor_name in I2C_SENSOR_MAP.items():
+                if address in output and sensor_name not in sensors:
+                    sensors.append(sensor_name)
 
-        if sensors:
-            return True, ", ".join(sensors)
-        return False, "No sensors detected"
-    except FileNotFoundError:
-        return True, "I2C enabled (i2cdetect missing)"
-    except Exception as e:
-        return False, str(e)[:50]
+            if sensors:
+                return True, ", ".join(sensors)
+            return False, "I2C enabled, no sensors detected"
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            return False, str(e)[:50]
+
+    return False, "I2C enabled but i2cdetect not installed (apt install i2c-tools)"
 
 
 def _check_time_sync() -> tuple[bool, str]:
