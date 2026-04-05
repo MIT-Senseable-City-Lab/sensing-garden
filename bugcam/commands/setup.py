@@ -29,7 +29,6 @@ console = Console()
 
 HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-rpi5-examples.git"
 HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps-infra.git"
-DEFAULT_MODEL_BUNDLE = "london_141-multitask"
 SEN55_SOURCE_DIR = Path(__file__).resolve().parents[1] / "sensors" / "sen55"
 
 
@@ -205,13 +204,6 @@ def _build_saved_config(
     }
 
 
-def _download_default_model() -> None:
-    cmd = [sys.executable, "-m", "bugcam.cli", "models", "download", DEFAULT_MODEL_BUNDLE]
-    console.print(f"[cyan]Downloading default model[/cyan] {DEFAULT_MODEL_BUNDLE}")
-    console.print(f"[dim]$ {' '.join(cmd)}[/dim]\n")
-    _run_command(cmd, timeout=300)
-
-
 def _run_status_check() -> None:
     cmd = [sys.executable, "-m", "bugcam.cli", "status"]
     console.print("[cyan]Running bugcam status...[/cyan]")
@@ -275,13 +267,14 @@ def setup() -> None:
         save_config(saved_config)
         console.print(f"[green]Saved config for {saved_config['flick_id']}[/green]\n")
         _install_sen55_binary()
-        _download_default_model()
         _run_status_check()
         console.print("[green]Setup complete![/green]")
-        console.print(f"To start BugCam: [cyan]bugcam run --model {DEFAULT_MODEL_BUNDLE}[/cyan]")
+        console.print("Install a model bundle: [cyan]bugcam models list[/cyan]")
+        console.print("Then download one: [cyan]bugcam models download <name>[/cyan]")
+        console.print("To start BugCam: [cyan]bugcam run --model <name>[/cyan]")
         console.print(
             "To auto-start on boot: "
-            f"[cyan]bugcam autostart enable --model {DEFAULT_MODEL_BUNDLE} --bucket {saved_config['s3_bucket']}[/cyan]"
+            f"[cyan]bugcam autostart enable --model <name> --bucket {saved_config['s3_bucket']}[/cyan]"
         )
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")

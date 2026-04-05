@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -115,12 +116,30 @@ def _process_is_running(pid: int) -> bool:
     return True
 
 
+def _is_bugcam_process(pid: int) -> bool:
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    return "bugcam" in result.stdout.lower()
+
+
 def _acquire_pid_file() -> Path:
     PID_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
     if PID_FILE_PATH.exists():
         raw_pid = PID_FILE_PATH.read_text(encoding="utf-8").strip()
-        if raw_pid.isdigit() and _process_is_running(int(raw_pid)):
-            raise RuntimeError(f"BugCam is already running (PID {raw_pid}). Use `kill {raw_pid}` to stop it first.")
+        if raw_pid.isdigit():
+            pid = int(raw_pid)
+            if _process_is_running(pid) and _is_bugcam_process(pid):
+                raise RuntimeError(f"BugCam is already running (PID {raw_pid}). Use `kill {raw_pid}` to stop it first.")
         PID_FILE_PATH.unlink(missing_ok=True)
 
     PID_FILE_PATH.write_text(str(os.getpid()), encoding="utf-8")

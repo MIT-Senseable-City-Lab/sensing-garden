@@ -7,7 +7,7 @@ Taxonomy (family/genus) is resolved from GBIF at startup.
 """
 
 import logging
-import sys
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -53,7 +53,7 @@ class HierarchicalClassification:
 # Taxonomy helper
 # ---------------------------------------------------------------------------
 
-def get_taxonomy(species_list: List[str]) -> dict:
+def get_taxonomy(species_list: List[str], cache_path: Path | None = None) -> dict:
     """
     Build a hierarchical taxonomy from the GBIF API.
 
@@ -66,7 +66,13 @@ def get_taxonomy(species_list: List[str]) -> dict:
             2 – genus -> family mapping
             3 – species -> genus mapping
     """
+    cached_taxonomy = _load_taxonomy_cache(cache_path, species_list)
+    if cached_taxonomy is not None:
+        logger.info(f"Loaded taxonomy cache from {cache_path}")
+        return cached_taxonomy
+
     taxonomy: dict = {1: [], 2: {}, 3: {}}
+    lookup_failed = False
 
     species_for_gbif = [s for s in species_list if s.lower() != "unknown"]
     has_unknown = len(species_for_gbif) != len(species_list)
@@ -79,7 +85,8 @@ def get_taxonomy(species_list: List[str]) -> dict:
     print("-" * 80)
 
     for species_name in species_for_gbif:
-        family, genus = _lookup_species(species_name)
+        family, genus, ok = _lookup_species(species_name)
+        lookup_failed = lookup_failed or not ok
         taxonomy[3][species_name] = genus
         taxonomy[2][genus] = family
         if family not in taxonomy[1]:
@@ -96,21 +103,23 @@ def get_taxonomy(species_list: List[str]) -> dict:
     print("-" * 80)
 
     _print_taxonomy_summary(taxonomy, species_list)
+    if not lookup_failed:
+        _save_taxonomy_cache(cache_path, taxonomy, species_list)
     return taxonomy
 
 
-def _lookup_species(species_name: str) -> Tuple[str, str]:
-    """Query GBIF for a single species and return (family, genus)."""
+def _lookup_species(species_name: str) -> Tuple[str, str, bool]:
+    """Query GBIF for a single species and return (family, genus, ok)."""
     url = f"https://api.gbif.org/v1/species/match?name={species_name}&verbose=true"
     try:
         response = requests.get(url, timeout=10)
         data = response.json()
     except Exception as exc:
-        _taxonomy_error(species_name, f"GBIF request failed: {exc}")
+        return _taxonomy_fallback(species_name, f"GBIF request failed: {exc}")
 
     status = data.get("status")
     if status not in ("ACCEPTED", "SYNONYM"):
-        _taxonomy_error(
+        return _taxonomy_fallback(
             species_name,
             f"Not found in GBIF (status={status}), check spelling",
         )
@@ -118,21 +127,61 @@ def _lookup_species(species_name: str) -> Tuple[str, str]:
     family = data.get("family")
     genus = data.get("genus")
     if not family or not genus:
-        _taxonomy_error(
+        return _taxonomy_fallback(
             species_name,
             "Found in GBIF but family/genus missing, check spelling",
         )
 
     print(f"{species_name:<30} {family:<20} {genus:<20} OK")
-    return family, genus
+    return family, genus, True
 
 
-def _taxonomy_error(species_name: str, message: str) -> None:
-    """Log a taxonomy error and exit."""
-    logger.error(f"{species_name}: {message}")
-    print(f"{species_name:<30} {'ERROR':<20} {'ERROR':<20} FAILED")
+def _taxonomy_fallback(species_name: str, message: str) -> Tuple[str, str, bool]:
+    """Log a taxonomy lookup warning and fall back to Unknown labels."""
+    logger.warning(f"{species_name}: {message}")
+    print(f"{species_name:<30} {'Unknown':<20} {'Unknown':<20} FALLBACK")
     print(f"  {message}")
-    sys.exit(1)
+    return "Unknown", "Unknown", False
+
+
+def _load_taxonomy_cache(cache_path: Path | None, species_list: List[str]) -> Optional[dict]:
+    if cache_path is None or not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning(f"Could not read taxonomy cache {cache_path}: {exc}")
+        return None
+
+    if payload.get("species_list") != species_list:
+        logger.info("Taxonomy cache does not match current labels; rebuilding")
+        return None
+
+    families = payload.get("family_list")
+    genus_to_family = payload.get("genus_to_family")
+    species_to_genus = payload.get("species_to_genus")
+    if not isinstance(families, list) or not isinstance(genus_to_family, dict) or not isinstance(species_to_genus, dict):
+        logger.warning(f"Invalid taxonomy cache structure in {cache_path}")
+        return None
+
+    return {
+        1: [str(family) for family in families],
+        2: {str(genus): str(family) for genus, family in genus_to_family.items()},
+        3: {str(species): str(genus) for species, genus in species_to_genus.items()},
+    }
+
+
+def _save_taxonomy_cache(cache_path: Path | None, taxonomy: dict, species_list: List[str]) -> None:
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "species_list": species_list,
+        "family_list": taxonomy[1],
+        "genus_to_family": taxonomy[2],
+        "species_to_genus": taxonomy[3],
+    }
+    cache_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _print_taxonomy_summary(taxonomy: dict, species_list: List[str]) -> None:
@@ -240,6 +289,7 @@ class HailoClassifier:
     def _load_labels(self) -> None:
         """Load species from a plain-text file and build taxonomy via GBIF."""
         labels_path = self.config.get("labels")
+        taxonomy_cache_path = self.config.get("taxonomy_cache")
 
         if not labels_path:
             logger.warning("No 'labels' in classification config – using numeric indices")
@@ -259,7 +309,10 @@ class HailoClassifier:
         logger.info(f"Loaded {len(self.species_list)} species from {labels_path}")
 
         # Resolve family / genus from GBIF
-        taxonomy = get_taxonomy(self.species_list)
+        taxonomy = get_taxonomy(
+            self.species_list,
+            Path(str(taxonomy_cache_path)) if taxonomy_cache_path else None,
+        )
         self.family_list = taxonomy[1]
         self.genus_list = sorted(taxonomy[2].keys())
         self.species_to_genus = taxonomy[3]

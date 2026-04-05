@@ -3,6 +3,8 @@
 Raspberry Pi insect detection CLI using Hailo AI accelerator and the edge26 processing pipeline.
 Records video, detects and classifies insects on-device, and uploads results to S3.
 
+Default API endpoint: `https://api.sensinggarden.com/v1`
+
 ## Quick Start
 
 ```bash
@@ -60,8 +62,10 @@ Models are stored in `~/.cache/bugcam/models/<bundle>/` (each bundle contains `m
 - Raspberry Pi 5 with 8GB RAM
 - Raspberry Pi AI HAT+ (Hailo-8L or Hailo-8)
 - Pi Camera (HQ Camera recommended)
+- Optional SEN55 environmental sensor on I2C for `bugcam environment` and periodic environment uploads
 - Python 3.11+
 - Raspberry Pi OS Bookworm 64-bit
+- `build-essential` and `libcjson-dev` for building the bundled SEN55 reader
 
 ## Development
 

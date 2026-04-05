@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_API_URL = "https://nxdp0npcb2.execute-api.us-east-1.amazonaws.com"
+DEFAULT_API_URL = "https://api.sensinggarden.com/v1"
 DEFAULT_S3_BUCKET = "scl-sensing-garden"
 
 
