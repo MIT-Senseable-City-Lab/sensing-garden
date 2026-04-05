@@ -10,21 +10,7 @@ def test_record_help(cli_runner: CliRunner) -> None:
     """Test record command help."""
     result = cli_runner.invoke(app, ["record", "--help"])
     assert result.exit_code == 0
-    assert "start" in result.output
     assert "single" in result.output
-
-
-def test_record_start_help(cli_runner: CliRunner) -> None:
-    """Test record start subcommand help."""
-    result = cli_runner.invoke(app, ["record", "start", "--help"])
-    assert result.exit_code == 0
-    assert "--duration" in result.output
-    assert "--interval" in result.output
-    assert "--length" in result.output
-    assert "--output-dir" in result.output
-    assert "--flick-id" in result.output
-    assert "--resolution" in result.output
-    assert "--quiet" in result.output
 
 
 def test_record_single_help(cli_runner: CliRunner) -> None:
@@ -36,45 +22,12 @@ def test_record_single_help(cli_runner: CliRunner) -> None:
     assert "--resolution" in result.output
 
 
-def test_record_start_requires_linux(cli_runner: CliRunner) -> None:
-    """Test record start fails on non-Linux."""
-    with patch('bugcam.commands.record.platform.system', return_value='Darwin'):
-        result = cli_runner.invoke(app, ["record", "start"])
-        assert result.exit_code == 1
-        assert "Linux" in result.output or "Raspberry Pi" in result.output
-
-
 def test_record_single_requires_linux(cli_runner: CliRunner) -> None:
     """Test record single fails on non-Linux."""
     with patch('bugcam.commands.record.platform.system', return_value='Darwin'):
         result = cli_runner.invoke(app, ["record", "single"])
         assert result.exit_code == 1
         assert "Linux" in result.output or "Raspberry Pi" in result.output
-
-
-def test_record_start_validates_interval(cli_runner: CliRunner) -> None:
-    """Test record start validates interval parameter."""
-    with patch('bugcam.commands.record.platform.system', return_value='Linux'):
-        result = cli_runner.invoke(app, ["record", "start", "--interval", "0"])
-        assert result.exit_code == 1
-        assert "interval" in result.output.lower()
-
-
-def test_record_start_validates_length(cli_runner: CliRunner) -> None:
-    """Test record start validates length parameter."""
-    with patch('bugcam.commands.record.platform.system', return_value='Linux'):
-        result = cli_runner.invoke(app, ["record", "start", "--length", "0"])
-        assert result.exit_code == 1
-        assert "length" in result.output.lower()
-
-
-def test_record_start_validates_length_vs_interval(cli_runner: CliRunner) -> None:
-    """Test record start validates length doesn't exceed interval."""
-    with patch('bugcam.commands.record.platform.system', return_value='Linux'):
-        # Length 120s > interval 1min = 60s
-        result = cli_runner.invoke(app, ["record", "start", "--interval", "1", "--length", "120"])
-        assert result.exit_code == 1
-        assert "interval" in result.output.lower() or "exceed" in result.output.lower()
 
 
 def test_check_ffmpeg_available() -> None:
@@ -147,23 +100,6 @@ def test_check_disk_space_insufficient(tmp_path: Path) -> None:
         has_space, free_mb = _check_disk_space(tmp_path)
         assert has_space is False
         assert free_mb == 100
-
-
-def test_record_start_low_disk_space_exits(cli_runner: CliRunner, tmp_path: Path) -> None:
-    """Test record start exits when disk space is low."""
-    with patch('bugcam.commands.record.platform.system', return_value='Linux'), \
-         patch('bugcam.commands.record._check_camera_available', return_value=True), \
-         patch('bugcam.commands.record._check_disk_space', return_value=(False, 100)):
-        result = cli_runner.invoke(app, [
-            "record", "start",
-            "--output-dir", str(tmp_path),
-            "--duration", "1",
-            "--interval", "1",
-            "--length", "10"
-        ])
-        assert result.exit_code == 1
-        assert "Insufficient disk space" in result.output
-        assert "100MB" in result.output
 
 
 def test_record_single_low_disk_space_exits(cli_runner: CliRunner, tmp_path: Path) -> None:

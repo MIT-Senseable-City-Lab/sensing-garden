@@ -43,12 +43,6 @@ def test_heartbeat_subcommand_help(cli_runner):
     assert result.exit_code == 0
 
 
-def test_preview_subcommand_help(cli_runner):
-    """Test preview subcommand is accessible."""
-    result = cli_runner.invoke(app, ["preview", "--help"])
-    assert result.exit_code == 0
-
-
 def test_autostart_subcommand_help(cli_runner):
     """Test autostart subcommand is accessible."""
     result = cli_runner.invoke(app, ["autostart", "--help"])

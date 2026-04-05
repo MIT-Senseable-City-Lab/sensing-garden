@@ -1,4 +1,7 @@
-"""Helpers for publishing model bundles to S3 without touching legacy flat objects."""
+"""Helpers for publishing model bundles to S3 without touching legacy flat objects.
+
+Dev-only utility. This module is not part of the device runtime path.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

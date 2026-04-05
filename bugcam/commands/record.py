@@ -1,10 +1,8 @@
 """Video recording command for bugcam."""
 import typer
 import time
-import signal
 import platform
 import subprocess
-import tempfile
 import os
 import shutil
 from pathlib import Path
@@ -138,135 +136,6 @@ def _record_single_video(output_path: Path, length: int, quiet: bool, resolution
     except Exception as e:
         console.print(f"[red]Recording failed: {e}[/red]")
         return False
-
-
-@app.command()
-def start(
-    duration: int = typer.Option(0, "--duration", "-d", help="Total runtime in minutes (0 = run forever)"),
-    interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
-    length: int = typer.Option(60, "--length", "-l", help="Length of each video in seconds"),
-    output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR, "--output-dir", "-o", help="Directory to save videos"),
-    flick_id: Optional[str] = typer.Option(None, "--flick-id", help="FLICK device ID for output filenames"),
-    resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output"),
-) -> None:
-    """Start recording videos at intervals.
-
-    Records videos of specified length at regular intervals.
-    Videos are saved with timestamp filenames.
-    """
-    # Validate parameters
-    if interval < 1:
-        console.print("[red]Interval must be at least 1 minute[/red]")
-        raise typer.Exit(1)
-
-    if length < 1:
-        console.print("[red]Length must be at least 1 second[/red]")
-        raise typer.Exit(1)
-
-    if length > interval * 60:
-        console.print("[red]Video length cannot exceed interval[/red]")
-        raise typer.Exit(1)
-    parsed_resolution = _parse_resolution_option(resolution)
-    resolved_flick_id = _resolve_recording_flick_id(flick_id)
-
-    # Check platform
-    if platform.system() != "Linux":
-        console.print("[red]Recording only works on Raspberry Pi (Linux)[/red]")
-        raise typer.Exit(1)
-
-    # Check camera
-    if not _check_camera_available():
-        console.print("[red]Camera not accessible[/red]")
-        console.print("Run [cyan]bugcam status camera[/cyan] to diagnose.")
-        raise typer.Exit(1)
-
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Check disk space before starting
-    has_space, free_mb = _check_disk_space(output_dir)
-    if not has_space:
-        console.print(f"[red]Insufficient disk space. Need at least 300MB free, have {free_mb}MB.[/red]")
-        raise typer.Exit(1)
-
-    # Setup duration timer
-    stop_flag = False
-
-    def timeout_handler(signum, frame):
-        nonlocal stop_flag
-        stop_flag = True
-
-    if duration > 0:
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(duration * 60)
-
-    # Show startup info
-    if not quiet:
-        console.print("\n[bold green]bugcam video recording[/bold green]\n")
-        console.print(f"  Output:   [cyan]{output_dir}[/cyan]")
-        console.print(f"  Interval: [cyan]{interval} min[/cyan]")
-        console.print(f"  Length:   [cyan]{length} sec[/cyan]")
-        console.print(f"  Resolution: [cyan]{parsed_resolution[0]}x{parsed_resolution[1]}[/cyan]")
-        if duration > 0:
-            console.print(f"  Duration: [cyan]{duration} min[/cyan]")
-        else:
-            console.print(f"  Duration: [cyan]indefinite[/cyan]")
-        console.print("\nPress [cyan]Ctrl+C[/cyan] to stop\n")
-
-    start_time = datetime.now()
-    videos_recorded = 0
-
-    try:
-        while not stop_flag:
-            # Check disk space before each recording
-            has_space, free_mb = _check_disk_space(output_dir)
-            if not has_space:
-                console.print(f"[red]Disk space low ({free_mb}MB). Stopping recording.[/red]")
-                break
-
-            # Generate filename with timestamp
-            video_path = _build_recording_path(output_dir, resolved_flick_id)
-
-            # Record video
-            if _record_single_video(video_path, length, quiet, parsed_resolution):
-                # Remux for compatibility
-                if not quiet:
-                    console.print("[dim]Remuxing...[/dim]", end=" ")
-                _remux_video(video_path)
-                if not quiet:
-                    console.print(f"[green]Saved:[/green] {video_path.name}")
-                videos_recorded += 1
-
-            # Wait for next interval
-            if not stop_flag:
-                sleep_seconds = (interval * 60) - length
-                if sleep_seconds > 0:
-                    if not quiet:
-                        console.print(f"[dim]Next recording in {sleep_seconds // 60}m {sleep_seconds % 60}s[/dim]")
-
-                    # Sleep in chunks to allow interrupt
-                    for _ in range(sleep_seconds):
-                        if stop_flag:
-                            break
-                        time.sleep(1)
-
-    except KeyboardInterrupt:
-        if not quiet:
-            console.print("\n[yellow]Recording stopped by user[/yellow]")
-
-    finally:
-        signal.alarm(0)
-
-        # Show summary
-        elapsed = datetime.now() - start_time
-        elapsed_str = str(elapsed).split('.')[0]
-
-        if not quiet:
-            console.print(f"\n[bold]Recording complete[/bold]")
-            console.print(f"  Videos recorded: [cyan]{videos_recorded}[/cyan]")
-            console.print(f"  Runtime:         [cyan]{elapsed_str}[/cyan]")
-            console.print(f"  Output:          [cyan]{output_dir}[/cyan]")
 
 
 @app.command()

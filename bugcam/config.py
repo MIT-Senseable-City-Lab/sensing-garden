@@ -41,6 +41,7 @@ def parse_dot_ids(value: str | list[str] | None) -> list[str]:
     items = value if isinstance(value, list) else str(value).split(",")
     return [str(item).strip() for item in items if str(item).strip()]
 
+
 def get_hailo_venv_dir() -> Path:
     """Get the directory for the Hailo venv."""
     return Path.home() / ".local" / "share" / "bugcam" / "hailo-venv"
@@ -85,22 +86,12 @@ def get_state_dir() -> Path:
     return Path.home() / ".local" / "share" / "bugcam"
 
 
-def get_incoming_dir() -> Path:
-    """Get the managed incoming media directory."""
-    return get_state_dir() / "incoming"
-
-
 def get_input_storage_dir() -> Path:
     """Get the edge26 input storage directory."""
     input_dir = os.environ.get("BUGCAM_INPUT_DIR")
     if input_dir:
         return Path(input_dir)
-    return get_incoming_dir()
-
-
-def get_outputs_dir() -> Path:
-    """Get the processed output directory."""
-    return get_state_dir() / "outputs"
+    return get_state_dir() / "incoming"
 
 
 def get_output_storage_dir() -> Path:
@@ -108,34 +99,12 @@ def get_output_storage_dir() -> Path:
     output_dir = os.environ.get("BUGCAM_OUTPUT_DIR")
     if output_dir:
         return Path(output_dir)
-    return get_outputs_dir()
-
-
-def get_iphone_watch_dir() -> Path:
-    """Get the watched directory for iPhone-origin media."""
-    watch_dir = os.environ.get("BUGCAM_IPHONE_WATCH_DIR")
-    if watch_dir:
-        return Path(watch_dir)
-    return get_state_dir() / "incoming-iphone"
-
-
-def get_recordings_dir() -> Path:
-    """Get the default RPi recordings directory."""
-    record_dir = os.environ.get("BUGCAM_RECORDINGS_DIR")
-    if record_dir:
-        return Path(record_dir)
-    return Path.home() / "bugcam-videos"
-
-
-def get_default_device_id(source_type: str) -> str:
-    """Get the logical device identifier for a source type."""
-    env_name = f"BUGCAM_{source_type.upper()}_DEVICE_ID"
-    return os.environ.get(env_name, f"bugcam-{source_type}")
+    return get_state_dir() / "outputs"
 
 
 def get_default_flick_id() -> str:
     """Get the configured FLICK device identifier."""
-    return os.environ.get("BUGCAM_FLICK_ID", get_default_device_id("rpi"))
+    return os.environ.get("BUGCAM_FLICK_ID", "bugcam-rpi")
 
 
 def get_default_dot_ids() -> list[str]:

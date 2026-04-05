@@ -34,44 +34,6 @@ StandardError=journal
 WantedBy=multi-user.target
 """
 
-SERVICE_TEMPLATE_RECORD = """[Unit]
-Description=bugcam Video Recording
-After=multi-user.target
-
-[Service]
-Type=simple
-User={user}
-Group=video
-WorkingDirectory={workdir}
-ExecStart={bugcam_path} record start --interval {interval} --length {length} --output-dir {output_dir} --flick-id {flick_id}
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-SERVICE_TEMPLATE_UPLOAD = """[Unit]
-Description=bugcam Output Upload
-After=multi-user.target
-
-[Service]
-Type=simple
-User={user}
-Group=video
-WorkingDirectory={workdir}
-ExecStart={bugcam_path} upload --output-dir {output_dir} --bucket {bucket} --poll-interval {poll_interval} --flick-id {flick_id} --dot-ids {dot_ids}{delete_after_upload_arg}
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-"""
-
 
 def _get_bugcam_path() -> Path:
     try:
@@ -128,15 +90,14 @@ def _run_systemctl(command: list[str], check: bool = True) -> subprocess.Complet
 
 @app.command()
 def enable(
-    mode: str = typer.Option("run", "--mode", help="Mode: run, record, or upload"),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use (run mode)"),
-    bucket: Optional[str] = typer.Option(None, "--bucket", help="S3 bucket (run/upload modes)"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use"),
+    bucket: Optional[str] = typer.Option(None, "--bucket", help="S3 bucket"),
     flick_id: str = typer.Option(get_default_flick_id(), "--flick-id", help="FLICK device ID"),
     dot_ids: str = typer.Option(",".join(get_default_dot_ids()), "--dot-ids", help="Comma-separated DOT IDs"),
-    input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Input storage directory (run mode)"),
-    recording_mode: str = typer.Option("continuous", "--recording-mode", help="Run mode recording mode: continuous or interval"),
+    input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Input storage directory"),
+    recording_mode: str = typer.Option("continuous", "--recording-mode", help="Recording mode: continuous or interval"),
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
-    length: int = typer.Option(60, "--length", "-l", help="Video length in seconds (record mode)"),
+    length: int = typer.Option(60, "--length", "-l", help="Chunk duration in seconds"),
     output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", "-o", help="Output directory"),
     poll_interval: int = typer.Option(10, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(False, "--delete-after-upload", help="Delete uploaded non-DOT result directories"),
@@ -144,15 +105,8 @@ def enable(
 ) -> None:
     """Enable auto-start on boot.
 
-    Supports three modes:
-    - run: Record, process, upload, and emit heartbeats
-    - record: Record videos at intervals
-    - upload: Watch processed output and upload to S3
+    Installs the full run pipeline service.
     """
-    # Validate mode
-    if mode not in ("run", "record", "upload"):
-        console.print(f"[red]Invalid mode: {mode}. Use 'run', 'record', or 'upload'[/red]")
-        raise typer.Exit(1)
     if recording_mode not in ("continuous", "interval"):
         console.print(f"[red]Invalid recording mode: {recording_mode}[/red]")
         raise typer.Exit(1)
@@ -189,83 +143,42 @@ def enable(
             console.print(f"[red]Error: Invalid DOT IDs '{dot_ids}'[/red]")
             raise typer.Exit(1)
 
-        # Generate service file based on mode
-        if mode == "run":
-            if model is None:
-                console.print("[red]Error: --model is required in run mode[/red]")
-                raise typer.Exit(1)
-            if bucket is None:
-                console.print("[red]Error: --bucket is required in run mode[/red]")
-                raise typer.Exit(1)
-            if not _validate_model_name(bucket):
-                console.print(f"[red]Error: Invalid bucket name '{bucket}'[/red]")
-                raise typer.Exit(1)
+        if model is None:
+            console.print("[red]Error: --model is required[/red]")
+            raise typer.Exit(1)
+        if bucket is None:
+            console.print("[red]Error: --bucket is required[/red]")
+            raise typer.Exit(1)
+        if not _validate_model_name(bucket):
+            console.print(f"[red]Error: Invalid bucket name '{bucket}'[/red]")
+            raise typer.Exit(1)
 
-            # Validate model name to prevent command injection
-            if not _validate_model_name(model):
-                console.print(f"[red]Error: Invalid model name '{model}'[/red]")
-                console.print("[yellow]Model name must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes[/yellow]")
-                raise typer.Exit(1)
+        if not _validate_model_name(model):
+            console.print(f"[red]Error: Invalid model name '{model}'[/red]")
+            console.print("[yellow]Model name must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes[/yellow]")
+            raise typer.Exit(1)
 
-            if not _validate_path(input_dir) or not _validate_path(output_dir):
-                console.print("[red]Error: Invalid input/output directory path[/red]")
-                raise typer.Exit(1)
+        if not _validate_path(input_dir) or not _validate_path(output_dir):
+            console.print("[red]Error: Invalid input/output directory path[/red]")
+            raise typer.Exit(1)
 
-            service_content = SERVICE_TEMPLATE_RUN.format(
-                user=user,
-                workdir=workdir,
-                bugcam_path=bugcam_path,
-                flick_id=flick_id,
-                dot_ids=dot_ids,
-                input_dir=input_dir,
-                output_dir=output_dir,
-                model=model,
-                recording_mode=recording_mode,
-                interval=interval,
-                chunk_duration=length,
-                bucket=bucket,
-                poll_interval=poll_interval,
-                delete_after_upload_arg=" --delete-after-upload" if delete_after_upload else "",
-            )
-            mode_description = f"Run pipeline for {flick_id} to bucket {bucket}"
-        elif mode == "record":
-            if not _validate_path(output_dir):
-                console.print(f"[red]Error: Invalid output directory path[/red]")
-                console.print("[yellow]Path must not contain special characters like newlines, quotes, or shell metacharacters[/yellow]")
-                raise typer.Exit(1)
-
-            service_content = SERVICE_TEMPLATE_RECORD.format(
-                user=user,
-                workdir=workdir,
-                bugcam_path=bugcam_path,
-                interval=interval,
-                length=length,
-                output_dir=output_dir,
-                flick_id=flick_id,
-            )
-            mode_description = f"Recording: {length}s every {interval}min to {output_dir}"
-        else:
-            if bucket is None:
-                console.print("[red]Error: --bucket is required in upload mode[/red]")
-                raise typer.Exit(1)
-            if not _validate_model_name(bucket):
-                console.print(f"[red]Error: Invalid bucket name '{bucket}'[/red]")
-                raise typer.Exit(1)
-            if not _validate_path(output_dir):
-                console.print(f"[red]Error: Invalid output directory path[/red]")
-                raise typer.Exit(1)
-            service_content = SERVICE_TEMPLATE_UPLOAD.format(
-                user=user,
-                workdir=workdir,
-                bugcam_path=bugcam_path,
-                output_dir=output_dir,
-                bucket=bucket,
-                poll_interval=poll_interval,
-                flick_id=flick_id,
-                dot_ids=dot_ids,
-                delete_after_upload_arg=" --delete-after-upload" if delete_after_upload else "",
-            )
-            mode_description = f"Upload watcher for {output_dir} to {bucket}"
+        service_content = SERVICE_TEMPLATE_RUN.format(
+            user=user,
+            workdir=workdir,
+            bugcam_path=bugcam_path,
+            flick_id=flick_id,
+            dot_ids=dot_ids,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            model=model,
+            recording_mode=recording_mode,
+            interval=interval,
+            chunk_duration=length,
+            bucket=bucket,
+            poll_interval=poll_interval,
+            delete_after_upload_arg=" --delete-after-upload" if delete_after_upload else "",
+        )
+        mode_description = f"Run pipeline for {flick_id} to bucket {bucket}"
 
         # Write service file (requires sudo)
         console.print(f"[cyan]Creating systemd service at {SYSTEMD_SERVICE_PATH}[/cyan]")
