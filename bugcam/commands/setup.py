@@ -28,7 +28,7 @@ app = typer.Typer(help="Install dependencies")
 console = Console()
 
 HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-rpi5-examples.git"
-HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps-infra.git"
+HAILO_RPI5_EXAMPLES_TAG = "25.3.1"
 SEN55_SOURCE_DIR = Path(__file__).resolve().parents[1] / "sensors" / "sen55"
 
 
@@ -66,9 +66,12 @@ def _install_hailo_environment() -> None:
         console.print("[yellow]Removing existing temp directory...[/yellow]")
         shutil.rmtree(temp_clone_dir)
 
-    console.print("[cyan]Cloning hailo-rpi5-examples (shallow clone)...[/cyan]")
-    console.print(f"[dim]$ git clone --depth 1 {HAILO_RPI5_EXAMPLES_URL} {temp_clone_dir}[/dim]\n")
-    _run_command(["git", "clone", "--depth", "1", HAILO_RPI5_EXAMPLES_URL, str(temp_clone_dir)], timeout=120)
+    console.print(f"[cyan]Cloning hailo-rpi5-examples (tag {HAILO_RPI5_EXAMPLES_TAG})...[/cyan]")
+    console.print(f"[dim]$ git clone --depth 1 --branch {HAILO_RPI5_EXAMPLES_TAG} {HAILO_RPI5_EXAMPLES_URL} {temp_clone_dir}[/dim]\n")
+    _run_command(
+        ["git", "clone", "--depth", "1", "--branch", HAILO_RPI5_EXAMPLES_TAG, HAILO_RPI5_EXAMPLES_URL, str(temp_clone_dir)],
+        timeout=120,
+    )
     console.print("[green]Clone complete.[/green]\n")
 
     install_script = temp_clone_dir / "install.sh"
@@ -95,17 +98,11 @@ def _install_hailo_environment() -> None:
     python_exe = get_python_for_detection()
     console.print("[cyan]Verifying hailo_apps installation...[/cyan]")
     if not check_import(python_exe, "hailo_apps"):
-        console.print("[yellow]hailo_apps: Not found, attempting to install...[/yellow]\n")
-        is_venv = python_exe != "/usr/bin/python3"
-        if is_venv:
-            cmd = [python_exe, "-m", "pip", "install", HAILO_APPS_INFRA_URL]
-        else:
-            cmd = [python_exe, "-m", "pip", "install", "--user", "--break-system-packages", HAILO_APPS_INFRA_URL]
-        console.print(f"[dim]$ {' '.join(cmd)}[/dim]\n")
-        _run_command(cmd, timeout=300)
-
-    if not check_import(python_exe, "hailo_apps"):
-        raise RuntimeError("hailo_apps installation verification failed")
+        raise RuntimeError(
+            f"hailo_apps did not import from the venv created by hailo-rpi5-examples {HAILO_RPI5_EXAMPLES_TAG}. "
+            "The upstream install script did not complete correctly. "
+            "Delete ~/.local/share/bugcam/hailo-venv and re-run `bugcam setup`."
+        )
     console.print("[green]hailo_apps: OK[/green]")
 
     if temp_clone_dir.exists():

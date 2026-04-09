@@ -132,6 +132,9 @@ def test_setup_clones_repo_if_not_exists(cli_runner: CliRunner, tmp_path: Path) 
         assert git_clone_call is not None
         assert "hailo-rpi5-examples.git" in " ".join(git_clone_call)
         assert "/tmp/hailo-rpi5-examples-setup" in " ".join(git_clone_call)
+        # Ensure clone is pinned to a specific tag (not main)
+        assert "--branch" in git_clone_call
+        assert "25.3.1" in git_clone_call
 
 
 def test_setup_skips_clone_if_exists(cli_runner: CliRunner, tmp_path: Path) -> None:
