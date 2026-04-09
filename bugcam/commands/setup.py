@@ -60,6 +60,10 @@ def _install_hailo_environment() -> None:
         if check_import(python_exe, "hailo_apps"):
             console.print("[green]Hailo setup already complete[/green]\n")
             return
+        console.print(
+            f"[yellow]Existing Hailo venv is broken (hailo_apps does not import). Removing {hailo_venv_dir}...[/yellow]\n"
+        )
+        shutil.rmtree(hailo_venv_dir)
 
     temp_clone_dir = Path("/tmp/hailo-rpi5-examples-setup")
     if temp_clone_dir.exists():
@@ -90,8 +94,6 @@ def _install_hailo_environment() -> None:
 
     console.print(f"[cyan]Moving Hailo environment to {hailo_venv_dir}...[/cyan]")
     hailo_venv_dir.parent.mkdir(parents=True, exist_ok=True)
-    if hailo_venv_dir.exists():
-        shutil.rmtree(hailo_venv_dir)
     shutil.move(str(temp_venv_dir), str(hailo_venv_dir))
     console.print("[green]Hailo environment moved.[/green]\n")
 
@@ -99,9 +101,13 @@ def _install_hailo_environment() -> None:
     console.print("[cyan]Verifying hailo_apps installation...[/cyan]")
     if not check_import(python_exe, "hailo_apps"):
         raise RuntimeError(
-            f"hailo_apps did not import from the venv created by hailo-rpi5-examples {HAILO_RPI5_EXAMPLES_TAG}. "
-            "The upstream install script did not complete correctly. "
-            "Delete ~/.local/share/bugcam/hailo-venv and re-run `bugcam setup`."
+            f"hailo_apps did not import from the venv created by hailo-rpi5-examples {HAILO_RPI5_EXAMPLES_TAG}.\n"
+            "This usually means the system 'hailo-all' package version does not match what "
+            f"hailo-rpi5-examples {HAILO_RPI5_EXAMPLES_TAG} expects (4.20.0).\n"
+            "Diagnose with:\n"
+            "    dpkg -l | grep hailo-all\n"
+            "Expected hailo-all version: 4.20.0\n"
+            "If the version differs, install the matching hailo-all via apt before re-running `bugcam setup`."
         )
     console.print("[green]hailo_apps: OK[/green]")
 
