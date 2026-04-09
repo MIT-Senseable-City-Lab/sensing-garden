@@ -1,0 +1,294 @@
+"""Setup command for BugCam."""
+from __future__ import annotations
+
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import requests
+import typer
+from rich.console import Console
+
+from ..config import (
+    DEFAULT_API_URL,
+    DEFAULT_S3_BUCKET,
+    get_default_flick_id,
+    get_hailo_venv_dir,
+    get_python_for_detection,
+    get_state_dir,
+    load_config,
+    save_config,
+)
+from ..device_config import build_dot_ids
+
+app = typer.Typer(help="Install dependencies")
+console = Console()
+
+HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-rpi5-examples.git"
+HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps-infra.git"
+SEN55_SOURCE_DIR = Path(__file__).resolve().parents[1] / "sensors" / "sen55"
+
+
+def check_import(python_exe: str, module: str) -> bool:
+    """Check if a module can be imported."""
+    try:
+        result = subprocess.run(
+            [python_exe, "-c", f"import {module}"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _run_command(cmd: list[str], *, cwd: str | None = None, timeout: int) -> None:
+    result = subprocess.run(cmd, cwd=cwd, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError(f"Command failed: {' '.join(cmd)}")
+
+
+def _install_hailo_environment() -> None:
+    hailo_venv_dir = get_hailo_venv_dir()
+
+    if hailo_venv_dir.exists():
+        console.print(f"[green]Found Hailo environment at {hailo_venv_dir}[/green]\n")
+        python_exe = get_python_for_detection()
+        if check_import(python_exe, "hailo_apps"):
+            console.print("[green]Hailo setup already complete[/green]\n")
+            return
+
+    temp_clone_dir = Path("/tmp/hailo-rpi5-examples-setup")
+    if temp_clone_dir.exists():
+        console.print("[yellow]Removing existing temp directory...[/yellow]")
+        shutil.rmtree(temp_clone_dir)
+
+    console.print("[cyan]Cloning hailo-rpi5-examples (shallow clone)...[/cyan]")
+    console.print(f"[dim]$ git clone --depth 1 {HAILO_RPI5_EXAMPLES_URL} {temp_clone_dir}[/dim]\n")
+    _run_command(["git", "clone", "--depth", "1", HAILO_RPI5_EXAMPLES_URL, str(temp_clone_dir)], timeout=120)
+    console.print("[green]Clone complete.[/green]\n")
+
+    install_script = temp_clone_dir / "install.sh"
+    if not install_script.exists():
+        raise FileNotFoundError(f"install.sh not found at {install_script}")
+
+    console.print("[cyan]Running install script (this may take a few minutes)...[/cyan]")
+    console.print("[dim]This will create the environment, install dependencies, and compile .so files[/dim]")
+    console.print(f"[dim]$ cd {temp_clone_dir} && ./install.sh[/dim]\n")
+    _run_command(["./install.sh"], cwd=str(temp_clone_dir), timeout=600)
+    console.print("[green]Install script complete.[/green]\n")
+
+    temp_venv_dir = temp_clone_dir / "venv_hailo_rpi_examples"
+    if not temp_venv_dir.exists():
+        raise FileNotFoundError(f"venv not found at {temp_venv_dir}")
+
+    console.print(f"[cyan]Moving Hailo environment to {hailo_venv_dir}...[/cyan]")
+    hailo_venv_dir.parent.mkdir(parents=True, exist_ok=True)
+    if hailo_venv_dir.exists():
+        shutil.rmtree(hailo_venv_dir)
+    shutil.move(str(temp_venv_dir), str(hailo_venv_dir))
+    console.print("[green]Hailo environment moved.[/green]\n")
+
+    python_exe = get_python_for_detection()
+    console.print("[cyan]Verifying hailo_apps installation...[/cyan]")
+    if not check_import(python_exe, "hailo_apps"):
+        console.print("[yellow]hailo_apps: Not found, attempting to install...[/yellow]\n")
+        is_venv = python_exe != "/usr/bin/python3"
+        if is_venv:
+            cmd = [python_exe, "-m", "pip", "install", HAILO_APPS_INFRA_URL]
+        else:
+            cmd = [python_exe, "-m", "pip", "install", "--user", "--break-system-packages", HAILO_APPS_INFRA_URL]
+        console.print(f"[dim]$ {' '.join(cmd)}[/dim]\n")
+        _run_command(cmd, timeout=300)
+
+    if not check_import(python_exe, "hailo_apps"):
+        raise RuntimeError("hailo_apps installation verification failed")
+    console.print("[green]hailo_apps: OK[/green]")
+
+    if temp_clone_dir.exists():
+        console.print("[cyan]Cleaning up temporary files...[/cyan]")
+        shutil.rmtree(temp_clone_dir)
+        console.print("[green]Cleanup complete.[/green]\n")
+
+
+def _existing_flick_id(existing_config: dict[str, Any]) -> str:
+    return str(existing_config.get("flick_id") or existing_config.get("device_id") or get_default_flick_id())
+
+
+def _existing_dot_count(existing_config: dict[str, Any]) -> int:
+    dot_ids = existing_config.get("dot_ids")
+    if isinstance(dot_ids, list):
+        return len(dot_ids)
+    return 0
+
+
+def _prompt_registration_settings(existing_config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "api_url": typer.prompt("API URL", default=str(existing_config.get("api_url") or DEFAULT_API_URL)),
+        "flick_id": typer.prompt("Device ID (unique name for this device)", default=_existing_flick_id(existing_config)),
+        "dot_count": typer.prompt("Number of DOT sensors (0 if none)", default=_existing_dot_count(existing_config), type=int),
+    }
+
+
+def _register_device(api_url: str, setup_code: str, flick_id: str, dot_count: int) -> dict[str, Any]:
+    try:
+        response = requests.post(
+            f"{api_url.rstrip('/')}/devices/register",
+            json={"setup_code": setup_code, "flick_id": flick_id, "dot_count": dot_count},
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.ConnectionError as exc:
+        raise ValueError("Cannot reach the BugCam server. Check your WiFi connection.") from exc
+    except requests.Timeout as exc:
+        raise ValueError("Cannot reach the BugCam server. The request timed out.") from exc
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else "unknown"
+        if status_code in {401, 403}:
+            raise ValueError("Invalid setup code. Check that you copied it correctly.") from exc
+        error_message = _extract_registration_error(exc.response)
+        raise ValueError(f"Registration failed: {status_code} — {error_message}") from exc
+
+    payload = response.json()
+    required_fields = ("device_id", "api_key", "flick_id", "dot_ids")
+    missing_fields = [field for field in required_fields if field not in payload]
+    if missing_fields:
+        joined = ", ".join(missing_fields)
+        raise ValueError(f"Registration response missing fields: {joined}")
+    return payload
+
+
+def _extract_registration_error(response: requests.Response | None) -> str:
+    if response is None:
+        return "Unknown server error"
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text.strip() or "Unknown server error"
+    message = payload.get("error") if isinstance(payload, dict) else None
+    return str(message or response.text.strip() or "Unknown server error")
+
+
+def _should_reregister(existing_config: dict[str, Any], flick_id: str) -> bool:
+    existing_api_key = str(existing_config.get("api_key") or "")
+    existing_flick_id = _existing_flick_id(existing_config)
+    if not existing_api_key or not existing_flick_id:
+        return True
+    if flick_id != existing_flick_id:
+        return True
+    return typer.confirm(f"Already registered as {existing_flick_id}. Re-register?", default=False)
+
+
+def _build_saved_config(
+    existing_config: dict[str, Any],
+    api_url: str,
+    api_key: str,
+    flick_id: str,
+    dot_ids: list[str],
+) -> dict[str, Any]:
+    preserved = {
+        key: value
+        for key, value in existing_config.items()
+        if key not in {"api_url", "api_key", "device_id", "device_name", "flick_id", "dot_ids", "s3_bucket"}
+    }
+    return {
+        **preserved,
+        "api_url": api_url.rstrip("/"),
+        "api_key": api_key,
+        "flick_id": flick_id,
+        "dot_ids": dot_ids,
+        "s3_bucket": str(existing_config.get("s3_bucket") or DEFAULT_S3_BUCKET),
+    }
+
+
+def _run_status_check() -> None:
+    cmd = [sys.executable, "-m", "bugcam.cli", "status"]
+    console.print("[cyan]Running bugcam status...[/cyan]")
+    console.print(f"[dim]$ {' '.join(cmd)}[/dim]\n")
+    result = subprocess.run(cmd, timeout=60)
+    if result.returncode != 0:
+        console.print("[yellow]Status check reported issues. Review the output above.[/yellow]")
+
+
+def _install_sen55_binary() -> None:
+    """Compile and install the bundled SEN55 helper binary without blocking setup on failure."""
+    binary_dir = get_state_dir() / "bin"
+    binary_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        console.print("[cyan]Compiling SEN55 reader...[/cyan]")
+        _run_command(["make"], cwd=str(SEN55_SOURCE_DIR), timeout=120)
+        shutil.copy2(SEN55_SOURCE_DIR / "sen55_reader", binary_dir / "sen55_reader")
+        console.print(f"[green]Installed SEN55 reader to {binary_dir / 'sen55_reader'}[/green]\n")
+    except Exception as exc:
+        console.print(f"[yellow]SEN55 reader compilation skipped:[/yellow] {exc}\n")
+
+
+def _print_registration_summary(flick_id: str, dot_ids: list[str]) -> None:
+    console.print(f"Registered device: [cyan]{flick_id}[/cyan]")
+    if not dot_ids:
+        console.print()
+        return
+    console.print("DOT sensors:")
+    for dot_id in dot_ids:
+        console.print(f"  [cyan]{dot_id}[/cyan]")
+    console.print("Share these IDs with your DOT sensor operators.\n")
+
+
+@app.callback(invoke_without_command=True)
+def setup() -> None:
+    """Install Hailo dependencies, register the device, and save local config."""
+    if platform.system() != "Linux":
+        console.print("[yellow]Note: bugcam detection only works on Raspberry Pi (Linux)[/yellow]")
+        console.print(f"Current platform: {platform.system()}")
+        raise typer.Exit(1)
+
+    try:
+        _install_hailo_environment()
+        existing_config = load_config()
+        did_register = False
+        settings = _prompt_registration_settings(existing_config)
+        if settings["dot_count"] < 0:
+            raise ValueError("Number of dots must be >= 0")
+
+        if _should_reregister(existing_config, settings["flick_id"]):
+            setup_code = typer.prompt("Setup code (from your project lead)", hide_input=True)
+            registration = _register_device(
+                settings["api_url"],
+                setup_code,
+                settings["flick_id"],
+                settings["dot_count"],
+            )
+            api_key = str(registration["api_key"])
+            flick_id = str(registration["flick_id"])
+            dot_ids = [str(dot_id) for dot_id in registration["dot_ids"]]
+            did_register = True
+        else:
+            api_key = str(existing_config.get("api_key") or "")
+            flick_id = settings["flick_id"]
+            dot_ids = build_dot_ids(flick_id, settings["dot_count"])
+
+        saved_config = _build_saved_config(
+            existing_config=existing_config,
+            api_url=settings["api_url"],
+            api_key=api_key,
+            flick_id=flick_id,
+            dot_ids=dot_ids,
+        )
+        save_config(saved_config)
+        console.print(f"[green]Saved config for {saved_config['flick_id']}[/green]\n")
+        if did_register:
+            _print_registration_summary(flick_id, dot_ids)
+        _install_sen55_binary()
+        _run_status_check()
+        console.print("[green]Setup complete![/green]\n")
+        console.print("[bold]Next steps[/bold]")
+        console.print("[cyan]bugcam models list[/cyan]")
+        console.print("[cyan]bugcam models download <name>[/cyan]")
+        console.print("[cyan]bugcam run --model <name>[/cyan]")
+        console.print(f"[cyan]bugcam autostart enable --model <name> --bucket {saved_config['s3_bucket']}[/cyan]")
+    except Exception as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc

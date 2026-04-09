@@ -1,4 +1,7 @@
 numpy<2.0.0
+bugspot
+requests
+rich
+typer[all]
 setproctitle
 opencv-python
-sensing_garden_client==0.0.8

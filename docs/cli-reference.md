@@ -1,0 +1,207 @@
+# CLI Reference
+
+Complete reference for the `bugcam` command-line interface.
+
+## Feature Status
+
+**Legend:** ✓ Tested & working on device | ⚠️ In development (not yet verified on device)
+
+## Models ✓
+
+Manage and inspect detection models. Models must be downloaded before use.
+
+### Download a model ✓
+```bash
+bugcam models download <model_name>
+```
+Download a model bundle from S3 and cache it locally in `~/.cache/bugcam/models/`.
+
+To see available models, run `bugcam models list`.
+
+**Example:**
+```bash
+bugcam models download london_141-multitask
+```
+
+### List installed models ✓
+```bash
+bugcam models list
+```
+Shows all downloaded model bundles in the cache directory.
+
+### Show model details ✓
+```bash
+bugcam models info <model_name>
+```
+Display detailed information about a specific model (size, path, download status, etc.).
+
+**Example:**
+```bash
+bugcam models info london_141-multitask
+```
+
+## Preview ⚠️
+
+Run live camera preview with detection overlay.
+
+### Basic preview ⚠️
+```bash
+bugcam preview
+```
+Opens a camera preview window with real-time detection visualization.
+
+### Preview with specific model ⚠️
+```bash
+bugcam preview --model london_141-multitask
+```
+Use a specific model from the available models.
+
+**Options:**
+- `--model <name>` - Specify which model to use (default: london_141-multitask)
+
+## Detection ⚠️
+
+Run continuous detection and save results.
+
+### Start detection ⚠️
+```bash
+bugcam detect start
+```
+Start continuous detection, printing results to console.
+
+### Save detections to file ⚠️
+```bash
+bugcam detect start --output detections.jsonl
+```
+Save detection results to a JSONL file (one detection per line).
+
+### Run for specific duration ⚠️
+```bash
+bugcam detect start --duration 30
+```
+Run detection for 30 minutes, then stop automatically.
+
+### Quiet mode ⚠️
+```bash
+bugcam detect start --quiet
+```
+Suppress console output (useful when saving to file).
+
+### Combined options ⚠️
+```bash
+bugcam detect start --model london_141-multitask --output results.jsonl --duration 60 --quiet
+```
+
+**Options:**
+- `--model <name>` - Specify which model to use (default: london_141-multitask)
+- `--output <file>` - Save detections to file (JSONL format)
+- `--duration <minutes>` - Run for specified minutes (default: run indefinitely)
+- `--quiet` - Suppress console output
+
+## Autostart (systemd)
+
+Manage automatic detection on system boot using systemd services.
+
+### Enable autostart (detect mode) ⚠️
+```bash
+bugcam autostart enable
+```
+Creates and enables a systemd service that runs detection on boot.
+
+### Enable autostart (record mode) ✓
+```bash
+bugcam autostart enable --mode record
+```
+Creates and enables a systemd service that runs video recording on boot.
+
+### Disable autostart ✓
+```bash
+bugcam autostart disable
+```
+Stops and disables the systemd service.
+
+### Check status ✓
+```bash
+bugcam autostart status
+```
+Shows the current status of the autostart service.
+
+### View logs ✓
+```bash
+bugcam autostart logs
+```
+Display recent logs from the autostart service.
+
+### Follow logs in real-time ✓
+```bash
+bugcam autostart logs --follow
+```
+Stream live logs from the running service (like `tail -f`).
+
+**Options:**
+- `--follow` / `-f` - Follow log output in real-time
+
+## Configuration
+
+### Model Storage
+
+Models are downloaded from S3 and cached locally as bundles:
+- **Cache directory**: `~/.cache/bugcam/models/`
+- **Bundle layout**:
+  - `~/.cache/bugcam/models/<bundle>/model.hef`
+  - `~/.cache/bugcam/models/<bundle>/labels.txt`
+
+Download models with `bugcam models download <model_name>` before running detection. Use `bugcam models list` to see available models.
+
+**Note**: The `resources/` directory contains models for development use only and is not included in package installations.
+
+## Output Format
+
+Detection results are saved in JSONL (JSON Lines) format:
+
+```json
+{"timestamp": "2025-12-14T10:30:45", "class": "insect", "confidence": 0.92, "bbox": [100, 200, 150, 250]}
+{"timestamp": "2025-12-14T10:30:46", "class": "insect", "confidence": 0.88, "bbox": [120, 210, 170, 260]}
+```
+
+Each line is a valid JSON object representing one detection event.
+
+## Environment Variables
+
+### HAILO_MONITOR
+Enable Hailo hardware monitoring:
+```bash
+export HAILO_MONITOR=1
+bugcam detect start
+```
+
+See [Monitoring](advanced/monitoring.md) for more details.
+
+## Troubleshooting
+
+### Camera not detected
+```bash
+# Verify camera is working
+rpicam-hello
+
+# Check picamera2 installation
+sudo apt install -y python3-picamera2
+```
+
+### Hailo not detected
+```bash
+# Verify Hailo installation
+sudo apt install hailo-all
+
+# Check if Hailo device is available
+hailortcli scan
+```
+
+### Service not starting
+```bash
+# Check service logs
+bugcam autostart logs
+
+# Verify systemd service status
+systemctl status bugcam-detect.service
+```
