@@ -27,8 +27,14 @@ from ..device_config import build_dot_ids
 app = typer.Typer(help="Install dependencies")
 console = Console()
 
-HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-rpi5-examples.git"
-HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps-infra.git"
+# old
+#HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-rpi5-examples.git"
+#HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps-infra.git"
+
+#updated for hailo ai v5
+HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-apps.git"
+HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps.git"
+
 SEN55_SOURCE_DIR = Path(__file__).resolve().parents[1] / "sensors" / "sen55"
 
 
