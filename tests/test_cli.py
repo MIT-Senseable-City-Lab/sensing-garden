@@ -25,6 +25,13 @@ def test_run_subcommand_help(cli_runner):
     assert "--resolution" in result.output
 
 
+def test_run_heartbeat_interval_is_one_minute() -> None:
+    """Test run command emits heartbeat snapshots every minute."""
+    from bugcam.commands.run import HEARTBEAT_INTERVAL_SECONDS
+
+    assert HEARTBEAT_INTERVAL_SECONDS == 60
+
+
 def test_process_subcommand_help(cli_runner):
     """Test process subcommand is accessible."""
     result = cli_runner.invoke(app, ["process", "--help"])
