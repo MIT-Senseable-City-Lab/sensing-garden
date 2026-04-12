@@ -29,7 +29,7 @@ from bugcam.runtime import build_pipeline, resolve_bundle_provenance, select_mod
 
 app = typer.Typer(help="Record, process, upload, and emit heartbeats", invoke_without_command=True, no_args_is_help=False)
 console = Console()
-HEARTBEAT_INTERVAL_SECONDS = 3600
+HEARTBEAT_INTERVAL_SECONDS = 60
 ENVIRONMENT_INTERVAL_SECONDS = 60
 PID_FILE_PATH = get_state_dir() / "bugcam.pid"
 
@@ -172,7 +172,7 @@ def run(
         help="Clean up results after uploading",
     ),
 ) -> None:
-    """Run recording, processing, uploading, and hourly heartbeat emission."""
+    """Run recording, processing, uploading, and one-minute heartbeat emission."""
     if mode not in {"continuous", "interval"}:
         raise typer.BadParameter("mode must be 'continuous' or 'interval'")
     try:
