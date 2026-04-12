@@ -9,16 +9,12 @@ from pathlib import Path
 from datetime import datetime
 from rich.console import Console
 from typing import Optional
-from ..config import get_input_storage_dir
+from ..config import get_output_storage_dir
 from ..device_config import resolve_flick_id
 from ..processing import parse_capture_resolution
 
 app = typer.Typer(help="Record videos from camera")
 console = Console()
-
-# Default output directory
-DEFAULT_OUTPUT_DIR = get_input_storage_dir()
-
 
 def _build_recording_path(output_dir: Path, flick_id: str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -161,8 +157,9 @@ def single(
 
     # Generate output path if not specified
     if output is None:
-        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        output = _build_recording_path(DEFAULT_OUTPUT_DIR, resolved_flick_id)
+        output_dir = get_output_storage_dir()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output = _build_recording_path(output_dir, resolved_flick_id)
     else:
         output.parent.mkdir(parents=True, exist_ok=True)
 

@@ -72,12 +72,6 @@ def test_remux_video_no_ffmpeg(tmp_path: Path) -> None:
         assert result is True  # Returns True (no error, just skipped)
 
 
-def test_default_output_dir() -> None:
-    """Test default output directory is set correctly."""
-    from bugcam.commands.record import DEFAULT_OUTPUT_DIR
-    assert DEFAULT_OUTPUT_DIR == Path.home() / ".local" / "share" / "bugcam" / "incoming"
-
-
 def test_check_disk_space_sufficient(tmp_path: Path) -> None:
     """Test _check_disk_space returns True when sufficient space."""
     from bugcam.commands.record import _check_disk_space
@@ -123,19 +117,16 @@ def test_record_single_uses_resolved_flick_id_for_generated_filename(tmp_path: P
     from bugcam.commands import record
 
     captured = {}
-    original_output_dir = record.DEFAULT_OUTPUT_DIR
-    record.DEFAULT_OUTPUT_DIR = tmp_path
 
-    try:
-        with patch('bugcam.commands.record.platform.system', return_value='Linux'), \
-             patch('bugcam.commands.record._check_camera_available', return_value=True), \
-             patch('bugcam.commands.record._check_disk_space', return_value=(True, 1000)), \
-             patch('bugcam.commands.record.resolve_flick_id', return_value='flick-config'), \
-             patch('bugcam.commands.record._remux_video', return_value=True), \
-             patch('bugcam.commands.record._record_single_video') as mock_record:
-            mock_record.side_effect = lambda output, length, quiet, resolution: captured.setdefault("name", output.name) or True
-            record.single(output=None, length=1, flick_id=None, resolution="1080x1080")
-    finally:
-        record.DEFAULT_OUTPUT_DIR = original_output_dir
+    with patch('bugcam.commands.record.platform.system', return_value='Linux'), \
+         patch('bugcam.commands.record._check_camera_available', return_value=True), \
+         patch('bugcam.commands.record._check_disk_space', return_value=(True, 1000)), \
+         patch('bugcam.commands.record.get_output_storage_dir', return_value=tmp_path), \
+         patch('bugcam.commands.record.resolve_flick_id', return_value='flick-config'), \
+         patch('bugcam.commands.record._remux_video', return_value=True), \
+         patch('bugcam.commands.record._record_single_video') as mock_record:
+        mock_record.side_effect = lambda output, length, quiet, resolution: captured.setdefault("path", output) or True
+        record.single(output=None, length=1, flick_id=None, resolution="1080x1080")
 
-    assert captured["name"].startswith("flick-config_")
+    assert captured["path"].parent == tmp_path
+    assert captured["path"].name.startswith("flick-config_")

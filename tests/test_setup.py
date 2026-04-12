@@ -267,8 +267,119 @@ def test_setup_verifies_hailo_apps(cli_runner: CliRunner, tmp_path: Path) -> Non
          patch('bugcam.commands.setup.check_import', return_value=True) as mock_check, \
          patch('bugcam.commands.setup.load_config', return_value=existing_config), \
          patch('bugcam.commands.setup.save_config'), \
+         patch('bugcam.commands.setup._validate_storage_dir', side_effect=lambda path, *_: path), \
          patch('bugcam.commands.setup._install_sen55_binary'):
-        result = cli_runner.invoke(app, ["setup"], input="\n\n\nn\n")
+        result = cli_runner.invoke(app, ["setup"], input="\n\n\n\n\nn\n")
         assert "hailo_apps: OK" in result.output
 
         mock_check.assert_called_with(mock_check.call_args[0][0], "hailo_apps")
+
+
+def test_config_uses_saved_storage_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test storage directories are read from persistent config."""
+    from bugcam.config import get_input_storage_dir, get_output_storage_dir
+
+    config_dir = tmp_path / ".config" / "bugcam"
+    config_dir.mkdir(parents=True)
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    (config_dir / "config.json").write_text(
+        f'{{"input_dir": "{input_dir}", "output_dir": "{output_dir}"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("BUGCAM_INPUT_DIR", raising=False)
+    monkeypatch.delenv("BUGCAM_OUTPUT_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert get_input_storage_dir() == input_dir
+    assert get_output_storage_dir() == output_dir
+
+
+def test_env_storage_dirs_override_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test environment storage directories override persistent config."""
+    from bugcam.config import get_input_storage_dir, get_output_storage_dir
+
+    config_dir = tmp_path / ".config" / "bugcam"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        '{"input_dir": "/config/input", "output_dir": "/config/output"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("BUGCAM_INPUT_DIR", "/env/input")
+    monkeypatch.setenv("BUGCAM_OUTPUT_DIR", "/env/output")
+
+    assert get_input_storage_dir() == Path("/env/input")
+    assert get_output_storage_dir() == Path("/env/output")
+
+
+def test_build_saved_config_saves_storage_dirs(tmp_path: Path) -> None:
+    """Test setup persists selected storage directories."""
+    from bugcam.commands.setup import _build_saved_config
+
+    config = _build_saved_config(
+        existing_config={"input_dir": "/old/input", "output_dir": "/old/output"},
+        api_url="https://api.test/v1/",
+        api_key="key",
+        flick_id="flick",
+        dot_ids=["dot01"],
+        input_dir=tmp_path / "input",
+        output_dir=tmp_path / "output",
+    )
+
+    assert config["input_dir"] == str(tmp_path / "input")
+    assert config["output_dir"] == str(tmp_path / "output")
+
+
+def test_prompt_registration_settings_prefills_storage_dirs(tmp_path: Path) -> None:
+    """Test setup prompts use current effective storage paths as defaults."""
+    from bugcam.commands.setup import _prompt_registration_settings
+
+    defaults = {}
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+
+    def prompt_default(label: str, *, default: object, **_: object) -> object:
+        defaults[label] = default
+        return default
+
+    with patch("bugcam.commands.setup.get_input_storage_dir", return_value=input_dir), \
+         patch("bugcam.commands.setup.get_output_storage_dir", return_value=output_dir), \
+         patch("bugcam.commands.setup.typer.prompt", side_effect=prompt_default):
+        settings = _prompt_registration_settings({})
+
+    assert defaults["Input folder"] == str(input_dir)
+    assert defaults["Output folder"] == str(output_dir)
+    assert settings["input_dir"] == input_dir.resolve()
+    assert settings["output_dir"] == output_dir.resolve()
+
+
+def test_validate_storage_dir_rejects_missing_custom_path(tmp_path: Path) -> None:
+    """Test custom storage directories must exist."""
+    from bugcam.commands.setup import _validate_storage_dir
+
+    with pytest.raises(ValueError, match="does not exist"):
+        _validate_storage_dir(tmp_path / "missing", tmp_path / "default", "Input")
+
+
+def test_validate_storage_dir_rejects_inaccessible_path(tmp_path: Path) -> None:
+    """Test storage directories must be accessible."""
+    from bugcam.commands.setup import _validate_storage_dir
+
+    selected_dir = tmp_path / "input"
+    selected_dir.mkdir()
+    with patch("bugcam.commands.setup.os.access", return_value=False):
+        with pytest.raises(ValueError, match="not accessible"):
+            _validate_storage_dir(selected_dir, tmp_path / "default", "Input")
+
+
+def test_validate_storage_dir_creates_default_path(tmp_path: Path) -> None:
+    """Test built-in default storage directories are created."""
+    from bugcam.commands.setup import _validate_storage_dir
+
+    default_dir = tmp_path / "incoming"
+
+    assert _validate_storage_dir(default_dir, default_dir, "Input") == default_dir
+    assert default_dir.is_dir()

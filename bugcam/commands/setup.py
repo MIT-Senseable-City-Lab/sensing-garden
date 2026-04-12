@@ -1,6 +1,7 @@
 """Setup command for BugCam."""
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -15,8 +16,14 @@ from rich.console import Console
 from ..config import (
     DEFAULT_API_URL,
     DEFAULT_S3_BUCKET,
+    INPUT_DIR_CONFIG_KEY,
+    OUTPUT_DIR_CONFIG_KEY,
     get_default_flick_id,
+    get_default_input_storage_dir,
+    get_default_output_storage_dir,
     get_hailo_venv_dir,
+    get_input_storage_dir,
+    get_output_storage_dir,
     get_python_for_detection,
     get_state_dir,
     load_config,
@@ -125,11 +132,40 @@ def _existing_dot_count(existing_config: dict[str, Any]) -> int:
     return 0
 
 
+def _validate_storage_dir(path: Path, default_path: Path, label: str) -> Path:
+    selected_path = path.expanduser().resolve(strict=False)
+    if selected_path == default_path.expanduser().resolve(strict=False):
+        selected_path.mkdir(parents=True, exist_ok=True)
+    if not selected_path.exists():
+        raise ValueError(f"{label} folder does not exist: {selected_path}")
+    if not selected_path.is_dir():
+        raise ValueError(f"{label} folder is not a directory: {selected_path}")
+    if not os.access(selected_path, os.R_OK | os.W_OK | os.X_OK):
+        raise ValueError(f"{label} folder is not accessible: {selected_path}")
+    probe_path = selected_path / ".bugcam-setup-write-test"
+    try:
+        probe_path.write_text("", encoding="utf-8")
+        probe_path.unlink()
+    except OSError as exc:
+        raise ValueError(f"{label} folder is not writable: {selected_path}") from exc
+    return selected_path
+
+
 def _prompt_registration_settings(existing_config: dict[str, Any]) -> dict[str, Any]:
     return {
         "api_url": typer.prompt("API URL", default=str(existing_config.get("api_url") or DEFAULT_API_URL)),
         "flick_id": typer.prompt("Device ID (unique name for this device)", default=_existing_flick_id(existing_config)),
         "dot_count": typer.prompt("Number of DOT sensors (0 if none)", default=_existing_dot_count(existing_config), type=int),
+        "input_dir": _validate_storage_dir(
+            Path(typer.prompt("Input folder", default=str(get_input_storage_dir().expanduser().resolve(strict=False)))),
+            get_default_input_storage_dir(),
+            "Input",
+        ),
+        "output_dir": _validate_storage_dir(
+            Path(typer.prompt("Output folder", default=str(get_output_storage_dir().expanduser().resolve(strict=False)))),
+            get_default_output_storage_dir(),
+            "Output",
+        ),
     }
 
 
@@ -188,11 +224,24 @@ def _build_saved_config(
     api_key: str,
     flick_id: str,
     dot_ids: list[str],
+    input_dir: Path,
+    output_dir: Path,
 ) -> dict[str, Any]:
     preserved = {
         key: value
         for key, value in existing_config.items()
-        if key not in {"api_url", "api_key", "device_id", "device_name", "flick_id", "dot_ids", "s3_bucket"}
+        if key
+        not in {
+            "api_url",
+            "api_key",
+            "device_id",
+            "device_name",
+            "flick_id",
+            "dot_ids",
+            INPUT_DIR_CONFIG_KEY,
+            OUTPUT_DIR_CONFIG_KEY,
+            "s3_bucket",
+        }
     }
     return {
         **preserved,
@@ -200,6 +249,8 @@ def _build_saved_config(
         "api_key": api_key,
         "flick_id": flick_id,
         "dot_ids": dot_ids,
+        INPUT_DIR_CONFIG_KEY: str(input_dir),
+        OUTPUT_DIR_CONFIG_KEY: str(output_dir),
         "s3_bucket": str(existing_config.get("s3_bucket") or DEFAULT_S3_BUCKET),
     }
 
@@ -276,6 +327,8 @@ def setup() -> None:
             api_key=api_key,
             flick_id=flick_id,
             dot_ids=dot_ids,
+            input_dir=settings["input_dir"],
+            output_dir=settings["output_dir"],
         )
         save_config(saved_config)
         console.print(f"[green]Saved config for {saved_config['flick_id']}[/green]\n")

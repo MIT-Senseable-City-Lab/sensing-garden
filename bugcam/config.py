@@ -9,6 +9,8 @@ from typing import Any
 
 DEFAULT_API_URL = "https://api.sensinggarden.com/v1"
 DEFAULT_S3_BUCKET = "scl-sensing-garden"
+INPUT_DIR_CONFIG_KEY = "input_dir"
+OUTPUT_DIR_CONFIG_KEY = "output_dir"
 
 
 def get_config_path() -> Path:
@@ -86,20 +88,34 @@ def get_state_dir() -> Path:
     return Path.home() / ".local" / "share" / "bugcam"
 
 
+def get_default_input_storage_dir() -> Path:
+    """Get the built-in edge26 input storage directory."""
+    return get_state_dir() / "incoming"
+
+
+def get_default_output_storage_dir() -> Path:
+    """Get the built-in edge26 output storage directory."""
+    return get_state_dir() / "outputs"
+
+
+def _get_storage_dir(env_key: str, config_key: str, default_path: Path) -> Path:
+    env_value = os.environ.get(env_key)
+    if env_value:
+        return Path(env_value)
+    config_value = load_config().get(config_key)
+    if config_value:
+        return Path(str(config_value))
+    return default_path
+
+
 def get_input_storage_dir() -> Path:
     """Get the edge26 input storage directory."""
-    input_dir = os.environ.get("BUGCAM_INPUT_DIR")
-    if input_dir:
-        return Path(input_dir)
-    return get_state_dir() / "incoming"
+    return _get_storage_dir("BUGCAM_INPUT_DIR", INPUT_DIR_CONFIG_KEY, get_default_input_storage_dir())
 
 
 def get_output_storage_dir() -> Path:
     """Get the edge26 output storage directory."""
-    output_dir = os.environ.get("BUGCAM_OUTPUT_DIR")
-    if output_dir:
-        return Path(output_dir)
-    return get_state_dir() / "outputs"
+    return _get_storage_dir("BUGCAM_OUTPUT_DIR", OUTPUT_DIR_CONFIG_KEY, get_default_output_storage_dir())
 
 
 def get_default_flick_id() -> str:

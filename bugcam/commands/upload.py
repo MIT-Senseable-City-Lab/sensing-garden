@@ -360,7 +360,7 @@ def _resolve_runtime_settings(
 
 @app.callback()
 def upload(
-    output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", help="Processed output directory to watch"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Processed output directory to watch"),
     api_url: str | None = typer.Option(None, "--api-url", help="Backend API URL"),
     api_key: str | None = typer.Option(None, "--api-key", help="Per-device API key"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
@@ -374,6 +374,7 @@ def upload(
     dot_ids: str | None = typer.Option(None, "--dot-ids", help="Comma-separated DOT IDs"),
 ) -> None:
     """Watch an output directory and upload ready result directories."""
+    output_dir = output_dir or get_output_storage_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = _resolve_runtime_settings(api_url, api_key, flick_id, dot_ids, bucket)
     stop_event = threading.Event()
