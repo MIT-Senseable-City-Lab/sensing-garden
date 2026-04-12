@@ -101,11 +101,13 @@ def _resolve_runtime_settings(
 def heartbeat(
     flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     dot_ids: str | None = typer.Option(None, "--dot-ids", help="Comma-separated DOT IDs"),
-    input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Directory containing DOT inputs"),
-    output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", help="Directory for processed output"),
+    input_dir: Path | None = typer.Option(None, "--input-dir", help="Directory containing DOT inputs"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Directory for processed output"),
 ) -> None:
     """Write a single heartbeat snapshot."""
     settings = _resolve_runtime_settings(flick_id, dot_ids)
+    input_dir = input_dir or get_input_storage_dir()
+    output_dir = output_dir or get_output_storage_dir()
     heartbeat_path = write_heartbeat_snapshot(
         output_dir=output_dir,
         flick_id=settings["flick_id"],

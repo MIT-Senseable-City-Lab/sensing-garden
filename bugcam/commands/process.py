@@ -16,8 +16,8 @@ console = Console()
 
 @app.callback()
 def process(
-    input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Directory containing input videos and DOT folders"),
-    output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", help="Directory for processed output"),
+    input_dir: Path | None = typer.Option(None, "--input-dir", help="Directory containing input videos and DOT folders"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Directory for processed output"),
     model: str = typer.Option(..., "--model", help="Model bundle name or model.hef path"),
     flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     classification: bool = typer.Option(True, "--classification/--no-classification", help="Enable classification"),
@@ -26,6 +26,8 @@ def process(
     """Process existing files without recording."""
     device_config = load_device_config()
     resolved_flick_id = resolve_flick_id(flick_id)
+    input_dir = input_dir or get_input_storage_dir()
+    output_dir = output_dir or get_output_storage_dir()
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     provenance = resolve_bundle_provenance(model)

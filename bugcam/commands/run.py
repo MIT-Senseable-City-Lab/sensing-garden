@@ -157,8 +157,8 @@ def run(
     api_key: str | None = typer.Option(None, "--api-key", help="Per-device API key"),
     flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     dot_ids: str | None = typer.Option(None, "--dot-ids", help="Comma-separated DOT IDs"),
-    input_dir: Path = typer.Option(get_input_storage_dir(), "--input-dir", help="Directory for recorded input"),
-    output_dir: Path = typer.Option(get_output_storage_dir(), "--output-dir", help="Directory for processed output"),
+    input_dir: Path | None = typer.Option(None, "--input-dir", help="Directory for recorded input"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", help="Directory for processed output"),
     model: str | None = typer.Option(None, "--model", help="Model bundle name or model.hef path"),
     mode: str = typer.Option("continuous", "--mode", help="'continuous' (always recording) or 'interval' (record periodically)"),
     interval: int = typer.Option(5, "--interval", help="Minutes between recordings in interval mode"),
@@ -188,6 +188,8 @@ def run(
             console.print(f"[yellow]Warning[/yellow] {ntp_detail}")
 
         settings = _resolve_runtime_settings(api_url, api_key, flick_id, dot_ids, bucket)
+        input_dir = input_dir or get_input_storage_dir()
+        output_dir = output_dir or get_output_storage_dir()
         input_dir.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(parents=True, exist_ok=True)
         selected_model = select_model_reference(model)
