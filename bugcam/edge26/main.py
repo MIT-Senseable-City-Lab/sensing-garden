@@ -4,12 +4,14 @@ import queue
 import shutil
 import sys
 import threading
+import time
 from pathlib import Path
 from datetime import datetime
 
 from bugcam.edge26.capture import VideoRecorder
 from bugcam.edge26.processing import VideoProcessor
 from bugcam.edge26.output import ResultsWriter
+from bugcam.edge26.queue import ClassificationQueue, QueueEntry
 
 
 def setup_logging(log_dir: Path) -> None:
@@ -42,7 +44,14 @@ logger = logging.getLogger("edge26")
 
 
 class Pipeline:
-    """Main pipeline orchestrating capture and processing."""
+    """
+    Main pipeline orchestrating capture and processing.
+    
+    Architecture:
+        - Detection thread: Runs BugSpot detection/tracking (maintains tracker state)
+        - Classification thread: Runs Hailo classification (shared resource)
+        - Classification queue: Disk-based FIFO queue for both FLIK and DOT tracks
+    """
     
     def __init__(self, config: dict):
         self.config = config
@@ -50,13 +59,22 @@ class Pipeline:
         self.stop_event = threading.Event()
         self.recording_stopped = threading.Event()
         self.recorder_thread = None
-        self.processor_thread = None
+        self.detection_thread = None
+        self.classification_thread = None
         
         # Device config
         device_config = config.get("device", {})
         self.flick_id = device_config.get("flick_id", "edge26")
         self.dot_ids = device_config.get("dot_ids", [])
         self.input_storage = Path(config["paths"]["input_storage"])
+        
+        # Output paths
+        self.results_dir = Path(config["output"]["results_dir"])
+        
+        # Pending queue for classification
+        pending_dir = Path(config["paths"].get("pending_dir", 
+                         Path(config["paths"]["input_storage"]).parent / "pending"))
+        self.classification_queue = ClassificationQueue(pending_dir)
         
         # Pipeline mode
         pipeline_config = config.get("pipeline", {})
@@ -96,6 +114,7 @@ class Pipeline:
         logger.info(f"Mode:          {mode}")
         logger.info(f"Device:        {self.flick_id}")
         logger.info(f"Input storage: {config['paths']['input_storage']}")
+        logger.info(f"Pending dir:   {pending_dir}")
         if self.enable_processing:
             logger.info(f"Results dir:   {config['output']['results_dir']}")
             classify = pipeline_config.get("enable_classification", True)
@@ -196,8 +215,7 @@ class Pipeline:
     
     def _compute_output_dir(self, device_id: str, date_time: str) -> Path:
         """Compute the output directory for a device and timestamp."""
-        results_dir = Path(self.config["output"]["results_dir"])
-        return results_dir / device_id / date_time
+        return self.results_dir / device_id / date_time
     
     def _find_ready_dot_tracks(self, dot_dir: Path) -> list:
         """Find tracks within a DOT directory that have a done.txt signal."""
@@ -278,39 +296,39 @@ class Pipeline:
         self._reset_after_video = ""
     
     # ------------------------------------------------------------------
+    # Detection Thread - Runs BugSpot detection/tracking
+    # ------------------------------------------------------------------
     
-    def _processor_worker(self) -> None:
+    def _detection_worker(self) -> None:
         """
-        Worker that processes video chunks and DOT directories.
+        Worker that runs detection/tracking for videos and queues DOT tracks.
         
-        Items from input_storage are processed in chronological order
-        (sorted by name). DOT classification does NOT touch the BugSpot
-        tracker, so continuous tracking across FLICK videos is preserved
-        even when a DOT directory is processed in between.
+        Maintains continuous tracker state for FLIK videos.
+        Queues both FLIK and DOT tracks for classification.
         """
-        logger.info("Processor started")
+        logger.info("Detection worker started")
         
         # Process existing items in chronological order
         for path, item_type in self._find_existing_items():
             if self.stop_event.is_set():
                 break
             if item_type == "video":
-                self._process_video(path)
+                self._process_video_detection(path)
             else:
-                self._process_dot_directory(path)
+                self._process_dot_directory_detection(path)
         
         # Process new videos from queue + poll for DOT directories
         while not self.stop_event.is_set():
             try:
                 video_path = self.video_queue.get(timeout=1.0)
-                self._process_video(video_path)
+                self._process_video_detection(video_path)
                 self.video_queue.task_done()
             except queue.Empty:
                 # Check for new DOT directories while waiting
                 for dot_dir in self._find_dot_directories():
                     if self.stop_event.is_set():
                         break
-                    self._process_dot_directory(dot_dir)
+                    self._process_dot_directory_detection(dot_dir)
                 
                 # If recording stopped, check if we're done
                 if self.recording_stopped.is_set():
@@ -319,29 +337,35 @@ class Pipeline:
                         self._find_ready_dot_tracks(d)
                         for d in self._find_dot_directories()
                     )
-                    if remaining == 0 and not has_ready_tracks:
+                    pending_count = self.classification_queue.count()
+                    if remaining == 0 and not has_ready_tracks and pending_count == 0:
                         logger.info("Queue empty - processing complete")
                         break
                 continue
             except Exception as e:
-                logger.error(f"Processor error: {e}", exc_info=True)
+                logger.error(f"Detection error: {e}", exc_info=True)
         
-        logger.info("Processor stopped")
+        logger.info("Detection worker stopped")
     
-    def _process_video(self, video_path: Path) -> None:
-        """Process a single video file from this FLICK."""
+    def _process_video_detection(self, video_path: Path) -> None:
+        """
+        Process a FLIK video: detection/tracking only, queue crops for classification.
+        
+        Maintains tracker state for continuous tracking across videos.
+        """
         if not video_path.exists():
             logger.warning(f"Video not found: {video_path}")
             return
         
         logger.info("-" * 50)
-        logger.info(f"PROCESSING: {video_path.name}")
+        logger.info(f"DETECTION: {video_path.name}")
         logger.info("-" * 50)
         
         try:
             # Compute output directory: results_dir/flick_id/date_time/
             date_time = video_path.stem[len(self.flick_id) + 1:]
             output_dir = self._compute_output_dir(self.flick_id, date_time)
+            output_dir.mkdir(parents=True, exist_ok=True)
             
             # --- Pre-process tracker resets (continuous_tracking only) ---
             if self.continuous_tracking:
@@ -359,41 +383,65 @@ class Pipeline:
                     self.processor.reset_tracker()
                 self._last_video_date = video_date
             
-            # Process
-            results = self.processor.process_video(video_path, output_dir)
-            
-            # Write results JSON
-            output_paths = self.writer.write_results(
-                results=results,
-                output_dir=output_dir,
+            # Run BugSpot detection/tracking (Phases 1-4)
+            result = self.processor._pipeline.process_video(
+                str(video_path),
+                extract_crops=True,
+                render_composites=self.processor.output_config.get("save_composites", True),
+                save_crops_dir=str(output_dir / "crops"),
+                save_composites_dir=str(output_dir / "composites") if self.processor.output_config.get("save_composites", True) else None,
             )
             
-            # Summary
-            summary = results.get("summary", {})
-            logger.info(f"COMPLETE: {summary.get('confirmed_tracks', 0)} insects confirmed "
-                       f"({summary.get('total_tracks', 0)} total tracks)")
+            logger.info(f"  BugSpot: {len(result.confirmed_tracks)} confirmed / "
+                       f"{len(result.track_paths)} total tracks")
             
-            if output_paths.get('json'):
-                logger.info(f"Output: {output_paths['json']}")
+            # Save crops and queue for classification
+            confirmed_count = 0
+            for track_id, track in result.confirmed_tracks.items():
+                # Find the track's crop directory
+                track_dirs = list((output_dir / "crops").glob(f"{track_id}_*"))
+                if not track_dirs:
+                    # Create track directory name from track_id
+                    track_dir_name = f"{track_id}_{date_time.split('_')[-1]}" if '_' in date_time else track_id
+                    track_dir = output_dir / "crops" / track_dir_name
+                else:
+                    track_dir = track_dirs[0]
+                
+                # Extract timestamp from track directory name
+                track_timestamp = track_dir.name.rsplit("_", 1)[-1] if "_" in track_dir.name else None
+                
+                # Queue for classification
+                self.classification_queue.enqueue(
+                    entry_type="flik",
+                    source_device=self.flick_id,
+                    date=date_time[:8],  # YYYYMMDD
+                    time=track_timestamp,
+                    track_id=track_id,
+                    track_dir=track_dir,
+                    output_dir=output_dir,
+                    num_crops=len(track.crops),
+                )
+                confirmed_count += 1
             
             # Sample video: save 1 per N to output (0 = disabled)
             if self._video_sample_interval > 0:
                 self._video_batch_count += 1
-                confirmed = summary.get('confirmed_tracks', 0)
                 is_last_in_batch = self._video_batch_count >= self._video_sample_interval
                 
-                if not self._video_sample_saved and (confirmed > 0 or is_last_in_batch):
+                if not self._video_sample_saved and (confirmed_count > 0 or is_last_in_batch):
                     shutil.copy2(video_path, output_dir / "video.mp4")
                     self._video_sample_saved = True
-                    reason = "detections" if confirmed > 0 else "fallback"
+                    reason = "detections" if confirmed_count > 0 else "fallback"
                     logger.info(f"  Sample video saved ({reason})")
                 
                 if is_last_in_batch:
                     self._video_batch_count = 0
                     self._video_sample_saved = False
             
-            # Cleanup
+            # Clear detections but KEEP tracker state (continuous tracking)
             self.processor.clear_video_detections()
+            
+            # Delete processed video
             self._delete_video(video_path)
             
             # Recording-stop boundary: reset tracker after the last
@@ -403,30 +451,16 @@ class Pipeline:
                 self.processor.reset_tracker()
                 self._clear_last_recording_marker()
             
+            logger.info(f"QUEUED: {confirmed_count} tracks for classification")
+            
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
     
-    def _process_dot_directory(self, dot_dir: Path) -> None:
+    def _process_dot_directory_detection(self, dot_dir: Path) -> None:
         """
-        Process ready tracks from a DOT device directory.
+        Process DOT directory: copy crops/labels, queue for classification.
         
-        The DOT directory persists for a full day. New tracks arrive
-        continuously; only those with a done.txt signal are processed.
-        Processed tracks (crops + labels) are copied to output then
-        deleted from input. Composites are generated from crops placed
-        onto the most recent background image using label bounding boxes.
-        
-        DOT directory structure:
-            {dot_id}_{YYYYMMDD}/
-                crops/
-                    {track_id}_{HHMMSS}/
-                        frame_000042.jpg
-                        done.txt
-                labels/
-                    {track_id}.json
-                videos/
-                    {dot_id}_{YYYYMMDD}_{HHMMSS}.mp4
-                {HHMMSS}_background.jpg
+        Does NOT touch the tracker - DOT processing is independent.
         """
         try:
             dot_id, date_str = self._parse_dot_dir_name(dot_dir.name)
@@ -439,7 +473,7 @@ class Pipeline:
                 return
             
             logger.info("-" * 50)
-            logger.info(f"PROCESSING DOT: {dot_dir.name} ({len(ready_tracks)} track(s) ready)")
+            logger.info(f"DOT DETECTION: {dot_dir.name} ({len(ready_tracks)} track(s) ready)")
             logger.info("-" * 50)
             
             output_dir = self._compute_output_dir(dot_id, date_str)
@@ -458,109 +492,233 @@ class Pipeline:
                         vid.unlink()
                         logger.info(f"  Video copied: {vid.name}")
             
-            # Load existing results.json for incremental updates
-            results = None
-            if self.enable_classification:
-                results = self._load_existing_results(output_dir / "results.json")
-                results["source_device"] = dot_id
-                results["date"] = date_str
-            
-            new_tracks = 0
+            # Queue each track for classification
+            queued_count = 0
             for track_dir in ready_tracks:
                 if self.stop_event.is_set():
                     break
-                try:
-                    self._process_dot_track(
-                        dot_dir, track_dir, output_dir, background, results
-                    )
-                    new_tracks += 1
-                except Exception as e:
-                    logger.error(f"Failed to process track {track_dir.name}: {e}",
-                                exc_info=True)
-            
-            # Write updated results.json (classification mode only)
-            if new_tracks > 0 and results is not None:
-                results["processing_timestamp"] = datetime.now().isoformat()
-                results["summary"]["total_tracks"] = len(results["tracks"])
-                results["summary"]["confirmed_tracks"] = len(results["tracks"])
-                results["summary"]["total_detections"] = sum(
-                    t["num_detections"] for t in results["tracks"]
+                
+                track_dir_name = track_dir.name
+                track_id = track_dir_name.rsplit("_", 1)[0]
+                track_timestamp = track_dir_name.rsplit("_", 1)[-1] if "_" in track_dir_name else None
+                
+                # Copy crops to output
+                dst_crops = output_dir / "crops" / track_dir_name
+                dst_crops.mkdir(parents=True, exist_ok=True)
+                
+                crop_count = 0
+                for f in track_dir.iterdir():
+                    if f.name != "done.txt" and f.is_file():
+                        shutil.copy2(f, dst_crops / f.name)
+                        crop_count += 1
+                
+                # Copy label file to output
+                label_src = dot_dir / "labels" / f"{track_id}.json"
+                dst_labels = output_dir / "labels"
+                dst_labels.mkdir(parents=True, exist_ok=True)
+                if label_src.exists():
+                    shutil.copy2(label_src, dst_labels / f"{track_id}.json")
+                
+                # Queue for classification
+                self.classification_queue.enqueue(
+                    entry_type="dot",
+                    source_device=dot_id,
+                    date=date_str,
+                    time=track_timestamp,
+                    track_id=track_id,
+                    track_dir=dst_crops,
+                    output_dir=output_dir,
+                    labels_path=dst_labels / f"{track_id}.json" if label_src.exists() else None,
+                    background_path=background,
+                    num_crops=crop_count,
                 )
-                self.writer.write_results(results=results, output_dir=output_dir)
+                queued_count += 1
+                
+                # Delete processed track from input
+                shutil.rmtree(track_dir)
+                logger.debug(f"  Queued track {track_id} ({crop_count} crops)")
             
-            if new_tracks > 0:
-                classify_str = "" if self.enable_classification else " (classification disabled)"
-                logger.info(f"DOT COMPLETE: {new_tracks} new track(s) from {dot_id}{classify_str}")
+            logger.info(f"QUEUED: {queued_count} DOT tracks for classification")
         
         except Exception as e:
             logger.error(f"Failed to process DOT {dot_dir.name}: {e}", exc_info=True)
     
-    def _process_dot_track(self, dot_dir: Path, track_dir: Path,
-                           output_dir: Path, background_path, results) -> None:
+    # ------------------------------------------------------------------
+    # Classification Thread - Runs Hailo classification
+    # ------------------------------------------------------------------
+    
+    def _classification_worker(self) -> None:
         """
-        Process a single DOT track: classify, create composite, copy to output, cleanup.
+        Worker that processes classification queue (FIFO).
         
-        Args:
-            dot_dir: Parent DOT directory
-            track_dir: Track directory inside crops/ (e.g. crops/a1b2c3d4_120000/)
-            output_dir: Output results directory
-            background_path: Path to background image (or None)
-            results: Mutable results dict to append to (None if classification disabled)
+        Classifies tracks from both FLIK and DOT sources.
         """
-        track_dir_name = track_dir.name
-        track_id = track_dir_name.rsplit("_", 1)[0]
+        logger.info("Classification worker started")
         
-        logger.info(f"  Track {track_dir_name}:")
+        # Recover any pending from crash
+        self.classification_queue.recover()
         
-        # Parse timestamp from track directory name: {track_id}_{HHMMSS}
-        parts = track_dir_name.rsplit("_", 1)
-        track_timestamp = parts[1] if len(parts) == 2 else None
+        while not self.stop_event.is_set():
+            result = self.classification_queue.get_next()
+            
+            if result is None:
+                time.sleep(0.5)
+                continue
+            
+            filepath, entry = result
+            
+            try:
+                if entry.entry_type == "flik":
+                    self._classify_flik_track(entry)
+                else:
+                    self._classify_dot_track(entry)
+                
+                self.classification_queue.remove(filepath)
+                
+            except Exception as e:
+                logger.error(f"Classification failed for {filepath.name}: {e}", exc_info=True)
+                # Leave file in queue for retry (or manual intervention)
         
-        # Phase 5-6: Classify crops
-        if self.enable_classification and results is not None:
-            track_result = self.processor.classify_dot_track(
-                track_dir, track_id, track_timestamp
-            )
-            if track_result:
-                results["tracks"].append(track_result)
-                final = track_result.get("final_prediction", {})
-                logger.info(f"    {final.get('family', 'N/A')} / "
-                           f"{final.get('genus', 'N/A')} / "
-                           f"{final.get('species', 'N/A')} "
-                           f"({final.get('species_confidence', 0):.1%})")
+        logger.info("Classification worker stopped")
+    
+    def _classify_flik_track(self, entry: QueueEntry) -> None:
+        """Classify a FLIK track from queue entry."""
+        track_dir = Path(entry.track_dir)
+        output_dir = Path(entry.output_dir)
         
-        # Create composite from crops + background
-        if background_path:
-            label_path = dot_dir / "labels" / f"{track_id}.json"
+        if not track_dir.exists():
+            logger.warning(f"Track directory not found: {track_dir}")
+            return
+        
+        logger.info(f"CLASSIFY FLIK: {entry.track_id} ({entry.num_crops} crops)")
+        
+        # Load crops
+        crop_files = sorted(track_dir.glob("frame_*.jpg"))
+        if not crop_files:
+            logger.warning(f"No crops found in {track_dir}")
+            return
+        
+        # Classify
+        classifications = []
+        frames = []
+        
+        for crop_path in crop_files:
+            import cv2
+            crop = cv2.imread(str(crop_path))
+            if crop is None:
+                continue
+            
+            frame_num = int(crop_path.stem.split("_")[1])
+            classification = self.processor._classifier.classify(crop)
+            classifications.append(classification)
+            
+            frames.append({
+                "frame_number": frame_num,
+                "prediction": {
+                    "family": classification.family,
+                    "genus": classification.genus,
+                    "species": classification.species,
+                    "family_confidence": classification.family_confidence,
+                    "genus_confidence": classification.genus_confidence,
+                    "species_confidence": classification.species_confidence,
+                }
+            })
+        
+        if not classifications:
+            return
+        
+        # Hierarchical aggregation
+        final_pred = self.processor._classifier.hierarchical_aggregate(classifications)
+        if not final_pred:
+            return
+        
+        logger.info(f"  {final_pred['family']} / {final_pred['genus']} / {final_pred['species']} "
+                   f"({final_pred['species_confidence']:.1%})")
+        
+        # Load existing results
+        results_path = output_dir / "results.json"
+        results = self._load_existing_results(results_path)
+        
+        # Update results
+        track_result = {
+            "track_id": entry.track_id,
+            "timestamp": entry.time,
+            "final_prediction": final_pred,
+            "num_detections": len(classifications),
+            "frames": frames,
+        }
+        results["tracks"].append(track_result)
+        results["source_device"] = entry.source_device
+        results["date"] = entry.date
+        results["processing_timestamp"] = datetime.now().isoformat()
+        
+        # Update summary
+        results["summary"]["total_tracks"] = len(results["tracks"])
+        results["summary"]["confirmed_tracks"] = len(results["tracks"])
+        results["summary"]["total_detections"] = sum(t.get("num_detections", 0) for t in results["tracks"])
+        
+        # Write results
+        self.writer.write_results(results=results, output_dir=output_dir)
+    
+    def _classify_dot_track(self, entry: QueueEntry) -> None:
+        """Classify a DOT track from queue entry."""
+        track_dir = Path(entry.track_dir)
+        output_dir = Path(entry.output_dir)
+        
+        if not track_dir.exists():
+            logger.warning(f"Track directory not found: {track_dir}")
+            return
+        
+        logger.info(f"CLASSIFY DOT: {entry.track_id} ({entry.num_crops} crops)")
+        
+        # Classify using existing method
+        track_result = self.processor.classify_dot_track(
+            track_dir, entry.track_id, entry.time
+        )
+        
+        if not track_result:
+            return
+        
+        final = track_result.get("final_prediction", {})
+        logger.info(f"  {final.get('family', 'N/A')} / {final.get('genus', 'N/A')} / "
+                   f"{final.get('species', 'N/A')} ({final.get('species_confidence', 0):.1%})")
+        
+        # Create composite if background available
+        if entry.background_path:
+            background_path = Path(entry.background_path)
+            labels_path = Path(entry.labels_path) if entry.labels_path else None
             composite_dir = output_dir / "composites"
             composite_dir.mkdir(parents=True, exist_ok=True)
+            
+            track_dir_name = f"{entry.track_id}_{entry.time}" if entry.time else entry.track_id
+            composite_path = composite_dir / f"{track_dir_name}.jpg"
+            
             try:
-                self.processor.create_dot_composite(
-                    track_dir, background_path, label_path,
-                    composite_dir / f"{track_dir_name}.jpg"
-                )
-                logger.info(f"    Composite saved")
+                if labels_path and labels_path.exists():
+                    self.processor.create_dot_composite(
+                        track_dir, background_path, labels_path, composite_path
+                    )
+                    logger.debug(f"  Composite saved")
             except Exception as e:
-                logger.warning(f"    Could not create composite: {e}")
+                logger.warning(f"  Could not create composite: {e}")
         
-        # Copy crops to output (exclude done.txt)
-        dst_crops = output_dir / "crops" / track_dir_name
-        dst_crops.mkdir(parents=True, exist_ok=True)
-        for f in track_dir.iterdir():
-            if f.name != "done.txt" and f.is_file():
-                shutil.copy2(f, dst_crops / f.name)
+        # Load existing results
+        results_path = output_dir / "results.json"
+        results = self._load_existing_results(results_path)
         
-        # Copy label file to output, then delete from input
-        label_src = dot_dir / "labels" / f"{track_id}.json"
-        if label_src.exists():
-            dst_labels = output_dir / "labels"
-            dst_labels.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(label_src, dst_labels / f"{track_id}.json")
-            label_src.unlink()
+        # Update results
+        results["tracks"].append(track_result)
+        results["source_device"] = entry.source_device
+        results["date"] = entry.date
+        results["processing_timestamp"] = datetime.now().isoformat()
         
-        # Delete processed track from input
-        shutil.rmtree(track_dir)
-        logger.debug(f"    Deleted input: {track_dir_name}")
+        # Update summary
+        results["summary"]["total_tracks"] = len(results["tracks"])
+        results["summary"]["confirmed_tracks"] = len(results["tracks"])
+        results["summary"]["total_detections"] = sum(t.get("num_detections", 0) for t in results["tracks"])
+        
+        # Write results
+        self.writer.write_results(results=results, output_dir=output_dir)
     
     def _delete_video(self, video_path: Path) -> None:
         """Delete processed video."""
@@ -569,6 +727,10 @@ class Pipeline:
             logger.debug(f"Deleted: {video_path.name}")
         except Exception as e:
             logger.error(f"Could not delete {video_path.name}: {e}")
+    
+    # ------------------------------------------------------------------
+    # Pipeline Control
+    # ------------------------------------------------------------------
     
     def start(self) -> None:
         """Start the pipeline."""
@@ -588,15 +750,25 @@ class Pipeline:
         else:
             self.recording_stopped.set()  # No recording
         
-        # Start processor (if enabled)
+        # Start detection worker
         if self.enable_processing and self.processor:
-            self.processor_thread = threading.Thread(
-                target=self._processor_worker,
-                daemon=False,  # Non-daemon so it completes
-                name="Processor"
+            self.detection_thread = threading.Thread(
+                target=self._detection_worker,
+                daemon=False,
+                name="Detection"
             )
-            self.processor_thread.start()
-            logger.info("Processor thread started")
+            self.detection_thread.start()
+            logger.info("Detection thread started")
+            
+            # Start classification worker
+            if self.enable_classification:
+                self.classification_thread = threading.Thread(
+                    target=self._classification_worker,
+                    daemon=False,
+                    name="Classification"
+                )
+                self.classification_thread.start()
+                logger.info("Classification thread started")
         
         if self.enable_recording and self.enable_processing:
             logger.info("Pipeline running - Ctrl+C to stop recording (processing continues)")
@@ -626,6 +798,10 @@ class Pipeline:
             remaining = self.video_queue.qsize()
             if remaining > 0:
                 logger.info(f"Videos in queue: {remaining}")
+            
+            pending = self.classification_queue.count()
+            if pending > 0:
+                logger.info(f"Pending classifications: {pending}")
     
     def stop(self) -> None:
         """Stop the pipeline gracefully."""
@@ -636,11 +812,16 @@ class Pipeline:
         # Stop recorder first
         self.stop_recording()
         
-        # Stop processor
+        # Stop threads
         self.stop_event.set()
-        if self.processor_thread:
-            self.processor_thread.join(timeout=30.0)
-            logger.info("Processor stopped")
+        
+        if self.detection_thread:
+            self.detection_thread.join(timeout=30.0)
+            logger.info("Detection thread stopped")
+        
+        if self.classification_thread:
+            self.classification_thread.join(timeout=30.0)
+            logger.info("Classification thread stopped")
         
         logger.info("Pipeline stopped cleanly")
     
@@ -650,6 +831,10 @@ class Pipeline:
         if self.recorder_thread:
             self.recorder_thread.join()
         
-        # Wait for processor to finish (if running)
-        if self.processor_thread:
-            self.processor_thread.join()
+        # Wait for detection thread to finish (if running)
+        if self.detection_thread:
+            self.detection_thread.join()
+        
+        # Wait for classification thread to finish (if running)
+        if self.classification_thread:
+            self.classification_thread.join()
