@@ -398,17 +398,15 @@ class Pipeline:
             # Save crops and queue for classification
             confirmed_count = 0
             for track_id, track in result.confirmed_tracks.items():
-                # Find the track's crop directory
-                track_dirs = list((output_dir / "crops").glob(f"{track_id}_*"))
-                if not track_dirs:
-                    # Create track directory name from track_id
-                    track_dir_name = f"{track_id}_{date_time.split('_')[-1]}" if '_' in date_time else track_id
-                    track_dir = output_dir / "crops" / track_dir_name
-                else:
-                    track_dir = track_dirs[0]
+                # BugSpot saves crops to: output_dir/crops/{track_id}/
+                track_dir = output_dir / "crops" / track_id
                 
-                # Extract timestamp from track directory name
-                track_timestamp = track_dir.name.rsplit("_", 1)[-1] if "_" in track_dir.name else None
+                if not track_dir.exists():
+                    logger.warning(f"Track directory not found: {track_dir}")
+                    continue
+                
+                # Extract timestamp from video filename
+                track_timestamp = date_time.split('_')[-1] if '_' in date_time else None
                 
                 # Queue for classification
                 self.classification_queue.enqueue(
