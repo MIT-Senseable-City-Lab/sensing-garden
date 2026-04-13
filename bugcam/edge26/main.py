@@ -323,6 +323,13 @@ class Pipeline:
                 video_path = self.video_queue.get(timeout=1.0)
                 self._process_video_detection(video_path)
                 self.video_queue.task_done()
+                
+                # Check for DOT directories after each video (interleaved processing)
+                for dot_dir in self._find_dot_directories():
+                    if self.stop_event.is_set():
+                        break
+                    self._process_dot_directory_detection(dot_dir)
+                
             except queue.Empty:
                 # Check for new DOT directories while waiting
                 for dot_dir in self._find_dot_directories():
