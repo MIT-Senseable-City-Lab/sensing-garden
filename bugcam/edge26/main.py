@@ -398,8 +398,10 @@ class Pipeline:
             # Save crops and queue for classification
             confirmed_count = 0
             for track_id, track in result.confirmed_tracks.items():
-                # BugSpot saves crops to: output_dir/crops/{track_id}/
-                track_dir = output_dir / "crops" / track_id
+                # BugSpot saves crops using first 8 chars of track UUID
+                # track_id format: {uuid}_{timestamp} -> use first 8 chars for directory
+                base_track_id = track_id.split('-')[0]
+                track_dir = output_dir / "crops" / base_track_id
                 
                 if not track_dir.exists():
                     logger.warning(f"Track directory not found: {track_dir}")
