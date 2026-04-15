@@ -8,8 +8,10 @@ import time
 from pathlib import Path
 from datetime import datetime
 
+import cv2
+
 from bugcam.edge26.capture import VideoRecorder
-from bugcam.edge26.processing import VideoProcessor
+from bugcam.edge26.processing import VideoProcessor, HailoClassifier
 from bugcam.edge26.output import ResultsWriter
 from bugcam.edge26.queue import ClassificationQueue, QueueEntry
 
@@ -102,6 +104,11 @@ class Pipeline:
         self.recorder = self._init_recorder() if self.enable_recording else None
         self.processor = VideoProcessor(config) if self.enable_processing else None
         self.writer = ResultsWriter(config["output"]) if self.enable_processing else None
+        
+        # Eagerly initialize classifier for the classification thread
+        if self.enable_classification and self.processor:
+            self.processor._classifier = HailoClassifier(self.processor.classification_config)
+            logger.info("Hailo classifier initialized")
         
         logger.info("=" * 60)
         logger.info("EDGE26 PIPELINE INITIALIZED")
@@ -605,12 +612,15 @@ class Pipeline:
             logger.warning(f"No crops found in {track_dir}")
             return
         
+        # Ensure classifier is initialized
+        if self.processor._classifier is None:
+            self.processor._classifier = HailoClassifier(self.processor.classification_config)
+        
         # Classify
         classifications = []
         frames = []
         
         for crop_path in crop_files:
-            import cv2
             crop = cv2.imread(str(crop_path))
             if crop is None:
                 continue
