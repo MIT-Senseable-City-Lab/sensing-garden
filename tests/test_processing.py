@@ -5,6 +5,49 @@ from unittest.mock import patch
 
 from bugcam.processing import build_bundle_provenance, build_edge26_config
 
+BUGSPOT_RATIO_DETECTION_VALUES: tuple[tuple[str, float | int], ...] = (
+    ("min_area", 0.0002),
+    ("max_area", 0.035),
+    ("min_displacement", 0.05),
+    ("max_frame_jump", 0.1),
+    ("revisit_radius", 0.05),
+    ("morph_kernel_size", 3),
+)
+
+
+def test_build_edge26_config_uses_bugspot_ratio_detection_defaults(tmp_path: Path) -> None:
+    config = build_edge26_config(
+        flick_id="flick01",
+        dot_ids=[],
+        input_dir=str(tmp_path / "input"),
+        output_dir=str(tmp_path / "outputs"),
+        model_path=str(tmp_path / "bundle" / "model.hef"),
+        labels_path=str(tmp_path / "bundle" / "labels.txt"),
+    )
+
+    for key, value in BUGSPOT_RATIO_DETECTION_VALUES:
+        assert config["detection"][key] == value
+
+
+def test_video_processor_passes_ratio_config_to_bugspot() -> None:
+    from bugcam.edge26.processing.processor import VideoProcessor
+
+    detection = dict(BUGSPOT_RATIO_DETECTION_VALUES)
+    tracking = {"max_lost_frames": 45, "w_dist": 0.6, "w_area": 0.4, "cost_threshold": 0.3}
+
+    with patch("bugcam.edge26.processing.processor.DetectionPipeline") as pipeline:
+        VideoProcessor({"detection": detection, "tracking": tracking})
+
+    pipeline.assert_called_once_with(
+        {
+            **detection,
+            "max_lost_frames": 45,
+            "tracker_w_dist": 0.6,
+            "tracker_w_area": 0.4,
+            "tracker_cost_threshold": 0.3,
+        }
+    )
+
 
 def test_build_edge26_config_resolves_paths(tmp_path: Path, monkeypatch) -> None:
     config = build_edge26_config(
