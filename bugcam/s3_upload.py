@@ -10,12 +10,21 @@ import requests
 RESULTS_FILENAME = "results.json"
 MANIFEST_FILENAME = "manifest.json"
 UPLOADED_STATE_FILENAME = ".uploaded"
+DETECTION_META_FILENAME = ".detection.json"
+EXPECTED_TRACKS_FILENAME = ".expected_tracks"
+DONE_MARKER_FILENAME = ".done"
 REQUEST_TIMEOUT_SECONDS = 30
 UPLOAD_TIMEOUT_SECONDS = 300
 
 
 def _iter_upload_files(local_dir: Path) -> list[Path]:
-    files = [path for path in sorted(local_dir.rglob("*")) if path.is_file() and path.name != UPLOADED_STATE_FILENAME]
+    skip_names = {
+        UPLOADED_STATE_FILENAME,
+        DETECTION_META_FILENAME,
+        EXPECTED_TRACKS_FILENAME,
+        DONE_MARKER_FILENAME,
+    }
+    files = [path for path in sorted(local_dir.rglob("*")) if path.is_file() and path.name not in skip_names]
     return [path for path in files if path.name != RESULTS_FILENAME] + [path for path in files if path.name == RESULTS_FILENAME]
 
 

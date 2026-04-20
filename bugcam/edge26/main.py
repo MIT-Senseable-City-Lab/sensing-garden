@@ -237,14 +237,29 @@ class Pipeline:
         backgrounds = sorted(dot_dir.glob("*_background.jpg"))
         return backgrounds[-1] if backgrounds else None
     
+    @staticmethod
+    def _deduplicate_track_id(track_id: str, results: dict) -> str:
+        """If track_id already exists in results, append a suffix to make it unique."""
+        existing_ids = {t.get("track_id") for t in results.get("tracks", [])}
+        if track_id not in existing_ids:
+            return track_id
+        n = 1
+        while f"{track_id}_{n}" in existing_ids:
+            n += 1
+        deduped = f"{track_id}_{n}"
+        logger.warning(f"Track {track_id} already in results, saving as {deduped}")
+        return deduped
+
     def _load_existing_results(self, results_path: Path) -> dict:
         """Load existing results.json for incremental updates, or create a fresh structure."""
         if results_path.exists():
             try:
                 with open(results_path) as f:
                     return json.load(f)
-            except Exception:
-                pass
+            except json.JSONDecodeError:
+                logger.warning(f"Corrupt results.json, starting fresh: {results_path}")
+            except Exception as e:
+                logger.error(f"Cannot read results.json ({e}), starting fresh: {results_path}")
         return {
             "source_device": None,
             "processing_timestamp": None,
@@ -467,6 +482,54 @@ class Pipeline:
             
             logger.info(f"QUEUED: {confirmed_count} tracks for classification")
             
+            # Save detection metadata for classification thread to merge into results
+            if confirmed_count > 0:
+                detection_meta = {
+                    "source_device": self.flick_id,
+                    "date": date_time[:8],
+                    "video_file": video_path.name,
+                    "model_id": self.config.get("model", {}).get("model_id"),
+                    "video_info": {
+                        "fps": result.video_info.get("fps"),
+                        "total_frames": result.video_info.get("total_frames"),
+                        "duration_seconds": result.video_info.get("duration"),
+                    } if hasattr(result, "video_info") and result.video_info else None,
+                    "summary": {
+                        "total_detections": len(result.all_detections) if hasattr(result, "all_detections") else 0,
+                        "total_tracks": len(result.track_paths) if hasattr(result, "track_paths") else 0,
+                        "confirmed_tracks": len(result.confirmed_tracks),
+                        "unconfirmed_tracks": (len(result.track_paths) - len(result.confirmed_tracks)) if hasattr(result, "track_paths") else 0,
+                    },
+                    "tracks": {
+                        tid: {
+                            "num_detections": track.num_detections if hasattr(track, "num_detections") else None,
+                            "first_seen_seconds": track.first_frame_time if hasattr(track, "first_frame_time") else None,
+                            "last_seen_seconds": track.last_frame_time if hasattr(track, "last_frame_time") else None,
+                            "duration_seconds": track.duration if hasattr(track, "duration") else None,
+                            "topology_metrics": track.topology_metrics if hasattr(track, "topology_metrics") else None,
+                        }
+                        for tid, track in result.confirmed_tracks.items()
+                    },
+                    "frame_detections": {
+                        track_id: [
+                            {
+                                "frame_number": det.get("frame_number"),
+                                "timestamp_seconds": det.get("frame_time_seconds"),
+                                "bbox": det.get("bbox"),
+                            }
+                            for det in result.all_detections
+                            if det.get("track_id") == track_id
+                        ]
+                        for track_id in result.confirmed_tracks
+                    } if hasattr(result, "all_detections") else {},
+                }
+                meta_path = output_dir / ".detection.json"
+                meta_path.write_text(json.dumps(detection_meta, indent=2, default=str))
+                
+                # Write expected track count for completeness check
+                (output_dir / ".expected_tracks").write_text(str(confirmed_count))
+                logger.info(f"  Detection metadata saved ({confirmed_count} tracks)")
+            
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
     
@@ -553,6 +616,19 @@ class Pipeline:
                 logger.debug(f"  Queued track {track_id} ({crop_count} crops)")
             
             logger.info(f"QUEUED: {queued_count} DOT tracks for classification")
+            
+            # Write expected track count for completeness check
+            if queued_count > 0:
+                (output_dir / ".expected_tracks").write_text(str(queued_count))
+            
+            # Clean up DOT directory if empty after processing
+            try:
+                remaining = list(dot_dir.iterdir())
+                if not remaining:
+                    dot_dir.rmdir()
+                    logger.info(f"Removed empty DOT directory: {dot_dir.name}")
+            except OSError:
+                pass
         
         except Exception as e:
             logger.error(f"Failed to process DOT {dot_dir.name}: {e}", exc_info=True)
@@ -591,7 +667,12 @@ class Pipeline:
                 
             except Exception as e:
                 logger.error(f"Classification failed for {filepath.name}: {e}", exc_info=True)
-                # Leave file in queue for retry (or manual intervention)
+                should_retry = self.classification_queue.mark_failed(filepath, entry, str(e))
+                if should_retry:
+                    time.sleep(1.0)
+                else:
+                    # Permanently failed — still count as completed for .done check
+                    self._check_classification_complete(Path(entry.output_dir))
         
         logger.info("Classification worker stopped")
     
@@ -602,6 +683,7 @@ class Pipeline:
         
         if not track_dir.exists():
             logger.warning(f"Track directory not found: {track_dir}")
+            self._check_classification_complete(output_dir)
             return
         
         logger.info(f"CLASSIFY FLIK: {entry.track_id} ({entry.num_crops} crops)")
@@ -610,6 +692,7 @@ class Pipeline:
         crop_files = sorted(track_dir.glob("frame_*.jpg"))
         if not crop_files:
             logger.warning(f"No crops found in {track_dir}")
+            self._check_classification_complete(output_dir)
             return
         
         # Ensure classifier is initialized
@@ -642,11 +725,13 @@ class Pipeline:
             })
         
         if not classifications:
+            self._check_classification_complete(output_dir)
             return
         
         # Hierarchical aggregation
         final_pred = self.processor._classifier.hierarchical_aggregate(classifications)
         if not final_pred:
+            self._check_classification_complete(output_dir)
             return
         
         logger.info(f"  {final_pred['family']} / {final_pred['genus']} / {final_pred['species']} "
@@ -656,26 +741,77 @@ class Pipeline:
         results_path = output_dir / "results.json"
         results = self._load_existing_results(results_path)
         
-        # Update results
-        track_result = {
-            "track_id": entry.track_id,
-            "timestamp": entry.time,
-            "final_prediction": final_pred,
-            "num_detections": len(classifications),
-            "frames": frames,
-        }
-        results["tracks"].append(track_result)
+        # Load detection metadata to enrich results
+        detection_meta = self._load_detection_meta(output_dir)
+        
+        # Deduplicate track_id if this is a retry after crash
+        track_id = self._deduplicate_track_id(entry.track_id, results)
+        
+        # Enrich results with detection metadata (first track writes top-level fields)
+        if detection_meta and not results.get("video_file"):
+            results["video_file"] = detection_meta.get("video_file")
+            results["video_timestamp"] = detection_meta.get("video_timestamp")
+            results["model_id"] = detection_meta.get("model_id")
+            if detection_meta.get("video_info"):
+                results["video_info"] = detection_meta["video_info"]
+            results["date"] = detection_meta.get("date", entry.date)
         results["source_device"] = entry.source_device
-        results["date"] = entry.date
         results["processing_timestamp"] = datetime.now().isoformat()
         
-        # Update summary
-        results["summary"]["total_tracks"] = len(results["tracks"])
-        results["summary"]["confirmed_tracks"] = len(results["tracks"])
-        results["summary"]["total_detections"] = sum(t.get("num_detections", 0) for t in results["tracks"])
+        # Build per-track frame data, enriched with detection metadata
+        track_frames = frames
+        track_meta = detection_meta.get("tracks", {}).get(entry.track_id, {}) if detection_meta else {}
+        frame_dets = detection_meta.get("frame_detections", {}).get(entry.track_id, []) if detection_meta else []
+        
+        if frame_dets or track_meta:
+            frame_det_map = {fd["frame_number"]: fd for fd in frame_dets if fd.get("frame_number") is not None}
+            enriched_frames = []
+            for f in frames:
+                fd = frame_det_map.get(f.get("frame_number"))
+                enriched = dict(f)
+                if fd:
+                    if fd.get("timestamp_seconds") is not None:
+                        enriched["timestamp_seconds"] = fd["timestamp_seconds"]
+                    if fd.get("bbox") is not None:
+                        enriched["bbox"] = fd["bbox"]
+                enriched_frames.append(enriched)
+            track_frames = enriched_frames
+        
+        # Update results
+        track_result = {
+            "track_id": track_id,
+            "timestamp": entry.time,
+            "final_prediction": final_pred,
+            "num_detections": track_meta.get("num_detections", len(classifications)),
+            "frames": track_frames,
+        }
+        if track_meta.get("first_seen_seconds") is not None:
+            track_result["first_seen_seconds"] = track_meta["first_seen_seconds"]
+        if track_meta.get("last_seen_seconds") is not None:
+            track_result["last_seen_seconds"] = track_meta["last_seen_seconds"]
+        if track_meta.get("duration_seconds") is not None:
+            track_result["duration_seconds"] = track_meta["duration_seconds"]
+        if track_meta.get("topology_metrics") is not None:
+            track_result["topology_metrics"] = track_meta["topology_metrics"]
+        
+        results["tracks"].append(track_result)
+        
+        # Update summary from detection metadata if available, otherwise count classified tracks
+        if detection_meta and "summary" in detection_meta:
+            results["summary"]["total_detections"] = detection_meta["summary"].get("total_detections", 0)
+            results["summary"]["total_tracks"] = detection_meta["summary"].get("total_tracks", 0)
+            results["summary"]["confirmed_tracks"] = detection_meta["summary"].get("confirmed_tracks", 0)
+            results["summary"]["unconfirmed_tracks"] = detection_meta["summary"].get("unconfirmed_tracks", 0)
+        else:
+            results["summary"]["total_tracks"] = len(results["tracks"])
+            results["summary"]["confirmed_tracks"] = len(results["tracks"])
+            results["summary"]["total_detections"] = sum(t.get("num_detections", 0) for t in results["tracks"])
         
         # Write results
         self.writer.write_results(results=results, output_dir=output_dir)
+        
+        # Check if all tracks for this output directory are done
+        self._check_classification_complete(output_dir)
     
     def _classify_dot_track(self, entry: QueueEntry) -> None:
         """Classify a DOT track from queue entry."""
@@ -684,6 +820,7 @@ class Pipeline:
         
         if not track_dir.exists():
             logger.warning(f"Track directory not found: {track_dir}")
+            self._check_classification_complete(output_dir)
             return
         
         logger.info(f"CLASSIFY DOT: {entry.track_id} ({entry.num_crops} crops)")
@@ -694,6 +831,7 @@ class Pipeline:
         )
         
         if not track_result:
+            self._check_classification_complete(output_dir)
             return
         
         final = track_result.get("final_prediction", {})
@@ -723,6 +861,10 @@ class Pipeline:
         results_path = output_dir / "results.json"
         results = self._load_existing_results(results_path)
         
+        # Deduplicate track_id if this is a retry after crash
+        track_id = self._deduplicate_track_id(track_result["track_id"], results)
+        track_result["track_id"] = track_id
+        
         # Update results
         results["tracks"].append(track_result)
         results["source_device"] = entry.source_device
@@ -736,6 +878,9 @@ class Pipeline:
         
         # Write results
         self.writer.write_results(results=results, output_dir=output_dir)
+        
+        # Check if all tracks for this output directory are done
+        self._check_classification_complete(output_dir)
     
     def _delete_video(self, video_path: Path) -> None:
         """Delete processed video."""
@@ -744,6 +889,54 @@ class Pipeline:
             logger.debug(f"Deleted: {video_path.name}")
         except Exception as e:
             logger.error(f"Could not delete {video_path.name}: {e}")
+    
+    @staticmethod
+    def _load_detection_meta(output_dir: Path) -> dict:
+        """Load detection metadata sidecar if available."""
+        meta_path = output_dir / ".detection.json"
+        if meta_path.exists():
+            try:
+                return json.loads(meta_path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(f"Could not read detection metadata: {e}")
+        return {}
+    
+    @staticmethod
+    def _check_classification_complete(output_dir: Path) -> None:
+        """
+        Increment completed count and check if all tracks for this dir are done.
+        
+        When detection enqueues tracks, it writes .expected_tracks with the count.
+        Each call to this method increments .completed_tracks. When
+        completed >= expected, writes .done to signal the upload thread.
+        Also called on graceful failures (missing crops, empty dirs) and
+        permanent queue failures to ensure .done is always written eventually.
+        """
+        expected_path = output_dir / ".expected_tracks"
+        if not expected_path.exists():
+            return
+        
+        try:
+            expected = int(expected_path.read_text().strip())
+        except (ValueError, OSError):
+            return
+        
+        # Atomically increment completed count
+        completed_path = output_dir / ".completed_tracks"
+        try:
+            completed = int(completed_path.read_text().strip()) + 1
+        except (ValueError, OSError):
+            completed = 1
+        completed_path.write_text(str(completed))
+        
+        if completed >= expected:
+            done_path = output_dir / ".done"
+            done_path.write_text(f"classified={completed}\nexpected={expected}\n")
+            logger.info(f"Classification complete: {completed}/{expected} tracks in {output_dir.name}")
+            expected_path.unlink(missing_ok=True)
+            completed_path.unlink(missing_ok=True)
+            detection_meta_path = output_dir / ".detection.json"
+            detection_meta_path.unlink(missing_ok=True)
     
     # ------------------------------------------------------------------
     # Pipeline Control

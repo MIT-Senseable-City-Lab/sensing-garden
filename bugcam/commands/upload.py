@@ -274,11 +274,16 @@ def upload_ready_results(
     for results_dir in _list_result_directories(output_dir):
         s3_prefix = f"v1/{results_dir.parent.name}/{results_dir.name}"
         if _is_dot_results_dir(results_dir, dot_ids):
+            # DOT: incremental upload (existing behavior)
             state = _load_uploaded_state(results_dir)
             new_state = _upload_new_dot_files(results_dir, api_url, api_key, s3_prefix, state)
             if new_state != state:
                 _save_uploaded_state(results_dir, new_state)
                 processed_count += 1
+            continue
+
+        # FLIK: only upload when classification is fully complete
+        if not (results_dir / ".done").exists():
             continue
 
         upload_directory(api_url, api_key, results_dir, s3_prefix)
