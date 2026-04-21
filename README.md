@@ -53,6 +53,12 @@ poetry publish --build
 
 `bugcam update` upgrades the published `bugcam` package on the device from PyPI, so merging repo changes alone is not enough for Pi updates.
 
+If you want a Pi to use repo code without cutting a new PyPI release, install directly from GitHub instead:
+
+```bash
+pipx install "git+https://github.com/MIT-Senseable-City-Lab/sensing-garden.git#subdirectory=sensing-garden"
+```
+
 To publish from the command line, authenticate Poetry with a PyPI API token first:
 
 ```bash
