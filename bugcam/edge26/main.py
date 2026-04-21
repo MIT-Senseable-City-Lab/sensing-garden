@@ -585,6 +585,11 @@ class Pipeline:
             
             background = self._find_latest_background(dot_dir)
             
+            # Copy background image to output
+            if background:
+                shutil.copy2(background, output_dir / background.name)
+                logger.info(f"  Background copied: {background.name}")
+            
             # Copy any new videos to output, then delete from input
             videos_dir = dot_dir / "videos"
             if videos_dir.exists():
