@@ -42,14 +42,14 @@ crt = ["awscrt (==0.29.2)"]
 
 [[package]]
 name = "bugspot"
-version = "0.1.1"
+version = "0.3.2"
 description = "Lightweight insect detection and tracking using motion-based detection"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "bugspot-0.1.1-py3-none-any.whl", hash = "sha256:1fb9130a42bded00c78b52d9467f5a368d934c17babd7d3280c5df50f32e7b83"},
-    {file = "bugspot-0.1.1.tar.gz", hash = "sha256:ed61051279479f913243bd67b0ccac9434a5e4c0c2875055018e832acfd16ccf"},
+    {file = "bugspot-0.3.2-py3-none-any.whl", hash = "sha256:58d4e6b9cb08151df09d1edfadf16ca1370aea7fdb083a8becef583c551b83a3"},
+    {file = "bugspot-0.3.2.tar.gz", hash = "sha256:af357f802135c5ae624b46df3628cf0a5ee87b780e28a5379b68c47b59ade6fc"},
 ]
 
 [package.dependencies]
@@ -885,4 +885,4 @@ zstd = ["backports-zstd (>=1.0.0) ; python_version < \"3.14\""]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "a382e14daa5ff2f9ec8894c00d4e5c9ac03a21424c01f7a057b723c53043730b"
+content-hash = "766cbefc63dfa8063bfd8055f7ed36b2610757637fc0d5f36fdb91bb0cb78f38"

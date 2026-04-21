@@ -1,5 +1,5 @@
 numpy<2.0.0
-bugspot
+bugspot==0.3.2
 requests
 rich
 typer[all]
