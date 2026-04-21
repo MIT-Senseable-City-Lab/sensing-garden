@@ -39,6 +39,24 @@ bugcam run
 | `bugcam update` | Update to latest version |
 | `bugcam --version` | Show installed version |
 
+## Maintainer Release Flow
+
+Normal code changes follow the usual repo flow: make the change, run relevant tests, and merge the PR.
+
+If the change should ship to installed devices through `bugcam update`, also cut a PyPI release:
+
+```bash
+# bump version in pyproject.toml and bugcam/__init__.py
+poetry run pytest
+poetry publish --build
+```
+
+To publish from the command line, authenticate Poetry with a PyPI API token first:
+
+```bash
+poetry config pypi-token.pypi <your-pypi-token>
+```
+
 ## Architecture
 
 - **edge26 pipeline** lives in `bugcam/edge26/` (vendored from the edge26 repo). Handles recording, processing, and output formatting.
