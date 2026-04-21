@@ -91,6 +91,8 @@ class Pipeline:
         self._video_sample_interval = pipeline_config.get("video_sample_interval", 10)
         
         # --- Tracker reset signals (continuous_tracking mode) ---
+        self._sweep_counter = 0
+        self._sweep_interval = 30
         # 1. Day-change: reset when the date in the filename changes
         self._last_video_date: str = ""
         # 2. Recording-stop: reset after the last recorded video is processed
@@ -352,6 +354,12 @@ class Pipeline:
                         break
                     self._process_dot_directory_detection(dot_dir)
                 
+                # Periodically sweep stale output directories
+                self._sweep_counter += 1
+                if self._sweep_counter >= self._sweep_interval:
+                    self._sweep_stale_directories()
+                    self._sweep_counter = 0
+                
             except queue.Empty:
                 # Check for new DOT directories while waiting
                 for dot_dir in self._find_dot_directories():
@@ -488,6 +496,7 @@ class Pipeline:
                     "source_device": self.flick_id,
                     "date": date_time[:8],
                     "video_file": video_path.name,
+                    "video_timestamp": date_time,
                     "model_id": self.config.get("model", {}).get("model_id"),
                     "video_info": {
                         "fps": result.video_info.get("fps"),
@@ -529,6 +538,24 @@ class Pipeline:
                 # Write expected track count for completeness check
                 (output_dir / ".expected_tracks").write_text(str(confirmed_count))
                 logger.info(f"  Detection metadata saved ({confirmed_count} tracks)")
+            else:
+                # No confirmed tracks — write empty results and mark done so
+                # the upload thread can discover and clean up this directory
+                empty_results = {
+                    "source_device": self.flick_id,
+                    "date": date_time[:8],
+                    "processing_timestamp": datetime.now().isoformat(),
+                    "summary": {
+                        "total_detections": 0,
+                        "total_tracks": 0,
+                        "confirmed_tracks": 0,
+                        "unconfirmed_tracks": 0,
+                    },
+                    "tracks": [],
+                }
+                self.writer.write_results(results=empty_results, output_dir=output_dir)
+                (output_dir / ".done").write_text("classified=0\nexpected=0\n")
+                logger.info(f"  No confirmed tracks, marked directory done")
             
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
@@ -763,6 +790,9 @@ class Pipeline:
         track_meta = detection_meta.get("tracks", {}).get(entry.track_id, {}) if detection_meta else {}
         frame_dets = detection_meta.get("frame_detections", {}).get(entry.track_id, []) if detection_meta else []
         
+        if detection_meta and not track_meta and not frame_dets:
+            logger.warning(f"Track {entry.track_id} not found in detection metadata, enrichment skipped")
+        
         if frame_dets or track_meta:
             frame_det_map = {fd["frame_number"]: fd for fd in frame_dets if fd.get("frame_number") is not None}
             enriched_frames = []
@@ -796,16 +826,15 @@ class Pipeline:
         
         results["tracks"].append(track_result)
         
-        # Update summary from detection metadata if available, otherwise count classified tracks
+        # Update summary: total counts from detection metadata, confirmed from actual classified tracks
         if detection_meta and "summary" in detection_meta:
             results["summary"]["total_detections"] = detection_meta["summary"].get("total_detections", 0)
             results["summary"]["total_tracks"] = detection_meta["summary"].get("total_tracks", 0)
-            results["summary"]["confirmed_tracks"] = detection_meta["summary"].get("confirmed_tracks", 0)
             results["summary"]["unconfirmed_tracks"] = detection_meta["summary"].get("unconfirmed_tracks", 0)
         else:
-            results["summary"]["total_tracks"] = len(results["tracks"])
-            results["summary"]["confirmed_tracks"] = len(results["tracks"])
             results["summary"]["total_detections"] = sum(t.get("num_detections", 0) for t in results["tracks"])
+            results["summary"]["total_tracks"] = len(results["tracks"])
+        results["summary"]["confirmed_tracks"] = len(results["tracks"])
         
         # Write results
         self.writer.write_results(results=results, output_dir=output_dir)
@@ -937,6 +966,76 @@ class Pipeline:
             completed_path.unlink(missing_ok=True)
             detection_meta_path = output_dir / ".detection.json"
             detection_meta_path.unlink(missing_ok=True)
+    
+    def _sweep_stale_directories(self) -> None:
+        """Clean up FLIK output directories that are stuck without .done markers.
+        
+        Handles two cases:
+        1. Directories with results.json but no .done and no pending classification
+           entries — likely a crash left them incomplete. If older than 30 minutes,
+           write .done so the upload thread can pick them up.
+        2. Empty directories with no results.json and no .done — created by detection
+           but never populated. Remove them if older than 10 minutes.
+        """
+        stale_threshold_seconds = 30 * 60
+        empty_threshold_seconds = 10 * 60
+        
+        try:
+            for device_dir in self.results_dir.iterdir():
+                if not device_dir.is_dir():
+                    continue
+                for output_dir in device_dir.iterdir():
+                    if not output_dir.is_dir():
+                        continue
+                    
+                    done_path = output_dir / ".done"
+                    if done_path.exists():
+                        continue
+                    
+                    results_path = output_dir / "results.json"
+                    expected_path = output_dir / ".expected_tracks"
+                    
+                    # Case 1: Has results.json but not marked done
+                    if results_path.exists() and not expected_path.exists():
+                        # No pending classification — mark done
+                        age_seconds = (datetime.now().timestamp() - output_dir.stat().st_mtime)
+                        if age_seconds > stale_threshold_seconds:
+                            done_path.write_text("swept=stale\n")
+                            logger.info(f"Swept stale directory: {output_dir.name} (no .expected_tracks, marked done)")
+                    
+                    elif results_path.exists() and expected_path.exists():
+                        # Has expected tracks but not all completed
+                        # Check if all tracks are already classified
+                        try:
+                            expected = int(expected_path.read_text().strip())
+                        except (ValueError, OSError):
+                            expected = 0
+                        completed_path = output_dir / ".completed_tracks"
+                        try:
+                            completed = int(completed_path.read_text().strip())
+                        except (ValueError, OSError):
+                            completed = 0
+                        
+                        age_seconds = (datetime.now().timestamp() - output_dir.stat().st_mtime)
+                        if age_seconds > stale_threshold_seconds and completed >= expected:
+                            done_path.write_text(f"swept=stale\ncompleted={completed}\nexpected={expected}\n")
+                            logger.info(f"Swept stale directory: {output_dir.name} (all completed but no .done)")
+                    
+                    # Case 2: Empty directory (no results.json, no classification activity)
+                    elif not results_path.exists() and not expected_path.exists():
+                        sidecar_names = {".done", ".detection.json", ".expected_tracks", ".completed_tracks", "results.json.tmp"}
+                        has_content = False
+                        for f in output_dir.rglob("*"):
+                            if f.is_file() and f.name not in sidecar_names:
+                                has_content = True
+                                break
+                        if not has_content:
+                            age_seconds = (datetime.now().timestamp() - output_dir.stat().st_mtime)
+                            if age_seconds > empty_threshold_seconds:
+                                shutil.rmtree(output_dir)
+                                logger.info(f"Removed empty stale directory: {output_dir.name}")
+        except Exception as e:
+            logger.warning(f"Error during stale directory sweep: {e}")
     
     # ------------------------------------------------------------------
     # Pipeline Control
