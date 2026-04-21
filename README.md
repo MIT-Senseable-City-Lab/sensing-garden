@@ -39,6 +39,35 @@ bugcam run
 | `bugcam update` | Update to latest version |
 | `bugcam --version` | Show installed version |
 
+## Maintainer Release Flow
+
+Normal code changes follow the usual repo flow: make the change, run relevant tests, and merge the PR.
+
+For Raspberry Pi installs, there are two paths:
+
+- `install.sh` runs `pipx install bugcam`, so it installs the published PyPI package.
+- `bugcam update` upgrades that published PyPI package on the device.
+
+That means merging repo changes alone is not enough for Pi updates. If the change should ship through the normal install/update path, also cut a PyPI release:
+
+```bash
+# bump version in pyproject.toml and bugcam/__init__.py
+poetry run pytest
+poetry publish --build
+```
+
+If you want a Pi to use repo code without cutting a new PyPI release, install directly from GitHub instead of using the published package:
+
+```bash
+pipx install "git+https://github.com/MIT-Senseable-City-Lab/sensing-garden.git#subdirectory=sensing-garden"
+```
+
+To publish from the command line, authenticate Poetry with a PyPI API token first:
+
+```bash
+poetry config pypi-token.pypi <your-pypi-token>
+```
+
 ## Architecture
 
 - **edge26 pipeline** lives in `bugcam/edge26/` (vendored from the edge26 repo). Handles recording, processing, and output formatting.
