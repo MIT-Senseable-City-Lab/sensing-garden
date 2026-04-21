@@ -43,7 +43,12 @@ bugcam run
 
 Normal code changes follow the usual repo flow: make the change, run relevant tests, and merge the PR.
 
-If the change should ship to installed devices through `bugcam update`, also cut a PyPI release:
+For Raspberry Pi installs, there are two paths:
+
+- `install.sh` runs `pipx install bugcam`, so it installs the published PyPI package.
+- `bugcam update` upgrades that published PyPI package on the device.
+
+That means merging repo changes alone is not enough for Pi updates. If the change should ship through the normal install/update path, also cut a PyPI release:
 
 ```bash
 # bump version in pyproject.toml and bugcam/__init__.py
@@ -51,9 +56,7 @@ poetry run pytest
 poetry publish --build
 ```
 
-`bugcam update` upgrades the published `bugcam` package on the device from PyPI, so merging repo changes alone is not enough for Pi updates.
-
-If you want a Pi to use repo code without cutting a new PyPI release, install directly from GitHub instead:
+If you want a Pi to use repo code without cutting a new PyPI release, install directly from GitHub instead of using the published package:
 
 ```bash
 pipx install "git+https://github.com/MIT-Senseable-City-Lab/sensing-garden.git#subdirectory=sensing-garden"
