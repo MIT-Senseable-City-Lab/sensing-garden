@@ -51,6 +51,8 @@ poetry run pytest
 poetry publish --build
 ```
 
+`bugcam update` upgrades the published `bugcam` package on the device from PyPI, so merging repo changes alone is not enough for Pi updates.
+
 To publish from the command line, authenticate Poetry with a PyPI API token first:
 
 ```bash
