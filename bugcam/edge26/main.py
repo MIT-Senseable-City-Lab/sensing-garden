@@ -782,7 +782,7 @@ class Pipeline:
             "track_id": track_id,
             "timestamp": entry.time,
             "final_prediction": final_pred,
-            "num_detections": track_meta.get("num_detections", len(classifications)),
+            "num_detections": len(track_frames),
             "frames": track_frames,
         }
         if track_meta.get("first_seen_seconds") is not None:
