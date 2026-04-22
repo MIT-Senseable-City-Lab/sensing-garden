@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import cv2
 
@@ -544,7 +544,7 @@ class Pipeline:
                 empty_results = {
                     "source_device": self.flick_id,
                     "date": date_time[:8],
-                    "processing_timestamp": datetime.now().isoformat(),
+                    "processing_timestamp": datetime.now(timezone.utc).isoformat(),
                     "summary": {
                         "total_detections": 0,
                         "total_tracks": 0,
@@ -584,6 +584,15 @@ class Pipeline:
             output_dir.mkdir(parents=True, exist_ok=True)
             
             background = self._find_latest_background(dot_dir)
+            
+            # Copy background image to output, then point to the copy
+            # so the queue entry references a path that persists after
+            # the incoming DOT directory is cleaned up
+            if background:
+                dst_background = output_dir / background.name
+                shutil.copy2(background, dst_background)
+                logger.info(f"  Background copied: {background.name}")
+                background = dst_background
             
             # Copy any new videos to output, then delete from input
             videos_dir = dot_dir / "videos"
@@ -783,7 +792,7 @@ class Pipeline:
                 results["video_info"] = detection_meta["video_info"]
             results["date"] = detection_meta.get("date", entry.date)
         results["source_device"] = entry.source_device
-        results["processing_timestamp"] = datetime.now().isoformat()
+        results["processing_timestamp"] = datetime.now(timezone.utc).isoformat()
         
         # Build per-track frame data, enriched with detection metadata
         track_frames = frames
@@ -898,7 +907,7 @@ class Pipeline:
         results["tracks"].append(track_result)
         results["source_device"] = entry.source_device
         results["date"] = entry.date
-        results["processing_timestamp"] = datetime.now().isoformat()
+        results["processing_timestamp"] = datetime.now(timezone.utc).isoformat()
         
         # Update summary
         results["summary"]["total_tracks"] = len(results["tracks"])

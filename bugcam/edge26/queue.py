@@ -10,7 +10,7 @@ import json
 import logging
 import threading
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +33,7 @@ class QueueEntry:
     background_path: Optional[str] = None    # Path to background image (for DOT composite)
     num_crops: int = 0
     output_dir: str = ""                     # Where to write final results
-    queued_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    queued_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     retry_count: int = 0
     last_error: Optional[str] = None
 

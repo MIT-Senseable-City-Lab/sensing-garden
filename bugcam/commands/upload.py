@@ -20,6 +20,7 @@ from bugcam.config import (
 from bugcam.s3_upload import (
     RESULTS_FILENAME,
     UPLOADED_STATE_FILENAME,
+    RateLimitError,
     upload_directory,
     upload_file,
     upload_manifest,
@@ -320,6 +321,11 @@ def watch_uploads(
             )
             consecutive_failures = 0
             stop_event.wait(poll_interval)
+        except RateLimitError as exc:
+            retry_delay = exc.retry_after if exc.retry_after is not None else min(poll_interval * 2, MAX_RETRY_DELAY_SECONDS)
+            console.print(f"[yellow]Rate limited[/yellow] — {exc}. Retrying in {retry_delay}s.")
+            consecutive_failures += 1
+            stop_event.wait(retry_delay)
         except Exception as exc:
             consecutive_failures += 1
             retry_delay = min(poll_interval * (2 ** consecutive_failures), MAX_RETRY_DELAY_SECONDS)
