@@ -10,7 +10,7 @@ import json
 import logging
 import threading
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
