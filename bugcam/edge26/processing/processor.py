@@ -9,7 +9,7 @@ import cv2
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from bugspot import DetectionPipeline
@@ -450,7 +450,7 @@ class VideoProcessor:
             "model_id": self.model_metadata.get("model_id"),
             "video_file": video_path.name,
             "video_timestamp": video_timestamp.isoformat() if video_timestamp else None,
-            "processing_timestamp": datetime.now().isoformat(),
+            "processing_timestamp": datetime.now(timezone.utc).isoformat(),
             "video_info": {
                 "fps": vi["fps"],
                 "total_frames": vi["total_frames"],

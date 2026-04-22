@@ -16,7 +16,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class ResultsWriter:
                 species_counts[species] = species_counts.get(species, 0) + 1
         
         summary_data = {
-            'generated_at': datetime.now().isoformat(),
+            'generated_at': datetime.now(timezone.utc).isoformat(),
             'total_videos': len(all_results),
             'total_tracks': total_tracks,
             'total_confirmed': total_confirmed,
