@@ -249,7 +249,7 @@ class VideoProcessor:
         """
         import numpy as np
         
-        BG_DARKEN = 0.35
+        BG_DARKEN = 0.85
         
         background = cv2.imread(str(background_path))
         if background is None:
