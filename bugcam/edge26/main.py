@@ -237,7 +237,10 @@ class Pipeline:
     def _find_latest_background(self, dot_dir: Path):
         """Find the most recent background image in a DOT directory."""
         backgrounds = sorted(dot_dir.glob("*_background.jpg"))
-        return backgrounds[-1] if backgrounds else None
+        if backgrounds:
+            return backgrounds[-1]
+        fallback = dot_dir / "current_background.jpg"
+        return fallback if fallback.exists() else None
     
     @staticmethod
     def _deduplicate_track_id(track_id: str, results: dict) -> str:
