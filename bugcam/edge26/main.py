@@ -242,6 +242,47 @@ class Pipeline:
         fallback = dot_dir / "current_background.jpg"
         return fallback if fallback.exists() else None
     
+    def _process_dot_media(self, dot_dir: Path) -> None:
+        """Copy videos and backgrounds to output regardless of track readiness.
+        
+        Ensures media files reach S3 quickly even when no insect tracks
+        have been detected yet. Called on every detection worker poll.
+        """
+        try:
+            dot_id, date_str = self._parse_dot_dir_name(dot_dir.name)
+            if not dot_id:
+                return
+            
+            output_dir = self._compute_output_dir(dot_id, date_str)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            copied_something = False
+            
+            videos_dir = dot_dir / "videos"
+            if videos_dir.exists():
+                dst_videos = output_dir / "videos"
+                dst_videos.mkdir(parents=True, exist_ok=True)
+                for vid in sorted(videos_dir.iterdir()):
+                    if vid.is_file() and vid.suffix == ".mp4":
+                        dst = dst_videos / vid.name
+                        if not dst.exists():
+                            shutil.copy2(vid, dst)
+                            logger.info(f"  Video copied: {vid.name}")
+                            copied_something = True
+                        vid.unlink()
+            
+            background = self._find_latest_background(dot_dir)
+            if background:
+                dst_background = output_dir / background.name
+                if not dst_background.exists():
+                    shutil.copy2(background, dst_background)
+                    logger.info(f"  Background copied: {background.name}")
+            
+            if copied_something:
+                logger.info(f"MEDIA: Copied new files from {dot_dir.name} to {output_dir.name}")
+        
+        except Exception as e:
+            logger.error(f"Failed to process media from {dot_dir.name}: {e}", exc_info=True)
+    
     @staticmethod
     def _deduplicate_track_id(track_id: str, results: dict) -> str:
         """If track_id already exists in results, append a suffix to make it unique."""
@@ -342,6 +383,7 @@ class Pipeline:
             if item_type == "video":
                 self._process_video_detection(path)
             else:
+                self._process_dot_media(path)
                 self._process_dot_directory_detection(path)
         
         # Process new videos from queue + poll for DOT directories
@@ -355,6 +397,7 @@ class Pipeline:
                 for dot_dir in self._find_dot_directories():
                     if self.stop_event.is_set():
                         break
+                    self._process_dot_media(dot_dir)
                     self._process_dot_directory_detection(dot_dir)
                 
                 # Periodically sweep stale output directories
@@ -368,6 +411,7 @@ class Pipeline:
                 for dot_dir in self._find_dot_directories():
                     if self.stop_event.is_set():
                         break
+                    self._process_dot_media(dot_dir)
                     self._process_dot_directory_detection(dot_dir)
                 
                 # If recording stopped, check if we're done
