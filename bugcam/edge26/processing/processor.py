@@ -237,7 +237,7 @@ class VideoProcessor:
         """
         Create a composite image matching BugSpot's visual style.
         
-        Darkened background with lighten-blended crops at their bbox
+        Dimmed background with lighten-blended crops at their bbox
         positions, red path polyline through centroids, green start
         marker, and detection count label.
         
