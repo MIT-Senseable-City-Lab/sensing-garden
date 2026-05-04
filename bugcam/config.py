@@ -94,6 +94,14 @@ def get_input_storage_dir() -> Path:
     return get_state_dir() / "incoming"
 
 
+def get_pending_dir() -> Path:
+    """Get the pending classification queue directory."""
+    pending_dir = os.environ.get("BUGCAM_PENDING_DIR")
+    if pending_dir:
+        return Path(pending_dir)
+    return get_state_dir() / "pending"
+
+
 def get_output_storage_dir() -> Path:
     """Get the edge26 output storage directory."""
     output_dir = os.environ.get("BUGCAM_OUTPUT_DIR")

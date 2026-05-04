@@ -9,7 +9,7 @@ import cv2
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from bugspot import DetectionPipeline
@@ -237,7 +237,7 @@ class VideoProcessor:
         """
         Create a composite image matching BugSpot's visual style.
         
-        Darkened background with lighten-blended crops at their bbox
+        Dimmed background with lighten-blended crops at their bbox
         positions, red path polyline through centroids, green start
         marker, and detection count label.
         
@@ -249,7 +249,7 @@ class VideoProcessor:
         """
         import numpy as np
         
-        BG_DARKEN = 0.35
+        BG_DARKEN = 0.50
         
         background = cv2.imread(str(background_path))
         if background is None:
@@ -450,7 +450,7 @@ class VideoProcessor:
             "model_id": self.model_metadata.get("model_id"),
             "video_file": video_path.name,
             "video_timestamp": video_timestamp.isoformat() if video_timestamp else None,
-            "processing_timestamp": datetime.now().isoformat(),
+            "processing_timestamp": datetime.now(timezone.utc).isoformat(),
             "video_info": {
                 "fps": vi["fps"],
                 "total_frames": vi["total_frames"],

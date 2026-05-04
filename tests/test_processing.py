@@ -51,9 +51,11 @@ def test_video_processor_passes_ratio_config_to_bugspot() -> None:
 
 def test_dot_done_signal_processing_uses_existing_track_crops(tmp_path: Path) -> None:
     from bugcam.edge26 import main as edge26_main
+    from bugcam.edge26.queue import QueueEntry
 
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
+    pending_dir = tmp_path / "pending"
     track_dir = input_dir / "dot01_20260417" / "crops" / "track-a_123456"
     labels_dir = input_dir / "dot01_20260417" / "labels"
     videos_dir = input_dir / "dot01_20260417" / "videos"
@@ -64,33 +66,38 @@ def test_dot_done_signal_processing_uses_existing_track_crops(tmp_path: Path) ->
     (track_dir / "frame_000001.jpg").write_bytes(b"crop")
     (labels_dir / "track-a.json").write_text("{}", encoding="utf-8")
     (videos_dir / "dot01_20260417_123456.mp4").write_bytes(b"video")
-    track_result = {"track_id": "track-a", "num_detections": 1, "final_prediction": {}}
 
-    with patch.object(edge26_main, "VideoProcessor") as processor_cls, \
-         patch.object(edge26_main, "ResultsWriter") as writer_cls:
-        processor_cls.return_value.classify_dot_track.return_value = track_result
+    with patch.object(edge26_main, "VideoProcessor") as processor_cls:
         pipeline = edge26_main.Pipeline(
             {
                 "device": {"flick_id": "flick01", "dot_ids": ["dot01"]},
-                "paths": {"input_storage": str(input_dir)},
+                "paths": {"input_storage": str(input_dir), "pending_dir": str(pending_dir)},
                 "pipeline": {"enable_recording": False, "enable_processing": True, "enable_classification": True},
                 "output": {"results_dir": str(output_dir)},
             }
         )
-        pipeline._process_dot_directory(input_dir / "dot01_20260417")
+        pipeline._process_dot_directory_detection(input_dir / "dot01_20260417")
 
-    processor_cls.return_value.classify_dot_track.assert_called_once_with(track_dir, "track-a", "123456")
-    writer_cls.return_value.write_results.assert_called_once()
-    written_results = writer_cls.return_value.write_results.call_args.kwargs["results"]
-    assert written_results["source_device"] == "dot01"
-    assert written_results["summary"]["confirmed_tracks"] == 1
-    assert written_results["tracks"] == [track_result]
-    assert (output_dir / "dot01" / "20260417" / "crops" / "track-a_123456" / "frame_000001.jpg").exists()
-    assert (output_dir / "dot01" / "20260417" / "labels" / "track-a.json").exists()
-    assert (output_dir / "dot01" / "20260417" / "videos" / "dot01_20260417_123456.mp4").exists()
+    # Verify track was queued for classification
+    assert pipeline.classification_queue.count() == 1
+    entries = pipeline.classification_queue.get_pending_entries()
+    assert len(entries) == 1
+    filepath, entry = entries[0]
+    assert entry.entry_type == "dot"
+    assert entry.source_device == "dot01"
+    assert entry.track_id == "track-a"
+    assert entry.time == "123456"
+    assert entry.num_crops == 1
+    # Track should be deleted from input after queuing
     assert not track_dir.exists()
-    assert not (labels_dir / "track-a.json").exists()
-    assert not (videos_dir / "dot01_20260417_123456.mp4").exists()
+    # Crops should be copied to output
+    assert (output_dir / "dot01" / "20260417" / "crops" / "track-a_123456" / "frame_000001.jpg").exists()
+    # Labels should be copied to output
+    assert (output_dir / "dot01" / "20260417" / "labels" / "track-a.json").exists()
+    # Expected tracks marker should be written
+    expected_path = output_dir / "dot01" / "20260417" / ".expected_tracks"
+    assert expected_path.exists()
+    assert expected_path.read_text().strip() == "1"
 
 
 def test_build_edge26_config_resolves_paths(tmp_path: Path, monkeypatch) -> None:

@@ -10,12 +10,31 @@ import requests
 RESULTS_FILENAME = "results.json"
 MANIFEST_FILENAME = "manifest.json"
 UPLOADED_STATE_FILENAME = ".uploaded"
+DETECTION_META_FILENAME = ".detection.json"
+EXPECTED_TRACKS_FILENAME = ".expected_tracks"
+COMPLETED_TRACKS_FILENAME = ".completed_tracks"
+DONE_MARKER_FILENAME = ".done"
 REQUEST_TIMEOUT_SECONDS = 30
 UPLOAD_TIMEOUT_SECONDS = 300
 
 
+class RateLimitError(Exception):
+    """Raised when the API returns 429 Too Many Requests."""
+
+    def __init__(self, retry_after: int | None = None, message: str = ""):
+        self.retry_after = retry_after
+        super().__init__(message or f"Rate limited{f', retry after {retry_after}s' if retry_after else ''}")
+
+
 def _iter_upload_files(local_dir: Path) -> list[Path]:
-    files = [path for path in sorted(local_dir.rglob("*")) if path.is_file() and path.name != UPLOADED_STATE_FILENAME]
+    skip_names = {
+        UPLOADED_STATE_FILENAME,
+        DETECTION_META_FILENAME,
+        EXPECTED_TRACKS_FILENAME,
+        COMPLETED_TRACKS_FILENAME,
+        DONE_MARKER_FILENAME,
+    }
+    files = [path for path in sorted(local_dir.rglob("*")) if path.is_file() and path.name not in skip_names]
     return [path for path in files if path.name != RESULTS_FILENAME] + [path for path in files if path.name == RESULTS_FILENAME]
 
 
@@ -26,6 +45,14 @@ def get_upload_url(api_url: str, api_key: str, s3_key: str) -> str:
         headers={"X-Api-Key": api_key},
         timeout=REQUEST_TIMEOUT_SECONDS,
     )
+    if response.status_code == 429:
+        retry_after = None
+        if "Retry-After" in response.headers:
+            try:
+                retry_after = int(response.headers["Retry-After"])
+            except (ValueError, TypeError):
+                pass
+        raise RateLimitError(retry_after=retry_after)
     response.raise_for_status()
     payload = response.json()
     upload_url = payload.get("upload_url")
@@ -42,6 +69,14 @@ def upload_bytes(api_url: str, api_key: str, data: bytes, s3_key: str, content_t
         headers={"Content-Type": content_type},
         timeout=UPLOAD_TIMEOUT_SECONDS,
     )
+    if response.status_code == 429:
+        retry_after = None
+        if "Retry-After" in response.headers:
+            try:
+                retry_after = int(response.headers["Retry-After"])
+            except (ValueError, TypeError):
+                pass
+        raise RateLimitError(retry_after=retry_after)
     response.raise_for_status()
 
 
@@ -50,6 +85,14 @@ def upload_file(api_url: str, api_key: str, local_path: Path, s3_key: str) -> No
     upload_url = get_upload_url(api_url, api_key, s3_key)
     with local_path.open("rb") as fh:
         response = requests.put(upload_url, data=fh, timeout=UPLOAD_TIMEOUT_SECONDS)
+    if response.status_code == 429:
+        retry_after = None
+        if "Retry-After" in response.headers:
+            try:
+                retry_after = int(response.headers["Retry-After"])
+            except (ValueError, TypeError):
+                pass
+        raise RateLimitError(retry_after=retry_after)
     response.raise_for_status()
 
 

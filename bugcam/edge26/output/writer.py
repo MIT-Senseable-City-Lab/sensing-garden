@@ -16,7 +16,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,9 @@ class ResultsWriter:
         """
         Write results JSON to an output directory.
         
+        Uses atomic write (temp file + rename) to prevent data loss
+        if the process crashes or the Pi loses power mid-write.
+        
         Args:
             results: Processing results from VideoProcessor
             output_dir: Target directory (e.g. results_dir/flick01/20260204_100000/)
@@ -58,10 +61,13 @@ class ResultsWriter:
         output_dir.mkdir(parents=True, exist_ok=True)
         output_paths = {}
         
-        # Write JSON results
         json_path = output_dir / "results.json"
-        with open(json_path, 'w') as f:
+        temp_path = json_path.with_suffix(".json.tmp")
+        
+        with open(temp_path, 'w') as f:
             json.dump(results, f, indent=2, default=str)
+        
+        temp_path.replace(json_path)
         
         output_paths['json'] = json_path
         
@@ -99,7 +105,7 @@ class ResultsWriter:
                 species_counts[species] = species_counts.get(species, 0) + 1
         
         summary_data = {
-            'generated_at': datetime.now().isoformat(),
+            'generated_at': datetime.now(timezone.utc).isoformat(),
             'total_videos': len(all_results),
             'total_tracks': total_tracks,
             'total_confirmed': total_confirmed,
