@@ -1,7 +1,7 @@
 import typer
 from rich.console import Console
 from bugcam import __version__
-from bugcam.commands import autostart, dot_info, environment, heartbeat, models, process, record, run, setup, status, update, upload
+from bugcam.commands import autostart, dot_info, environment, heartbeat, models, process, receive, record, run, setup, status, update, upload
 
 app = typer.Typer(
     name="bugcam",
@@ -29,6 +29,7 @@ app.add_typer(heartbeat.app, name="heartbeat")
 app.add_typer(environment.app, name="environment")
 app.add_typer(dot_info.app, name="dot-info")
 app.add_typer(update.app, name="update")
+app.add_typer(receive.app, name="receive")
 
 @app.callback()
 def main(
