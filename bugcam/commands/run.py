@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import threading
+import time
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +27,16 @@ from bugcam.device_config import resolve_flick_id
 from bugcam.environment_sensor import collect_environment_reading
 from bugcam.processing import parse_capture_resolution
 from bugcam.runtime import build_pipeline, resolve_bundle_provenance, select_model_reference
+from bugcam.receiver import create_app
+from bugcam.receiver.config import RECEIVER_DEFAULT_PORT, RECEIVER_DEFAULT_HOST
+from bugcam.receiver.tracker import PendingTrackTracker
 
 app = typer.Typer(help="Record, process, upload, and emit heartbeats", invoke_without_command=True, no_args_is_help=False)
 console = Console()
 HEARTBEAT_INTERVAL_SECONDS = 60
 ENVIRONMENT_INTERVAL_SECONDS = 60
 PID_FILE_PATH = get_state_dir() / "bugcam.pid"
+logger = logging.getLogger(__name__)
 
 
 def _heartbeat_loop(
@@ -61,6 +66,46 @@ def _environment_loop(
                 console.print(f"[yellow]Environment sensor warning[/yellow] {exc}")
                 warning_emitted = True
         stop_event.wait(ENVIRONMENT_INTERVAL_SECONDS)
+
+
+def _receiver_loop(
+    host: str,
+    port: int,
+    stop_event: threading.Event,
+) -> None:
+    """Run the Flask receiver server in a thread."""
+    flask_app = create_app(config={"host": host, "port": port})
+    tracker = flask_app.config.get("TRACKER")
+
+    if tracker:
+        logger.info("Scanning for orphaned tracks...")
+        tracker.recover_orphaned_tracks()
+
+        finalization_stop = threading.Event()
+        finalization_thread = threading.Thread(
+            target=_finalization_loop,
+            args=(tracker, finalization_stop),
+            daemon=True
+        )
+        finalization_thread.start()
+        logger.info("Track finalization thread started for receiver")
+
+    logger.info(f"Receiver starting on {host}:{port}")
+    flask_app.run(host=host, port=port, threaded=True, debug=False)
+
+    if tracker and finalization_thread:
+        finalization_stop.set()
+        finalization_thread.join(timeout=5)
+
+
+def _finalization_loop(tracker: PendingTrackTracker, stop_event: threading.Event):
+    """Background thread that checks for idle tracks to finalize."""
+    while not stop_event.is_set():
+        try:
+            tracker.check_pending()
+        except Exception as e:
+            logger.error(f"Finalization loop error: {e}")
+        stop_event.wait(PendingTrackTracker.CHECK_INTERVAL)
 
 
 def _parse_resolution_option(value: str) -> tuple[int, int]:
@@ -171,6 +216,13 @@ def run(
         "--delete-after-upload/--no-delete-after-upload",
         help="Clean up results after uploading",
     ),
+    with_receiver: bool = typer.Option(
+        True,
+        "--with-receiver/--no-receiver",
+        help="Start DOT receiver server alongside pipeline",
+    ),
+    receiver_port: int = typer.Option(RECEIVER_DEFAULT_PORT, "--receiver-port", help="DOT receiver HTTP port"),
+    receiver_host: str = typer.Option(RECEIVER_DEFAULT_HOST, "--receiver-host", help="DOT receiver bind address"),
 ) -> None:
     """Run recording, processing, uploading, and one-minute heartbeat emission."""
     if mode not in {"continuous", "interval"}:
@@ -211,6 +263,7 @@ def run(
         upload_stop_event = threading.Event()
         heartbeat_stop_event = threading.Event()
         environment_stop_event = threading.Event()
+        receiver_stop_event = threading.Event()
         upload_thread = threading.Thread(
             target=watch_uploads,
             args=(
@@ -249,10 +302,22 @@ def run(
             name="BugCamEnvironment",
         )
 
+        receiver_thread = None
+        if with_receiver:
+            receiver_thread = threading.Thread(
+                target=_receiver_loop,
+                args=(receiver_host, receiver_port, receiver_stop_event),
+                daemon=True,
+                name="BugCamReceiver",
+            )
+
         pipeline.start()
         upload_thread.start()
         heartbeat_thread.start()
         environment_thread.start()
+        if receiver_thread:
+            receiver_thread.start()
+            console.print(f"[dim]Receiver[/dim] http://{receiver_host}:{receiver_port}")
 
         pipeline.wait()
     except KeyboardInterrupt:
@@ -266,12 +331,16 @@ def run(
             heartbeat_stop_event.set()
         if "environment_stop_event" in locals():
             environment_stop_event.set()
+        if "receiver_stop_event" in locals() and receiver_thread:
+            receiver_stop_event.set()
         if "upload_thread" in locals():
             upload_thread.join(timeout=upload_poll + 1)
         if "heartbeat_thread" in locals():
             heartbeat_thread.join(timeout=1)
         if "environment_thread" in locals():
             environment_thread.join(timeout=1)
+        if "receiver_thread" in locals() and receiver_thread:
+            receiver_thread.join(timeout=5)
         if "settings" in locals():
             upload_ready_results(
                 output_dir,

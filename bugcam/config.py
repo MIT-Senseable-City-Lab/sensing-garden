@@ -75,10 +75,14 @@ def get_cache_dir() -> Path:
 
 
 def get_state_dir() -> Path:
-    """Get the state directory for bugcam, respecting XDG_DATA_HOME."""
+    """Get the state directory for bugcam, respecting config and environment."""
     state_dir = os.environ.get("BUGCAM_STATE_DIR")
     if state_dir:
         return Path(state_dir)
+
+    config = load_config()
+    if config.get("state_dir"):
+        return Path(str(config["state_dir"]))
 
     xdg_data = os.environ.get("XDG_DATA_HOME")
     if xdg_data:
@@ -91,6 +95,11 @@ def get_input_storage_dir() -> Path:
     input_dir = os.environ.get("BUGCAM_INPUT_DIR")
     if input_dir:
         return Path(input_dir)
+
+    config = load_config()
+    if config.get("input_dir"):
+        return Path(str(config["input_dir"]))
+
     return get_state_dir() / "incoming"
 
 
@@ -99,6 +108,11 @@ def get_pending_dir() -> Path:
     pending_dir = os.environ.get("BUGCAM_PENDING_DIR")
     if pending_dir:
         return Path(pending_dir)
+
+    config = load_config()
+    if config.get("pending_dir"):
+        return Path(str(config["pending_dir"]))
+
     return get_state_dir() / "pending"
 
 
@@ -107,6 +121,11 @@ def get_output_storage_dir() -> Path:
     output_dir = os.environ.get("BUGCAM_OUTPUT_DIR")
     if output_dir:
         return Path(output_dir)
+
+    config = load_config()
+    if config.get("output_dir"):
+        return Path(str(config["output_dir"]))
+
     return get_state_dir() / "outputs"
 
 
