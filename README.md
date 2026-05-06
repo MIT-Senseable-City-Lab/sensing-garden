@@ -5,6 +5,19 @@ Records video, detects and classifies insects on-device, and uploads results to 
 
 Default API endpoint: `https://api.sensinggarden.com/v1`
 
+## Prerequisites (Raspberry Pi with Hailo AI)
+
+bugcam requires system-level Hailo packages that are not available via PyPI. Install them before running setup:
+
+```bash
+sudo apt update && sudo apt install python3-hailo-tappas hailo-tappas-core
+```
+
+If you encounter sudo password prompts during setup, enable passwordless sudo:
+```bash
+echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$USER
+```
+
 ## Quick Start
 
 ```bash

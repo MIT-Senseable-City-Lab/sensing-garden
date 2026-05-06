@@ -27,8 +27,9 @@ from ..device_config import build_dot_ids
 app = typer.Typer(help="Install dependencies")
 console = Console()
 
-HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-rpi5-examples.git"
-HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps-infra.git"
+# Updated for Hailo AI v5
+HAILO_RPI5_EXAMPLES_URL = "https://github.com/hailo-ai/hailo-apps.git"
+HAILO_APPS_INFRA_URL = "git+https://github.com/hailo-ai/hailo-apps.git"
 SEN55_SOURCE_DIR = Path(__file__).resolve().parents[1] / "sensors" / "sen55"
 
 
@@ -45,6 +46,45 @@ def check_import(python_exe: str, module: str) -> bool:
         return False
 
 
+def _is_hailo_platform_available() -> bool:
+    """Check if hailo_platform is importable via system Python."""
+    try:
+        result = subprocess.run(
+            ["python3", "-c", "import hailo_platform"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _check_sudo_access() -> bool:
+    """Check if passwordless sudo is available."""
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "true"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _check_hailo_post_install() -> bool:
+    """Check if hailo-post-install is available in PATH."""
+    try:
+        result = subprocess.run(
+            ["which", "hailo-post-install"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def _run_command(cmd: list[str], *, cwd: str | None = None, timeout: int) -> None:
     result = subprocess.run(cmd, cwd=cwd, timeout=timeout)
     if result.returncode != 0:
@@ -52,6 +92,14 @@ def _run_command(cmd: list[str], *, cwd: str | None = None, timeout: int) -> Non
 
 
 def _install_hailo_environment() -> None:
+    # Skip if system already has hailo_platform (e.g., via apt)
+    if _is_hailo_platform_available():
+        console.print("[green]hailo_platform found in system Python. Using system Hailo packages.[/green]")
+        python_exe = get_python_for_detection()
+        if check_import(python_exe, "hailo_apps"):
+            console.print("[green]Hailo setup already complete[/green]\n")
+            return
+
     hailo_venv_dir = get_hailo_venv_dir()
 
     if hailo_venv_dir.exists():
@@ -61,12 +109,25 @@ def _install_hailo_environment() -> None:
             console.print("[green]Hailo setup already complete[/green]\n")
             return
 
+    # Check sudo access before running install.sh (which requires sudo internally)
+    if not _check_sudo_access():
+        console.print("[yellow]Passwordless sudo required for Hailo installation.[/yellow]")
+        console.print(f"[yellow]Enable it with: echo '$USER ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/$USER[/yellow]")
+        console.print("[yellow]Then re-run bugcam setup, or install Hailo packages manually.[/yellow]")
+        raise RuntimeError("Sudo access required for Hailo installation")
+
+    # Check for hailo-post-install binary
+    if not _check_hailo_post_install():
+        console.print("[yellow]Warning: hailo-post-install not found in PATH.[/yellow]")
+        console.print("[yellow]The install script may fail. It should be provided by hailo-tappas-core.[/yellow]")
+        console.print("[yellow]Continuing anyway...[/yellow]")
+
     temp_clone_dir = Path("/tmp/hailo-rpi5-examples-setup")
     if temp_clone_dir.exists():
         console.print("[yellow]Removing existing temp directory...[/yellow]")
         shutil.rmtree(temp_clone_dir)
 
-    console.print("[cyan]Cloning hailo-rpi5-examples (shallow clone)...[/cyan]")
+    console.print("[cyan]Cloning hailo-apps (shallow clone)...[/cyan]")
     console.print(f"[dim]$ git clone --depth 1 {HAILO_RPI5_EXAMPLES_URL} {temp_clone_dir}[/dim]\n")
     _run_command(["git", "clone", "--depth", "1", HAILO_RPI5_EXAMPLES_URL, str(temp_clone_dir)], timeout=120)
     console.print("[green]Clone complete.[/green]\n")
@@ -75,15 +136,18 @@ def _install_hailo_environment() -> None:
     if not install_script.exists():
         raise FileNotFoundError(f"install.sh not found at {install_script}")
 
-    console.print("[cyan]Running install script (this may take a few minutes)...[/cyan]")
-    console.print("[dim]This will create the environment, install dependencies, and compile .so files[/dim]")
-    console.print(f"[dim]$ cd {temp_clone_dir} && ./install.sh[/dim]\n")
-    _run_command(["./install.sh"], cwd=str(temp_clone_dir), timeout=600)
+    console.print("[cyan]Running install script with --no-tappas-required...[/cyan]")
+    console.print("[dim]This will create the environment and install dependencies[/dim]")
+    console.print(f"[dim]$ cd {temp_clone_dir} && ./install.sh --no-tappas-required[/dim]\n")
+    _run_command(["./install.sh", "--no-tappas-required"], cwd=str(temp_clone_dir), timeout=600)
     console.print("[green]Install script complete.[/green]\n")
 
-    temp_venv_dir = temp_clone_dir / "venv_hailo_rpi_examples"
+    temp_venv_dir = temp_clone_dir / "venv_hailo_apps"
     if not temp_venv_dir.exists():
-        raise FileNotFoundError(f"venv not found at {temp_venv_dir}")
+        # Try old name as fallback
+        temp_venv_dir = temp_clone_dir / "venv_hailo_rpi_examples"
+        if not temp_venv_dir.exists():
+            raise FileNotFoundError(f"venv not found at {temp_clone_dir}/venv_hailo_*")
 
     console.print(f"[cyan]Moving Hailo environment to {hailo_venv_dir}...[/cyan]")
     hailo_venv_dir.parent.mkdir(parents=True, exist_ok=True)

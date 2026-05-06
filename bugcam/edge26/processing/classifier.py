@@ -15,17 +15,25 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 import requests
-from hailo_platform import (
-    HEF,
-    ConfigureParams,
-    FormatType,
-    HailoSchedulingAlgorithm,
-    HailoStreamInterface,
-    InferVStreams,
-    InputVStreamParams,
-    OutputVStreamParams,
-    VDevice,
-)
+
+try:
+    from hailo_platform import (
+        HEF,
+        ConfigureParams,
+        FormatType,
+        HailoSchedulingAlgorithm,
+        HailoStreamInterface,
+        InferVStreams,
+        InputVStreamParams,
+        OutputVStreamParams,
+        VDevice,
+    )
+except ImportError as e:
+    raise ImportError(
+        "hailo_platform module not found. This is a system-level dependency for Hailo AI accelerators. "
+        "On Raspberry Pi OS, install it with: sudo apt install python3-hailo-tappas. "
+        "For other platforms, follow Hailo's installation guide: https://hailo.ai/developer-zone/"
+    ) from e
 
 logger = logging.getLogger(__name__)
 
