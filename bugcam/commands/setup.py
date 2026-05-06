@@ -59,30 +59,30 @@ def _is_hailo_platform_available() -> bool:
         return False
 
 
-def _check_sudo_access() -> bool:
-    """Check if passwordless sudo is available."""
-    try:
-        result = subprocess.run(
-            ["sudo", "-n", "true"],
-            capture_output=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+def _create_hailo_venv_with_system_packages(venv_dir: Path) -> None:
+    """Create a venv that can access system site-packages via .pth file."""
+    if venv_dir.exists():
+        console.print(f"[dim]Removing existing {venv_dir}...[/dim]")
+        shutil.rmtree(venv_dir)
+
+    console.print(f"[cyan]Creating Hailo venv at {venv_dir}...[/cyan]")
+    venv_dir.parent.mkdir(parents=True, exist_ok=True)
+    _run_command([sys.executable, "-m", "venv", str(venv_dir)], timeout=60)
+
+    # Add .pth file to access system packages (where hailo_platform is installed)
+    site_packages = list(venv_dir.glob("lib/python*/site-packages"))[0]
+    pth_file = site_packages / "system-packages.pth"
+    system_packages_path = "/usr/lib/python3/dist-packages"
+    pth_file.write_text(system_packages_path + "\n")
+    console.print(f"[green]Created {pth_file} pointing to {system_packages_path}[/green]")
 
 
-def _check_hailo_post_install() -> bool:
-    """Check if hailo-post-install is available in PATH."""
-    try:
-        result = subprocess.run(
-            ["which", "hailo-post-install"],
-            capture_output=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+def _install_hailo_apps(python_exe: str) -> None:
+    """Install hailo-apps in the venv."""
+    console.print("[cyan]Installing hailo-apps...[/cyan]")
+    cmd = [python_exe, "-m", "pip", "install", HAILO_APPS_INFRA_URL]
+    console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
+    _run_command(cmd, timeout=300)
 
 
 def _run_command(cmd: list[str], *, cwd: str | None = None, timeout: int) -> None:
@@ -92,90 +92,81 @@ def _run_command(cmd: list[str], *, cwd: str | None = None, timeout: int) -> Non
 
 
 def _install_hailo_environment() -> None:
-    # Skip if system already has hailo_platform (e.g., via apt)
-    if _is_hailo_platform_available():
-        console.print("[green]hailo_platform found in system Python. Using system Hailo packages.[/green]")
-        python_exe = get_python_for_detection()
-        if check_import(python_exe, "hailo_apps"):
-            console.print("[green]Hailo setup already complete[/green]\n")
-            return
-
+    """Set up Hailo environment using system packages (TAPPAS 5.x compatible)."""
     hailo_venv_dir = get_hailo_venv_dir()
+    python_exe = get_python_for_detection()
 
-    if hailo_venv_dir.exists():
-        console.print(f"[green]Found Hailo environment at {hailo_venv_dir}[/green]\n")
+    # Check if already properly set up
+    if check_import(python_exe, "hailo_platform") and check_import(python_exe, "hailo_apps"):
+        console.print("[green]Hailo setup already complete[/green]\n")
+        return
+
+    # If system has hailo_platform, create venv with system packages access
+    if _is_hailo_platform_available():
+        console.print("[green]hailo_platform found in system Python.[/green]")
+        console.print("[cyan]Creating Hailo venv with system packages access...[/cyan]")
+
+        _create_hailo_venv_with_system_packages(hailo_venv_dir)
         python_exe = get_python_for_detection()
-        if check_import(python_exe, "hailo_apps"):
-            console.print("[green]Hailo setup already complete[/green]\n")
+
+        # Install hailo_apps in the venv
+        if not check_import(python_exe, "hailo_apps"):
+            _install_hailo_apps(python_exe)
+
+        # Verify both packages are importable
+        if check_import(python_exe, "hailo_platform") and check_import(python_exe, "hailo_apps"):
+            console.print("[green]Hailo setup complete[/green]\n")
             return
+        else:
+            console.print("[yellow]Warning: hailo_platform or hailo_apps still not importable[/yellow]")
 
-    # Check sudo access before running install.sh (which requires sudo internally)
-    if not _check_sudo_access():
-        console.print("[yellow]Passwordless sudo required for Hailo installation.[/yellow]")
-        console.print(f"[yellow]Enable it with: echo '$USER ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/$USER[/yellow]")
-        console.print("[yellow]Then re-run bugcam setup, or install Hailo packages manually.[/yellow]")
-        raise RuntimeError("Sudo access required for Hailo installation")
+    # Fallback: Try the old method with install script (for TAPPAS 3.x systems)
+    console.print("[yellow]System packages method failed. Trying install script...[/yellow]")
 
-    # Check for hailo-post-install binary
-    if not _check_hailo_post_install():
-        console.print("[yellow]Warning: hailo-post-install not found in PATH.[/yellow]")
-        console.print("[yellow]The install script may fail. It should be provided by hailo-tappas-core.[/yellow]")
-        console.print("[yellow]Continuing anyway...[/yellow]")
+    if not hailo_venv_dir.exists():
+        temp_clone_dir = Path("/tmp/hailo-rpi5-examples-setup")
+        if temp_clone_dir.exists():
+            console.print("[yellow]Removing existing temp directory...[/yellow]")
+            shutil.rmtree(temp_clone_dir)
 
-    temp_clone_dir = Path("/tmp/hailo-rpi5-examples-setup")
-    if temp_clone_dir.exists():
-        console.print("[yellow]Removing existing temp directory...[/yellow]")
-        shutil.rmtree(temp_clone_dir)
+        console.print("[cyan]Cloning hailo-apps (shallow clone)...[/cyan]")
+        console.print(f"[dim]$ git clone --depth 1 {HAILO_RPI5_EXAMPLES_URL} {temp_clone_dir}[/dim]\n")
+        _run_command(["git", "clone", "--depth", "1", HAILO_RPI5_EXAMPLES_URL, str(temp_clone_dir)], timeout=120)
+        console.print("[green]Clone complete.[/green]\n")
 
-    console.print("[cyan]Cloning hailo-apps (shallow clone)...[/cyan]")
-    console.print(f"[dim]$ git clone --depth 1 {HAILO_RPI5_EXAMPLES_URL} {temp_clone_dir}[/dim]\n")
-    _run_command(["git", "clone", "--depth", "1", HAILO_RPI5_EXAMPLES_URL, str(temp_clone_dir)], timeout=120)
-    console.print("[green]Clone complete.[/green]\n")
+        install_script = temp_clone_dir / "install.sh"
+        if not install_script.exists():
+            raise FileNotFoundError(f"install.sh not found at {install_script}")
 
-    install_script = temp_clone_dir / "install.sh"
-    if not install_script.exists():
-        raise FileNotFoundError(f"install.sh not found at {install_script}")
+        console.print("[cyan]Running install script with --no-tappas-required...[/cyan]")
+        console.print(f"[dim]$ cd {temp_clone_dir} && ./install.sh --no-tappas-required[/dim]\n")
+        try:
+            _run_command(["sudo", "./install.sh", "--no-tappas-required"], cwd=str(temp_clone_dir), timeout=600)
+        except RuntimeError:
+            # Try without sudo as fallback
+            _run_command(["./install.sh", "--no-tappas-required"], cwd=str(temp_clone_dir), timeout=600)
+        console.print("[green]Install script complete.[/green]\n")
 
-    console.print("[cyan]Running install script with --no-tappas-required...[/cyan]")
-    console.print("[dim]This will create the environment and install dependencies[/dim]")
-    console.print(f"[dim]$ cd {temp_clone_dir} && ./install.sh --no-tappas-required[/dim]\n")
-    _run_command(["./install.sh", "--no-tappas-required"], cwd=str(temp_clone_dir), timeout=600)
-    console.print("[green]Install script complete.[/green]\n")
-
-    temp_venv_dir = temp_clone_dir / "venv_hailo_apps"
-    if not temp_venv_dir.exists():
-        # Try old name as fallback
-        temp_venv_dir = temp_clone_dir / "venv_hailo_rpi_examples"
+        temp_venv_dir = temp_clone_dir / "venv_hailo_apps"
         if not temp_venv_dir.exists():
-            raise FileNotFoundError(f"venv not found at {temp_clone_dir}/venv_hailo_*")
+            temp_venv_dir = temp_clone_dir / "venv_hailo_rpi_examples"
+            if not temp_venv_dir.exists():
+                raise FileNotFoundError(f"venv not found at {temp_clone_dir}/venv_hailo_*")
 
-    console.print(f"[cyan]Moving Hailo environment to {hailo_venv_dir}...[/cyan]")
-    hailo_venv_dir.parent.mkdir(parents=True, exist_ok=True)
-    if hailo_venv_dir.exists():
-        shutil.rmtree(hailo_venv_dir)
-    shutil.move(str(temp_venv_dir), str(hailo_venv_dir))
-    console.print("[green]Hailo environment moved.[/green]\n")
+        console.print(f"[cyan]Moving Hailo environment to {hailo_venv_dir}...[/cyan]")
+        hailo_venv_dir.parent.mkdir(parents=True, exist_ok=True)
+        if hailo_venv_dir.exists():
+            shutil.rmtree(hailo_venv_dir)
+        shutil.move(str(temp_venv_dir), str(hailo_venv_dir))
+        console.print("[green]Hailo environment moved.[/green]\n")
+
+        if temp_clone_dir.exists():
+            shutil.rmtree(temp_clone_dir)
 
     python_exe = get_python_for_detection()
-    console.print("[cyan]Verifying hailo_apps installation...[/cyan]")
-    if not check_import(python_exe, "hailo_apps"):
-        console.print("[yellow]hailo_apps: Not found, attempting to install...[/yellow]\n")
-        is_venv = python_exe != "/usr/bin/python3"
-        if is_venv:
-            cmd = [python_exe, "-m", "pip", "install", HAILO_APPS_INFRA_URL]
-        else:
-            cmd = [python_exe, "-m", "pip", "install", "--user", "--break-system-packages", HAILO_APPS_INFRA_URL]
-        console.print(f"[dim]$ {' '.join(cmd)}[/dim]\n")
-        _run_command(cmd, timeout=300)
-
     if not check_import(python_exe, "hailo_apps"):
         raise RuntimeError("hailo_apps installation verification failed")
-    console.print("[green]hailo_apps: OK[/green]")
-
-    if temp_clone_dir.exists():
-        console.print("[cyan]Cleaning up temporary files...[/cyan]")
-        shutil.rmtree(temp_clone_dir)
-        console.print("[green]Cleanup complete.[/green]\n")
+    console.print("[green]Hailo setup complete[/green]\n")
 
 
 def _existing_flick_id(existing_config: dict[str, Any]) -> str:
