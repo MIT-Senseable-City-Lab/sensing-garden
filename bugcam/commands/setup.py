@@ -208,20 +208,23 @@ def _detect_external_drives() -> list[str]:
 
 def _prompt_storage_paths(existing_config: dict[str, Any], external_drives: list[str]) -> dict[str, str]:
     """Prompt user for storage paths, offering external drives if found."""
+    # State dir ALWAYS stays on local filesystem for proper permissions
     default_state = str(existing_config.get("state_dir") or "~/.local/share/bugcam")
-    default_input = str(existing_config.get("input_dir") or str(Path(default_state) / "incoming"))
-    default_output = str(existing_config.get("output_dir") or str(Path(default_state) / "outputs"))
-    default_pending = str(existing_config.get("pending_dir") or str(Path(default_state) / "pending"))
 
+    # Storage dirs can be on external drive
+    default_input = str(existing_config.get("input_dir") or str(Path.home() / "bugcam" / "incoming"))
+    default_output = str(existing_config.get("output_dir") or str(Path.home() / "bugcam" / "outputs"))
+    default_pending = str(existing_config.get("pending_dir") or str(Path.home() / "bugcam" / "pending"))
+
+    # Ask about external drive ONLY for storage dirs (input/output/pending)
     use_external = False
     if external_drives:
         if len(external_drives) == 1:
             drive = external_drives[0]
             console.print(f"\n[cyan]External drive detected:[/cyan] {drive}")
-            if typer.confirm(f"Use external drive for storage?", default=True):
+            if typer.confirm(f"Use external drive for video storage?", default=True):
                 use_external = True
                 base = f"{drive}/bugcam"
-                default_state = base + "/state"
                 default_input = base + "/incoming"
                 default_output = base + "/outputs"
                 default_pending = base + "/pending"
@@ -229,7 +232,7 @@ def _prompt_storage_paths(existing_config: dict[str, Any], external_drives: list
             console.print(f"\n[cyan]External drives detected:[/cyan]")
             for i, drive in enumerate(external_drives, 1):
                 console.print(f"  {i}. {drive}")
-            if typer.confirm("Use an external drive for storage?", default=True):
+            if typer.confirm("Use an external drive for video storage?", default=True):
                 use_external = True
                 if len(external_drives) == 1:
                     drive = external_drives[0]
@@ -237,12 +240,12 @@ def _prompt_storage_paths(existing_config: dict[str, Any], external_drives: list
                     choice = typer.prompt("Select drive (enter number)", type=int, default=1)
                     drive = external_drives[choice - 1]
                 base = f"{drive}/bugcam"
-                default_state = base + "/state"
                 default_input = base + "/incoming"
                 default_output = base + "/outputs"
                 default_pending = base + "/pending"
 
     console.print("\n[dim]Storage paths (press Enter for defaults):[/dim]")
+    console.print("[yellow]Note: State directory should stay on local filesystem for proper permissions[/yellow]")
     state_dir = typer.prompt("State directory", default=default_state)
     input_dir = typer.prompt("Input directory", default=default_input)
     output_dir = typer.prompt("Output directory", default=default_output)

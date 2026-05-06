@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
+
+console = Console()
+
 
 DEFAULT_API_URL = "https://api.sensinggarden.com/v1"
 DEFAULT_S3_BUCKET = "scl-sensing-garden"
@@ -74,15 +78,27 @@ def get_cache_dir() -> Path:
     return Path.home() / ".cache" / "bugcam"
 
 
+def _validate_state_dir(path: Path) -> None:
+    """Warn if state_dir appears to be on external drive."""
+    path_str = str(path)
+    if "/media/" in path_str or "/mnt/" in path_str:
+        console.print("[yellow]Warning: State directory is on external drive. This may cause permission issues.[/yellow]")
+        console.print("[yellow]Consider using local filesystem: ~/.local/share/bugcam[/yellow]")
+
+
 def get_state_dir() -> Path:
     """Get the state directory for bugcam, respecting config and environment."""
     state_dir = os.environ.get("BUGCAM_STATE_DIR")
     if state_dir:
-        return Path(state_dir)
+        path = Path(state_dir)
+        _validate_state_dir(path)
+        return path
 
     config = load_config()
     if config.get("state_dir"):
-        return Path(str(config["state_dir"]))
+        path = Path(str(config["state_dir"]))
+        _validate_state_dir(path)
+        return path
 
     xdg_data = os.environ.get("XDG_DATA_HOME")
     if xdg_data:
