@@ -1,3 +1,32 @@
+"""BugCam CLI - entry point."""
+import sys
+import site
+
+
+def _ensure_system_packages_access():
+    """Make system dist-packages importable before importing commands.
+
+    System packages like hailo_platform (installed via apt) may not be
+    in the Python path when running from a virtual environment (e.g., pipx).
+    This function ensures they are accessible.
+    """
+    system_dist_packages = "/usr/lib/python3/dist-packages"
+
+    # Check if hailo_platform is already importable
+    try:
+        import hailo_platform  # noqa: F401
+        return  # Already works
+    except ImportError:
+        pass
+
+    # Add system dist-packages to path
+    if system_dist_packages not in sys.path:
+        site.addsitedir(system_dist_packages)
+
+
+# Ensure system packages are accessible BEFORE importing commands
+_ensure_system_packages_access()
+
 import typer
 from rich.console import Console
 from bugcam import __version__

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import platform
 import shutil
+import site
 import subprocess
 import sys
 from pathlib import Path
@@ -89,6 +90,37 @@ def _run_command(cmd: list[str], *, cwd: str | None = None, timeout: int) -> Non
     result = subprocess.run(cmd, cwd=cwd, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError(f"Command failed: {' '.join(cmd)}")
+
+
+def _ensure_pipx_venv_system_access() -> None:
+    """Create .pth file in current venv to access system dist-packages.
+
+    When bugcam is installed via pipx, the venv doesn't have access to
+    system packages like hailo_platform (installed via apt). This creates
+    a .pth file to bridge that gap.
+    """
+    system_dist_packages = "/usr/lib/python3/dist-packages"
+
+    # Find the site-packages directory of the current Python
+    site_packages_dirs = site.getsitepackages()
+    if not site_packages_dirs:
+        return
+
+    site_packages = Path(site_packages_dirs[0])
+    if not site_packages.exists():
+        return
+
+    pth_file = site_packages / "system-packages.pth"
+
+    # Check if already configured
+    if pth_file.exists():
+        content = pth_file.read_text().strip()
+        if system_dist_packages in content.split("\n"):
+            console.print("[dim]System packages access already configured[/dim]")
+            return
+
+    pth_file.write_text(system_dist_packages + "\n")
+    console.print(f"[green]Created {pth_file} for system packages access[/green]")
 
 
 def _install_hailo_environment() -> None:
@@ -407,6 +439,9 @@ def setup() -> None:
         raise typer.Exit(1)
 
     try:
+        # Ensure system packages (like hailo_platform) are accessible
+        _ensure_pipx_venv_system_access()
+
         _install_hailo_environment()
         existing_config = load_config()
         did_register = False
