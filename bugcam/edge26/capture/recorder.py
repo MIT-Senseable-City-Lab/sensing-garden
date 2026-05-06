@@ -132,9 +132,8 @@ class VideoRecorder:
         self.camera = Picamera2()
         
         # Create requested video config and read final applied resolution
+        # Picamera2 "RGB888" outputs BGR order [B,G,R] which matches OpenCV expectation.
         config = self.camera.create_video_configuration(
-            # Request a deterministic 3-channel format and convert to BGR
-            # before handing frames to OpenCV's VideoWriter.
             main={"size": self.requested_resolution, "format": "RGB888"}
         )
         self.camera.configure(config)
@@ -189,13 +188,17 @@ class VideoRecorder:
         logger.info("Camera released")
 
     def _prepare_frame_for_writer(self, frame: np.ndarray) -> np.ndarray:
-        """Convert camera frames to a BGR layout compatible with OpenCV."""
+        """Convert camera frames to a BGR layout compatible with OpenCV.
+        
+        Picamera2 "RGB888" format outputs [B,G,R] (BGR order) which is what
+        OpenCV VideoWriter expects, so no conversion is needed for 3-channel frames.
+        """
         if not self.use_picamera:
             return frame
         if frame.ndim != 3:
             raise ValueError(f"Unexpected PiCamera frame shape: {frame.shape}")
         if frame.shape[2] == 3:
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            return frame  # RGB888 outputs BGR order, matching OpenCV's expectation
         if frame.shape[2] == 4:
             return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
         raise ValueError(f"Unexpected PiCamera channel count: {frame.shape}")
