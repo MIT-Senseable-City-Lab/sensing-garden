@@ -40,6 +40,7 @@ def build_pipeline(
     enable_processing: bool = True,
     enable_classification: bool = True,
     continuous_tracking: bool = True,
+    detection_config_path: Path | None = None,
 ) -> Pipeline:
     """Create a configured edge26 pipeline instance."""
     model_path, labels_path = resolve_model_assets(model_reference)
@@ -52,8 +53,8 @@ def build_pipeline(
         model_path=str(model_path),
         labels_path=str(labels_path),
         recording_mode=recording_mode,
-        recording_interval=recording_interval,
-        chunk_duration=chunk_duration,
+        recording_interval_minutes=recording_interval,
+        chunk_duration_seconds=chunk_duration,
         fps=fps,
         resolution=resolution,
         enable_recording=enable_recording,
@@ -61,6 +62,7 @@ def build_pipeline(
         enable_classification=enable_classification,
         continuous_tracking=continuous_tracking,
         model_metadata=provenance,
+        detection_config_path=detection_config_path,
     )
     setup_logging(Path(config["paths"]["logs_dir"]))
     return Pipeline(config)

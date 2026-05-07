@@ -22,6 +22,7 @@ def process(
     flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     classification: bool = typer.Option(True, "--classification/--no-classification", help="Enable classification"),
     continuous_tracking: bool = typer.Option(True, "--continuous-tracking/--no-continuous-tracking", help="Track insects across FLICK chunks"),
+    detection_config: Path | None = typer.Option(None, "--detection-config", help="Path to detection config YAML file"),
 ) -> None:
     """Process existing files without recording."""
     device_config = load_device_config()
@@ -41,6 +42,7 @@ def process(
         enable_processing=True,
         enable_classification=classification,
         continuous_tracking=continuous_tracking,
+        detection_config_path=detection_config,
     )
     pipeline.start()
     pipeline.wait()

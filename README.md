@@ -65,6 +65,7 @@ bugcam run
 | `--interval` | `5` | Minutes between recordings (interval mode) |
 | `--chunk-duration` | `60` | Length of each recorded chunk in seconds |
 | `--model` | (from config) | Model bundle name or model.hef path |
+| `--detection-config` | (bundled) | Path to custom detection config YAML |
 
 ## Architecture
 
@@ -92,6 +93,50 @@ Config file: `~/.config/bugcam/config.json`
 | `pending_dir` | Classification queue directory |
 
 Models are stored in `~/.cache/bugcam/models/<bundle>/` (each bundle contains `model.hef` + `labels.txt`).
+
+## Detection Configuration
+
+bugcam ships with default detection parameters in `bugcam/detection.yaml` (bundled with the package). These values control motion detection, blob filtering, and insect tracking behavior.
+
+### Using Custom Detection Config
+```bash
+# Use custom config with run command
+bugcam run --detection-config /path/to/custom.yaml
+
+# Use custom config with process command
+bugcam process --detection-config /path/to/custom.yaml
+```
+
+If no `--detection-config` is specified, the bundled default is used.
+
+### Detection Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `gmm_history` | 500 | Background subtractor history length |
+| `gmm_var_threshold` | 16 | GMM variance threshold |
+| `morph_kernel_size` | 5 | Morphological filter kernel size (pixels) |
+| `min_area` | 0.00012 | Min detection area (fraction of 4K frame, ~995 px²) |
+| `max_area` | 0.0015 | Max detection area (fraction of 4K frame, ~12,440 px²) |
+| `min_density` | 3.0 | Min blob density (area/perimeter) |
+| `min_solidity` | 0.55 | Min convex hull fill ratio |
+| `min_largest_blob_ratio` | 0.85 | Min ratio of largest blob to total motion |
+| `max_num_blobs` | 3 | Max number of motion blobs to consider |
+| `min_motion_ratio` | 0.20 | Min ratio of motion pixels to frame |
+| `min_displacement` | 0.25 | Min net path displacement (fraction of frame width) |
+| `min_path_points` | 10 | Min number of path points for valid track |
+| `max_frame_jump` | 0.06 | Max single-step centroid jump (fraction of frame width) |
+| `max_lost_frames` | 45 | Max frames a track can be lost before finalizing |
+| `max_area_change_ratio` | 3.0 | Max allowed area change between frames |
+| `tracker_w_dist` | 0.6 | Distance weight for Hungarian tracker matching |
+| `tracker_w_area` | 0.4 | Area weight for Hungarian tracker matching |
+| `tracker_cost_threshold` | 0.25 | Max cost threshold for tracker matching |
+| `revisit_radius` | 0.025 | Radius for detecting path revisits (fraction of frame width) |
+| `max_revisit_ratio` | 0.30 | Max ratio of path points that are revisits |
+| `min_progression_ratio` | 0.70 | Min ratio of path moving forward vs backward |
+| `max_directional_variance` | 0.85 | Max variance in path direction |
+
+For more details on these parameters, see the comments in `bugcam/detection.yaml`.
 
 ## Storage Configuration
 
