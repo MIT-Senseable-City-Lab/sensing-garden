@@ -70,12 +70,65 @@ def _create_hailo_venv_with_system_packages(venv_dir: Path) -> None:
     venv_dir.parent.mkdir(parents=True, exist_ok=True)
     _run_command([sys.executable, "-m", "venv", str(venv_dir)], timeout=60)
 
+    # Find site-packages directory reliably
+    site_packages_dirs = list(venv_dir.glob("lib/python*/site-packages"))
+    if not site_packages_dirs:
+        # Fallback: use Python to find site-packages
+        try:
+            result = subprocess.run(
+                [str(venv_dir / "bin" / "python"), "-c",
+                 "import site; print(site.getsitepackages()[0])"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                site_packages = Path(result.stdout.strip())
+            else:
+                raise RuntimeError(f"Could not find site-packages in {venv_dir}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to find site-packages: {e}")
+    else:
+        site_packages = site_packages_dirs[0]
+
+    # Ensure directory exists
+    site_packages.mkdir(parents=True, exist_ok=True)
+
     # Add .pth file to access system packages (where hailo_platform is installed)
-    site_packages = list(venv_dir.glob("lib/python*/site-packages"))[0]
     pth_file = site_packages / "system-packages.pth"
     system_packages_path = "/usr/lib/python3/dist-packages"
     pth_file.write_text(system_packages_path + "\n")
+
+    # Verify the file was created
+    if not pth_file.exists():
+        raise RuntimeError(f"Failed to create {pth_file}")
+
     console.print(f"[green]Created {pth_file} pointing to {system_packages_path}[/green]")
+
+
+def _ensure_hailo_venv_system_access(hailo_venv_dir: Path) -> None:
+    """Ensure the hailo-venv has system packages access via .pth file."""
+    if not hailo_venv_dir.exists():
+        return  # Will be created by _create_hailo_venv_with_system_packages()
+
+    # Find site-packages directory
+    site_packages_dirs = list(hailo_venv_dir.glob("lib/python*/site-packages"))
+    if not site_packages_dirs:
+        console.print("[yellow]Warning: Could not find site-packages in hailo-venv[/yellow]")
+        return
+
+    site_packages = site_packages_dirs[0]
+    pth_file = site_packages / "system-packages.pth"
+    system_packages_path = "/usr/lib/python3/dist-packages"
+
+    # Check if already configured
+    if pth_file.exists():
+        content = pth_file.read_text().strip()
+        if system_packages_path in content.split("\n"):
+            return  # Already configured
+
+    # Create or update the .pth file
+    site_packages.mkdir(parents=True, exist_ok=True)
+    pth_file.write_text(system_packages_path + "\n")
+    console.print(f"[green]Updated {pth_file} for system packages access[/green]")
 
 
 def _install_hailo_apps(python_exe: str) -> None:
@@ -126,6 +179,10 @@ def _ensure_pipx_venv_system_access() -> None:
 def _install_hailo_environment() -> None:
     """Set up Hailo environment using system packages (TAPPAS 5.x compatible)."""
     hailo_venv_dir = get_hailo_venv_dir()
+
+    # Always ensure hailo-venv has system packages access
+    _ensure_hailo_venv_system_access(hailo_venv_dir)
+
     python_exe = get_python_for_detection()
 
     # Check if already properly set up
@@ -139,6 +196,7 @@ def _install_hailo_environment() -> None:
         console.print("[cyan]Creating Hailo venv with system packages access...[/cyan]")
 
         _create_hailo_venv_with_system_packages(hailo_venv_dir)
+        _ensure_hailo_venv_system_access(hailo_venv_dir)  # Double-check
         python_exe = get_python_for_detection()
 
         # Install hailo_apps in the venv
