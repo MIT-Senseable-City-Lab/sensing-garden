@@ -1,10 +1,14 @@
 """BugCam edge26 configuration bridge."""
 from __future__ import annotations
 
+import os
+import yaml
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from .config import (
+    get_config_path,
     get_edge26_taxonomy_cache_path,
 )
 from .model_bundles import sha256_file
@@ -41,6 +45,90 @@ EDGE26_TRACKING_DEFAULTS = {
     "max_lost_frames": 45,
 }
 
+DETECTION_KEYS = set(EDGE26_DETECTION_DEFAULTS.keys())
+TRACKING_KEYS = set(EDGE26_TRACKING_DEFAULTS.keys())
+
+YAML_TO_CONFIG_KEYS = {
+    "tracker_w_dist": "w_dist",
+    "tracker_w_area": "w_area",
+    "tracker_cost_threshold": "cost_threshold",
+}
+
+
+def get_bundled_detection_config_path() -> Path | None:
+    """Get the path to the bundled detection.yaml in the package."""
+    try:
+        import bugcam
+        return Path(resources.files(bugcam) / "detection.yaml")
+    except (ModuleNotFoundError, FileNotFoundError):
+        return None
+
+
+def get_detection_config_path(custom_path: Path | None = None) -> Path | None:
+    """Get the detection config file path.
+
+    Priority:
+    1. Custom path provided via parameter (e.g., --detection-config CLI flag)
+    2. Bundled default: bugcam/detection.yaml in the package
+
+    Returns None if no config found (will use hardcoded defaults).
+    """
+    if custom_path:
+        return custom_path
+
+    if os.environ.get("BUGCAM_SKIP_DETECTION_CONFIG"):
+        return None
+
+    return get_bundled_detection_config_path()
+
+
+def load_detection_config(
+    config_path: Path | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Load detection and tracking config from a YAML file.
+
+    Args:
+        config_path: Path to the YAML config file. If None, checks default location.
+
+    Returns:
+        Tuple of (detection_dict, tracking_dict) if config loaded, None otherwise.
+
+    Raises:
+        FileNotFoundError: If specified config file doesn't exist.
+        ValueError: If YAML contains unknown keys.
+    """
+    if config_path is None:
+        config_path = get_detection_config_path()
+
+    if config_path is None or not config_path.exists():
+        return None
+
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not data:
+        return None
+
+    detection = {}
+    tracking = {}
+
+    for yaml_key, value in data.items():
+        if yaml_key in YAML_TO_CONFIG_KEYS:
+            config_key = YAML_TO_CONFIG_KEYS[yaml_key]
+            if config_key in TRACKING_KEYS:
+                tracking[config_key] = value
+            else:
+                detection[config_key] = value
+        elif yaml_key in DETECTION_KEYS:
+            detection[yaml_key] = value
+        elif yaml_key in TRACKING_KEYS:
+            tracking[yaml_key] = value
+        else:
+            valid_keys = sorted(DETECTION_KEYS | TRACKING_KEYS | set(YAML_TO_CONFIG_KEYS.keys()))
+            raise ValueError(
+                f"Unknown key '{yaml_key}' in detection config. Valid keys: {valid_keys}"
+            )
+
+    return detection, tracking
+
 
 def parse_capture_resolution(value: str) -> tuple[int, int]:
     """Parse a capture resolution in WxH format."""
@@ -74,9 +162,21 @@ def build_edge26_config(
     enable_classification: bool = True,
     continuous_tracking: bool = True,
     model_metadata: dict[str, Any] | None = None,
+    detection_config_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build the edge26 pipeline config from BugCam-owned settings."""
     results_dir = Path(output_dir)
+
+    config_path = get_detection_config_path(detection_config_path)
+    loaded_config = load_detection_config(config_path)
+    if loaded_config:
+        detection_overrides, tracking_overrides = loaded_config
+        detection_config = detection_overrides
+        tracking_config = tracking_overrides
+    else:
+        detection_config = dict(EDGE26_DETECTION_DEFAULTS)
+        tracking_config = dict(EDGE26_TRACKING_DEFAULTS)
+
     return {
         "device": {
             "flick_id": flick_id,
@@ -101,8 +201,8 @@ def build_edge26_config(
             "chunk_duration_seconds": chunk_duration,
             "resolution": list(resolution),
         },
-        "detection": dict(EDGE26_DETECTION_DEFAULTS),
-        "tracking": dict(EDGE26_TRACKING_DEFAULTS),
+        "detection": detection_config,
+        "tracking": tracking_config,
         "classification": {
             "model": model_path,
             "labels": labels_path,
