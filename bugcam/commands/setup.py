@@ -70,23 +70,22 @@ def _create_hailo_venv_with_system_packages(venv_dir: Path) -> None:
     venv_dir.parent.mkdir(parents=True, exist_ok=True)
     _run_command([sys.executable, "-m", "venv", str(venv_dir)], timeout=60)
 
-    # Find site-packages directory reliably
-    site_packages_dirs = list(venv_dir.glob("lib/python*/site-packages"))
-    if not site_packages_dirs:
-        # Fallback: use Python to find site-packages
-        try:
-            result = subprocess.run(
-                [str(venv_dir / "bin" / "python"), "-c",
-                 "import site; print(site.getsitepackages()[0])"],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0:
-                site_packages = Path(result.stdout.strip())
-            else:
-                raise RuntimeError(f"Could not find site-packages in {venv_dir}")
-        except Exception as e:
-            raise RuntimeError(f"Failed to find site-packages: {e}")
-    else:
+    # Use Python in the venv to find site-packages (most reliable method)
+    python_exe = str(venv_dir / "bin" / "python")
+    try:
+        result = subprocess.run(
+            [python_exe, "-c", "import site; print(site.getsitepackages()[0])"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to get site-packages: {result.stderr}")
+        site_packages = Path(result.stdout.strip())
+    except Exception as e:
+        # Fallback to glob
+        console.print(f"[yellow]Fallback: {e}[/yellow]")
+        site_packages_dirs = list(venv_dir.glob("lib/python*/site-packages"))
+        if not site_packages_dirs:
+            raise RuntimeError(f"Could not find site-packages in {venv_dir}")
         site_packages = site_packages_dirs[0]
 
     # Ensure directory exists
@@ -95,6 +94,14 @@ def _create_hailo_venv_with_system_packages(venv_dir: Path) -> None:
     # Add .pth file to access system packages (where hailo_platform is installed)
     pth_file = site_packages / "system-packages.pth"
     system_packages_path = "/usr/lib/python3/dist-packages"
+    
+    # Only write if not already configured
+    if pth_file.exists():
+        content = pth_file.read_text().strip()
+        if system_packages_path in content.split("\n"):
+            console.print(f"[dim]{pth_file} already configured[/dim]")
+            return
+
     pth_file.write_text(system_packages_path + "\n")
 
     # Verify the file was created
@@ -109,13 +116,25 @@ def _ensure_hailo_venv_system_access(hailo_venv_dir: Path) -> None:
     if not hailo_venv_dir.exists():
         return  # Will be created by _create_hailo_venv_with_system_packages()
 
-    # Find site-packages directory
-    site_packages_dirs = list(hailo_venv_dir.glob("lib/python*/site-packages"))
-    if not site_packages_dirs:
-        console.print("[yellow]Warning: Could not find site-packages in hailo-venv[/yellow]")
-        return
+    # Use Python in the venv to find site-packages (most reliable method)
+    python_exe = str(hailo_venv_dir / "bin" / "python")
+    try:
+        result = subprocess.run(
+            [python_exe, "-c", "import site; print(site.getsitepackages()[0])"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            console.print("[yellow]Warning: Could not find site-packages in hailo-venv[/yellow]")
+            return
+        site_packages = Path(result.stdout.strip())
+    except Exception:
+        # Fallback to glob
+        site_packages_dirs = list(hailo_venv_dir.glob("lib/python*/site-packages"))
+        if not site_packages_dirs:
+            console.print("[yellow]Warning: Could not find site-packages in hailo-venv[/yellow]")
+            return
+        site_packages = site_packages_dirs[0]
 
-    site_packages = site_packages_dirs[0]
     pth_file = site_packages / "system-packages.pth"
     system_packages_path = "/usr/lib/python3/dist-packages"
 
