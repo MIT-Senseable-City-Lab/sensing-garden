@@ -83,8 +83,8 @@ def upload_bytes(api_url: str, api_key: str, data: bytes, s3_key: str, content_t
 def upload_file(api_url: str, api_key: str, local_path: Path, s3_key: str) -> None:
     """Upload one file through a presigned PUT URL."""
     upload_url = get_upload_url(api_url, api_key, s3_key)
-    with local_path.open("rb") as fh:
-        response = requests.put(upload_url, data=fh, timeout=UPLOAD_TIMEOUT_SECONDS)
+    data = local_path.read_bytes()
+    response = requests.put(upload_url, data=data, timeout=UPLOAD_TIMEOUT_SECONDS)
     if response.status_code == 429:
         retry_after = None
         if "Retry-After" in response.headers:
