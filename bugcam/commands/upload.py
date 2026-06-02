@@ -22,6 +22,7 @@ from bugcam.s3_upload import (
     UPLOADED_STATE_FILENAME,
     RateLimitError,
     upload_directory,
+    upload_directory_batch,
     upload_file,
     upload_manifest,
 )
