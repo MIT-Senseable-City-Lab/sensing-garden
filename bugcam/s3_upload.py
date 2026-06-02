@@ -116,3 +116,79 @@ def upload_manifest(api_url: str, api_key: str, flick_id: str, dot_ids: list[str
         {"flick_id": flick_id, "dot_ids": dot_ids},
         f"v1/{MANIFEST_FILENAME}",
     )
+
+def get_batch_upload_urls(api_url: str, api_key: str, s3_keys: list[str]) -> dict[str, str]:
+    """Request presigned PUT URLs for multiple keys in one call.
+    Returns a dict of {s3_key: upload_url}."""
+    response = requests.post(
+        f"{api_url.rstrip('/')}/upload-url/batch",
+        json={"s3_keys": s3_keys},
+        headers={"X-Api-Key": api_key},
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.status_code == 429:
+        retry_after = None
+        if "Retry-After" in response.headers:
+            try:
+                retry_after = int(response.headers["Retry-After"])
+            except (ValueError, TypeError):
+                pass
+        raise RateLimitError(retry_after=retry_after)
+    response.raise_for_status()
+    payload = response.json()
+    url_map: dict[str, str] = {}
+    for entry in payload.get("upload_urls", []):
+        key = entry.get("s3_key")
+        url = entry.get("upload_url")
+        if isinstance(key, str) and isinstance(url, str):
+            url_map[key] = url
+    return url_map
+
+
+def upload_bytes_to_url(upload_url: str, data: bytes, content_type: str) -> None:
+    """PUT bytes directly to a presigned URL (no auth header needed)."""
+    response = requests.put(
+        upload_url,
+        data=data,
+        headers={"Content-Type": content_type},
+        timeout=UPLOAD_TIMEOUT_SECONDS,
+    )
+    if response.status_code == 429:
+        retry_after = None
+        if "Retry-After" in response.headers:
+            try:
+                retry_after = int(response.headers["Retry-After"])
+            except (ValueError, TypeError):
+                pass
+        raise RateLimitError(retry_after=retry_after)
+    response.raise_for_status()
+
+
+BATCH_SIZE = 100  # max keys per batch URL request
+
+
+def upload_directory_batch(api_url: str, api_key: str, local_dir: Path, s3_prefix: str) -> None:
+    """Upload all files in local_dir using batched presigned URLs, with results.json last."""
+    files = _iter_upload_files(local_dir)
+    if not files:
+        return
+
+    # Build the full list of (local_path, s3_key) pairs
+    pairs = [
+        (local_path, f"{s3_prefix}/{local_path.relative_to(local_dir).as_posix()}")
+        for local_path in files
+    ]
+
+    # Fetch all presigned URLs in batches of BATCH_SIZE
+    url_map: dict[str, str] = {}
+    all_keys = [s3_key for _, s3_key in pairs]
+    for i in range(0, len(all_keys), BATCH_SIZE):
+        chunk = all_keys[i:i + BATCH_SIZE]
+        url_map.update(get_batch_upload_urls(api_url, api_key, chunk))
+
+    # Upload all files
+    for local_path, s3_key in pairs:
+        upload_url = url_map.get(s3_key)
+        if not upload_url:
+            raise ValueError(f"No upload URL returned for {s3_key}")
+        upload_bytes_to_url(upload_url, local_path.read_bytes(), "application/octet-stream")
