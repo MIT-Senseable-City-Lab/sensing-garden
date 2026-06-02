@@ -22,6 +22,7 @@ from bugcam.s3_upload import (
     UPLOADED_STATE_FILENAME,
     RateLimitError,
     upload_directory,
+    upload_directory_batch,
     upload_file,
     upload_manifest,
 )
@@ -287,7 +288,7 @@ def upload_ready_results(
         if not (results_dir / ".done").exists():
             continue
 
-        upload_directory(api_url, api_key, results_dir, s3_prefix)
+        upload_directory_batch(api_url, api_key, results_dir, s3_prefix)
         processed_count += 1
         if delete_after_upload:
             shutil.rmtree(results_dir)
