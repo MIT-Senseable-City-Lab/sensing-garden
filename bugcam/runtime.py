@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from bugcam.edge26 import Pipeline, setup_logging
 from bugcam.model_bundles import resolve_bundle_reference, resolve_model_path
@@ -26,47 +27,31 @@ def resolve_model_assets(model_reference: str) -> tuple[Path, Path]:
 
 
 def build_pipeline(
+    app_config: dict[str, Any],
+    *,
     flick_id: str,
     dot_ids: list[str],
     input_dir: Path,
     output_dir: Path,
     model_reference: str,
-    recording_mode: str = "continuous",
-    recording_interval: int = 5,
-    chunk_duration: int = 60,
-    fps: int = 30,
-    resolution: tuple[int, int] = (1080, 1080),
-    bitrate: int = 20_000_000,
-    enable_recording: bool = True,
-    enable_processing: bool = True,
-    enable_classification: bool = True,
-    continuous_tracking: bool = False,
-    detection_in_subprocess: bool = True,
-    detection_config_path: Path | None = None,
 ) -> Pipeline:
-    """Create a configured edge26 pipeline instance."""
+    """Create a configured edge26 pipeline from the resolved central config.
+
+    All capture/pipeline/detection/tracking values are read from
+    ``app_config`` (see :mod:`bugcam.app_config`). Callers overlay any
+    explicit overrides onto ``app_config`` before calling.
+    """
     model_path, labels_path = resolve_model_assets(model_reference)
     provenance = build_bundle_provenance(model_path, labels_path)
     config = build_edge26_config(
+        app_config,
         flick_id=flick_id,
         dot_ids=dot_ids,
         input_dir=str(input_dir),
         output_dir=str(output_dir),
         model_path=str(model_path),
         labels_path=str(labels_path),
-        recording_mode=recording_mode,
-        recording_interval=recording_interval,
-        chunk_duration=chunk_duration,
-        fps=fps,
-        resolution=resolution,
-        bitrate=bitrate,
-        enable_recording=enable_recording,
-        enable_processing=enable_processing,
-        enable_classification=enable_classification,
-        continuous_tracking=continuous_tracking,
-        detection_in_subprocess=detection_in_subprocess,
         model_metadata=provenance,
-        detection_config_path=detection_config_path,
     )
     setup_logging(Path(config["paths"]["logs_dir"]))
     return Pipeline(config)

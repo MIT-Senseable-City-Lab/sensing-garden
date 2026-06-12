@@ -18,7 +18,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
 ]
 packages = [{include = "bugcam"}]
-include = ["bugcam/sensors/sen55/*", "bugcam/detection.yaml"]
+include = ["bugcam/sensors/sen55/*", "bugcam/settings.yaml"]
 
 [tool.poetry.dependencies]
 python = "^3.11"

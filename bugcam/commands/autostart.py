@@ -7,7 +7,6 @@ import tempfile
 from pathlib import Path
 from rich.console import Console
 from typing import Optional
-from ..config import get_default_dot_ids, get_default_flick_id, get_input_storage_dir, get_output_storage_dir
 from ..runtime import select_model_reference
 from ..utils import handle_numpy_error
 
@@ -25,7 +24,7 @@ Type=simple
 User={user}
 Group=video
 WorkingDirectory={workdir}
-ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --resolution {resolution} --upload-poll {poll_interval}{delete_after_upload_arg}
+ExecStart={bugcam_path} run {run_args}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -108,6 +107,7 @@ def _write_service_file(service_path: Path, content: str) -> None:
 @app.command()
 def enable(
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use"),
+    settings: Optional[Path] = typer.Option(None, "--settings", help="Bugcam settings YAML; when set, run reads all settings from it"),
     recording_mode: str = typer.Option("continuous", "--recording-mode", help="Recording mode: continuous or interval"),
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
     length: int = typer.Option(60, "--length", "-l", help="Chunk duration in seconds"),
@@ -129,6 +129,15 @@ def enable(
         console.print(f"[red]Invalid recording mode: {recording_mode}[/red]")
         raise typer.Exit(1)
 
+    if settings is not None:
+        settings = settings.expanduser().resolve()
+        if not settings.exists():
+            console.print(f"[red]Error: settings file not found: {settings}[/red]")
+            raise typer.Exit(1)
+        if not _validate_path(settings):
+            console.print("[red]Error: Invalid settings path[/red]")
+            raise typer.Exit(1)
+
     try:
         bugcam_path = _get_bugcam_path()
         if not bugcam_path.exists():
@@ -144,11 +153,11 @@ def enable(
             raise typer.Exit(1)
 
         if not _validate_path(bugcam_path):
-            console.print(f"[red]Error: Invalid bugcam path[/red]")
+            console.print("[red]Error: Invalid bugcam path[/red]")
             raise typer.Exit(1)
 
         if not _validate_path(workdir):
-            console.print(f"[red]Error: Invalid working directory path[/red]")
+            console.print("[red]Error: Invalid working directory path[/red]")
             raise typer.Exit(1)
 
         selected_model = select_model_reference(model)
@@ -157,18 +166,24 @@ def enable(
             console.print("[yellow]Model name must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes[/yellow]")
             raise typer.Exit(1)
 
+        # Build the `bugcam run` arguments. With --settings, all tunables come
+        # from the settings file; otherwise bake the individual flags (legacy).
+        delete_arg = "" if delete_after_upload else " --no-delete-after-upload"
+        if settings is not None:
+            run_args = f"--settings {settings} --model {selected_model}{delete_arg}"
+        else:
+            run_args = (
+                f"--model {selected_model} --mode {recording_mode} --interval {interval} "
+                f"--chunk-duration {length} --resolution {resolution} "
+                f"--upload-poll {poll_interval}{delete_arg}"
+            )
+
         # Create main run service (includes receiver by default)
         service_content = SERVICE_TEMPLATE_RUN.format(
             user=user,
             workdir=workdir,
             bugcam_path=bugcam_path,
-            model=selected_model,
-            recording_mode=recording_mode,
-            interval=interval,
-            chunk_duration=length,
-            resolution=resolution,
-            poll_interval=poll_interval,
-            delete_after_upload_arg="" if delete_after_upload else " --no-delete-after-upload",
+            run_args=run_args,
         )
 
         console.print(f"[cyan]Creating systemd service at {SYSTEMD_SERVICE_PATH}[/cyan]")
@@ -194,7 +209,7 @@ def enable(
                     handle_numpy_error(console)
                     raise typer.Exit(1)
                 else:
-                    console.print(f"[red]Service failed to start[/red]")
+                    console.print("[red]Service failed to start[/red]")
                     console.print("\nCheck logs with: [cyan]bugcam autostart logs[/cyan]")
             else:
                 console.print("[green]✓ Service started[/green]")

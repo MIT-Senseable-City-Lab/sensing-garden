@@ -1,0 +1,110 @@
+# =============================================================================
+# BUGCAM SETTINGS  —  operational defaults for the capture/detect pipeline
+# =============================================================================
+# This file ships with bugcam and holds every operational default. Override any
+# subset by passing your own file with `bugcam run --settings my.yaml`; values
+# you omit fall back to the ones here. Environment variables (BUGCAM_*) and
+# explicit CLI flags still take precedence over file values.
+#
+# Device identity, backend credentials, and storage paths are NOT in this file:
+# they are managed by `bugcam setup` (stored in ~/.config/bugcam/config.json).
+#
+# Precedence (low -> high):
+#   this bundled file  <  ~/.config/bugcam/config.json (bugcam setup)
+#                      <  --settings file  <  BUGCAM_* env vars  <  CLI flags
+# =============================================================================
+
+# Camera capture settings.
+capture:
+  fps:                    15
+  resolution:             [3840, 2160]
+  bitrate:                20000000
+  chunk_duration_seconds: 60
+  camera_index:           0
+  use_picamera:           true
+
+# Pipeline behaviour.
+pipeline:
+  recording_mode:           continuous   # 'continuous' or 'interval'
+  recording_interval_minutes: 5
+  enable_recording:         true
+  enable_processing:        true
+  enable_classification:    true
+  continuous_tracking:      false
+  detection_in_subprocess:  true
+  video_sample_interval:    10
+
+# Upload watcher.
+upload:
+  poll_seconds:        30
+  delete_after_upload: true
+
+# DOT receiver HTTP server.
+receiver:
+  enabled: true
+  host:    0.0.0.0
+  port:    5001
+
+# Classification.
+classification:
+  normalize: false
+
+# Output artifacts.
+output:
+  save_crops:      true
+  save_composites: true
+
+# =============================================================================
+# DETECTION (bugspot)  —  tuned for 4K LANDSCAPE @ 30 fps
+# =============================================================================
+detection:
+  # GMM background subtractor
+  gmm_history:       500
+  gmm_var_threshold: 16
+
+  # Morphological filtering (absolute pixels)
+  morph_kernel_size: 5
+
+  # Detection resolution (speed): explicit [width, height] (px) to run the
+  # detector at. Detection runs on resized frames while bounding boxes are
+  # scaled back to native res, so crops/composites stay full resolution.
+  # null = native. For 4K capture, [960, 540] detects at ~16x fewer pixels.
+  detection_resolution: [1920, 1080]
+
+  # Reference resolution: the resolution morph_kernel_size/min_density were
+  # tuned for. This config is tuned for 4K, so those two params auto-scale from
+  # 4K to whatever resolution detection runs at (native or detection_resolution).
+  reference_resolution: [3840, 2160]
+
+  # Cohesiveness — filters scattered motion (wind on plants)
+  min_largest_blob_ratio: 0.85
+  max_num_blobs:          3
+  min_motion_ratio:       0.20
+
+  # Per-detection size + shape filters
+  min_area:    0.00012
+  max_area:    0.0015
+  min_density: 3.0
+  min_solidity: 0.55
+
+  # Path / motion filters
+  min_displacement:      0.25
+  min_path_points:       10
+  max_frame_jump:        0.06
+  max_area_change_ratio: 3.0
+
+  # Path topology — insect-like vs plant-like motion
+  revisit_radius:           0.025
+  max_revisit_ratio:        0.30
+  min_progression_ratio:    0.70
+  max_directional_variance: 0.85
+
+# =============================================================================
+# TRACKING
+# =============================================================================
+tracking:
+  max_lost_frames: 45
+  # Hungarian cost weights
+  w_dist:          0.6
+  w_area:          0.4
+  cost_threshold:  0.25

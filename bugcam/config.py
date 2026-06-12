@@ -11,8 +11,11 @@ from rich.console import Console
 console = Console()
 
 
+# Device identity defaults. These belong with the device/setup layer (written to
+# ~/.config/bugcam/config.json by `bugcam setup`), not the operational config.
 DEFAULT_API_URL = "https://api.sensinggarden.com/v1"
 DEFAULT_S3_BUCKET = "scl-sensing-garden"
+DEFAULT_FLICK_ID = "bugcam-rpi"
 
 
 def get_config_path() -> Path:
@@ -147,7 +150,7 @@ def get_output_storage_dir() -> Path:
 
 def get_default_flick_id() -> str:
     """Get the configured FLICK device identifier."""
-    return os.environ.get("BUGCAM_FLICK_ID", "bugcam-rpi")
+    return os.environ.get("BUGCAM_FLICK_ID", DEFAULT_FLICK_ID)
 
 
 def get_default_dot_ids() -> list[str]:

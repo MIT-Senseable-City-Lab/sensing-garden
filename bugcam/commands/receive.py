@@ -2,7 +2,6 @@
 
 import typer
 import threading
-import time
 import logging
 from rich.console import Console
 

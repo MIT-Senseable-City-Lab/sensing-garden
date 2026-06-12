@@ -96,18 +96,19 @@ Models are stored in `~/.cache/bugcam/models/<bundle>/` (each bundle contains `m
 
 ## Detection Configuration
 
-bugcam ships with default detection parameters in `bugcam/detection.yaml` (bundled with the package). These values control motion detection, blob filtering, and insect tracking behavior.
+bugcam ships with a single bundled settings file, `bugcam/settings.yaml`, that holds every operational default (capture, pipeline, detection, and tracking). The `detection:` and `tracking:` sections control motion detection, blob filtering, and insect tracking behavior. Device identity and storage paths are managed separately by `bugcam setup`.
 
-### Using Custom Detection Config
+### Using Custom Settings
 ```bash
-# Use custom config with run command
-bugcam run --detection-config /path/to/custom.yaml
+# Override any subset of the bundled defaults with your own settings file
+bugcam run --settings /path/to/my-settings.yaml
+bugcam process --settings /path/to/my-settings.yaml
 
-# Use custom config with process command
-bugcam process --detection-config /path/to/custom.yaml
+# Or override only detection/tracking params with a flat detection file
+bugcam run --detection-config /path/to/custom-detection.yaml
 ```
 
-If no `--detection-config` is specified, the bundled default is used.
+Values you omit fall back to the bundled defaults. Environment variables (`BUGCAM_*`) and explicit CLI flags take precedence over file values.
 
 ### Detection Parameters
 
@@ -136,7 +137,7 @@ If no `--detection-config` is specified, the bundled default is used.
 | `min_progression_ratio` | 0.70 | Min ratio of path moving forward vs backward |
 | `max_directional_variance` | 0.85 | Max variance in path direction |
 
-For more details on these parameters, see the comments in `bugcam/detection.yaml`.
+For more details on these parameters, see the comments in `bugcam/settings.yaml`.
 
 ## Storage Configuration
 

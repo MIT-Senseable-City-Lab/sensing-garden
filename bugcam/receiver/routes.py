@@ -7,7 +7,6 @@ from pathlib import Path
 from datetime import datetime
 from flask import request, jsonify
 
-from .tracker import PendingTrackTracker
 from ..config import load_config
 
 logger = None
@@ -474,7 +473,6 @@ def register_routes(app):
             device_id = request.args.get('device_id', device_id)
             device_name = request.args.get('device_name', device_name)
 
-        data = request.get_json(silent=True) or {}
         safe_id = device_id[:8] if len(device_id) > 8 else device_id
         logger.info(f"Heartbeat from {device_name} ({safe_id})")
 
@@ -518,10 +516,9 @@ def register_routes(app):
             logger.error("Missing track_id in header or data")
             return jsonify({"error": "Missing track_id"}), 400
 
-        parsed_track_id, time_str = parse_track_id(track_id)
+        parsed_track_id, _ = parse_track_id(track_id)
         if parsed_track_id is None:
             parsed_track_id = str(track_id)
-            time_str = datetime.now().strftime('%H%M%S')
 
         logger.info(f"Receiving track telemetry from {device_name} ({device_id[:8]}...)")
         logger.info(f"Assigned DOT Directory: {dot_directory}, Track: {parsed_track_id}")
