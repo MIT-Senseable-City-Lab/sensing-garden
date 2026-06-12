@@ -226,6 +226,11 @@ def run(
     receiver_port: int = typer.Option(RECEIVER_DEFAULT_PORT, "--receiver-port", help="DOT receiver HTTP port"),
     receiver_host: str = typer.Option(RECEIVER_DEFAULT_HOST, "--receiver-host", help="DOT receiver bind address"),
     detection_config: Path | None = typer.Option(None, "--detection-config", help="Path to detection config YAML file"),
+    detection_in_subprocess: bool = typer.Option(
+        True,
+        "--detection-in-subprocess/--detection-in-thread",
+        help="Run detection in a separate process (own GIL) so it can't starve the recorder threads (default: on)",
+    ),
 ) -> None:
     """Run recording, processing, uploading, and one-minute heartbeat emission."""
     if mode not in {"continuous", "interval"}:
@@ -264,6 +269,7 @@ def run(
             fps=fps,
             resolution=parsed_resolution,
             bitrate=bitrate,
+            detection_in_subprocess=detection_in_subprocess,
             detection_config_path=detection_config,
         )
         upload_stop_event = threading.Event()
