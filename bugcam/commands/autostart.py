@@ -25,7 +25,7 @@ Type=simple
 User={user}
 Group=video
 WorkingDirectory={workdir}
-ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --upload-poll {poll_interval}{delete_after_upload_arg}
+ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --resolution {resolution} --upload-poll {poll_interval}{delete_after_upload_arg}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -111,6 +111,7 @@ def enable(
     recording_mode: str = typer.Option("continuous", "--recording-mode", help="Recording mode: continuous or interval"),
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
     length: int = typer.Option(60, "--length", "-l", help="Chunk duration in seconds"),
+    resolution: str = typer.Option("3840x2160", "--resolution", help="Recording resolution in WxH format"),
     poll_interval: int = typer.Option(10, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
         True,
@@ -165,6 +166,7 @@ def enable(
             recording_mode=recording_mode,
             interval=interval,
             chunk_duration=length,
+            resolution=resolution,
             poll_interval=poll_interval,
             delete_after_upload_arg="" if delete_after_upload else " --no-delete-after-upload",
         )

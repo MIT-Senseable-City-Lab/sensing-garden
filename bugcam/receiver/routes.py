@@ -69,6 +69,21 @@ def register_routes(app):
 
         return None, None
 
+    def find_track_folder(crops_dir_path, track_id):
+        """Check if a crop folder for this track_id already exists (ignoring timestamp suffix).
+
+        Scans crops/ for a subdirectory starting with '{track_id}_' and returns
+        its full folder name (e.g., '0000002a_143052'), or None if none exists.
+        Used to merge batch uploads of the same track into the first batch's folder.
+        """
+        if not crops_dir_path or not crops_dir_path.exists():
+            return None
+        prefix = f"{track_id}_"
+        for entry in crops_dir_path.iterdir():
+            if entry.is_dir() and entry.name.startswith(prefix):
+                return entry.name
+        return None
+
     def convert_dot_labels_to_bugcam_format(labels_data):
         """Convert DOT label format (from iPhone) to bugcam-expected format."""
         if "points" not in labels_data:
@@ -123,21 +138,31 @@ def register_routes(app):
         dot_directory = Path(dot_directory).name
         track_id = Path(track_id).name
 
-        track_folder = f"{track_id}_{time_str}"
-
         logger.info(f"Receiving crop upload from {device_name}")
-        logger.info(f"DOT Directory: {dot_directory}, Track: {track_folder}")
+        logger.info(f"DOT Directory: {dot_directory}, Track ID: {track_id}")
 
         try:
             dot_dir_path = input_storage / dot_directory
             crops_dir_path = dot_dir_path / "crops"
-            track_dir_path = crops_dir_path / track_folder
-            track_dir_path.mkdir(parents=True, exist_ok=True)
+
+            existing = find_track_folder(crops_dir_path, track_id)
+            if existing:
+                track_folder = existing
+                track_dir_path = crops_dir_path / track_folder
+                logger.info(f"Merging into existing folder: {track_folder}")
+            else:
+                track_folder = f"{track_id}_{time_str}"
+                track_dir_path = crops_dir_path / track_folder
+                track_dir_path.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Creating new folder: {track_folder}")
 
             files = request.files.getlist('files')
             if not files:
                 logger.warning("No files received in upload")
                 return jsonify({"error": "No files uploaded"}), 400
+
+            frame_offset = len([f for f in track_dir_path.iterdir()
+                                if f.is_file() and f.name.startswith("frame_")])
 
             saved_count = 0
             for file in files:
@@ -151,12 +176,13 @@ def register_routes(app):
                     logger.warning(f"Skipping invalid filename: {filename}")
                     continue
 
-                target_filename = f"frame_{frame_num:06d}.jpg"
+                target_filename = f"frame_{frame_offset + frame_num:06d}.jpg"
                 full_path = track_dir_path / target_filename
                 file.save(full_path)
                 saved_count += 1
 
-            logger.info(f"Saved {saved_count} frames for track {track_id}")
+            total_frames = len([f for f in track_dir_path.iterdir() if f.is_file() and f.name.startswith("frame_")])
+            logger.info(f"Saved {saved_count} frames for track {track_folder} (total: {total_frames})")
 
             if tracker:
                 tracker.update(dot_directory, track_folder, has_crops=True)
@@ -217,14 +243,32 @@ def register_routes(app):
             labels_filename = f"{track_id}.json"
             labels_path = labels_dir_path / labels_filename
 
+            if labels_path.exists():
+                with open(labels_path, 'r') as f:
+                    existing_data = json.load(f)
+                existing_frames = existing_data.get("frames", [])
+            else:
+                existing_frames = []
+
+            new_data = labels_data if isinstance(labels_data, dict) else {}
+            new_frames = new_data.get("frames", [])
+
+            merged_frames = existing_frames + new_frames
+            for i, frame in enumerate(merged_frames):
+                frame["frame_number"] = i
+
+            merged_data = {"frames": merged_frames}
+
             with open(labels_path, 'w') as f:
-                json.dump(labels_data, f, indent=2)
+                json.dump(merged_data, f, indent=2)
 
-            logger.info(f"Saved labels for track {track_id}")
+            logger.info(f"Saved labels for track {track_id} (total frames: {len(merged_frames)})")
 
-            track_folder = f"{track_id}_{time_str}" if time_str else track_id
+            actual_folder = find_track_folder(
+                input_storage / dot_directory / "crops", track_id
+            ) or track_id
             if tracker:
-                tracker.update(dot_directory, track_folder, has_crops=False)
+                tracker.update(dot_directory, actual_folder, has_crops=False)
 
             return jsonify({
                 "status": "success",
@@ -262,21 +306,33 @@ def register_routes(app):
             return jsonify({"error": "Invalid X-Track-ID format. Expected: {track_id}_{HHMMSS}"}), 400
 
         dot_directory = Path(dot_directory).name
-        track_folder = f"{track_id}_{time_str}"
 
         logger.info(f"Creating done marker from {device_name}")
-        logger.info(f"DOT Directory: {dot_directory}, Track: {track_folder}")
+        logger.info(f"DOT Directory: {dot_directory}, Track ID: {track_id}")
 
         try:
             dot_dir_path = input_storage / dot_directory
             crops_dir_path = dot_dir_path / "crops"
-            track_dir_path = crops_dir_path / track_folder
+            existing = find_track_folder(crops_dir_path, track_id)
 
-            if not track_dir_path.exists():
-                logger.error(f"Track directory does not exist: {track_dir_path}")
+            if not existing:
+                logger.error(f"No crop folder found for track {track_id} in {crops_dir_path}")
                 return jsonify({"error": "Track directory not found"}), 400
 
+            track_folder = existing
+            track_dir_path = crops_dir_path / track_folder
+
             done_file_path = track_dir_path / "done.txt"
+            if done_file_path.exists():
+                logger.info(f"done.txt already exists for track {track_folder}")
+                return jsonify({
+                    "status": "success",
+                    "dot_directory": dot_directory,
+                    "track_folder": track_folder,
+                    "marker": "done.txt",
+                    "note": "already existed"
+                }), 200
+
             with open(done_file_path, 'w') as f:
                 f.write(f"Track completed at {datetime.now().isoformat()}\n")
 
@@ -478,14 +534,32 @@ def register_routes(app):
             labels_filename = f"{parsed_track_id}.json"
             labels_path = labels_dir_path / labels_filename
 
+            if labels_path.exists():
+                with open(labels_path, 'r') as f:
+                    existing_data = json.load(f)
+                existing_frames = existing_data.get("frames", [])
+            else:
+                existing_frames = []
+
+            new_data = track_data if isinstance(track_data, dict) else {}
+            new_frames = new_data.get("frames", [])
+
+            merged_frames = existing_frames + new_frames
+            for i, frame in enumerate(merged_frames):
+                frame["frame_number"] = i
+
+            merged_data = {"frames": merged_frames}
+
             with open(labels_path, 'w') as f:
-                json.dump(track_data, f, indent=2)
+                json.dump(merged_data, f, indent=2)
 
-            logger.info(f"Saved telemetry for track {parsed_track_id}")
+            logger.info(f"Saved telemetry for track {parsed_track_id} (total frames: {len(merged_frames)})")
 
-            track_folder = f"{parsed_track_id}_{time_str}" if time_str else parsed_track_id
+            actual_folder = find_track_folder(
+                input_storage / dot_directory / "crops", parsed_track_id
+            ) or parsed_track_id
             if tracker:
-                tracker.update(dot_directory, track_folder, has_crops=False)
+                tracker.update(dot_directory, actual_folder, has_crops=False)
 
             return jsonify({
                 "status": "success",

@@ -23,7 +23,7 @@ class PendingTrackTracker:
     Thread-safe for use with Flask's threaded mode.
     """
 
-    FINALIZATION_DELAY = 5.0
+    FINALIZATION_DELAY = 60.0
     STALE_AGE = 600
     CHECK_INTERVAL = 2.0
 
