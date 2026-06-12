@@ -208,7 +208,9 @@ def run(
     mode: str = typer.Option("continuous", "--mode", help="'continuous' (always recording) or 'interval' (record periodically)"),
     interval: int = typer.Option(5, "--interval", help="Minutes between recordings in interval mode"),
     chunk_duration: int = typer.Option(60, "--chunk-duration", help="Length of each recorded chunk in seconds"),
+    fps: int = typer.Option(30, "--fps", help="Recording frame rate"),
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
+    bitrate: int = typer.Option(20_000_000, "--bitrate", help="H.264 encoder bitrate in bps (hardware encoding only)"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
     upload_poll: int = typer.Option(30, "--upload-poll", help="Seconds between upload polls"),
     delete_after_upload: bool = typer.Option(
@@ -259,7 +261,9 @@ def run(
             recording_mode=mode,
             recording_interval=interval,
             chunk_duration=chunk_duration,
+            fps=fps,
             resolution=parsed_resolution,
+            bitrate=bitrate,
             detection_config_path=detection_config,
         )
         upload_stop_event = threading.Event()

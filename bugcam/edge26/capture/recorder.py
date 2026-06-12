@@ -5,7 +5,12 @@ Supports two recording modes:
     - Continuous: gapless chunk saving, no interruption between chunks.
     - Interval: record one chunk, release camera, wait N minutes, repeat.
 
-Architecture:
+Architecture (picamera2 / hardware encoding):
+    - Camera streams directly to hardware H.264 encoder
+    - Encoder writes raw H.264, remuxed to MP4 via ffmpeg -c copy
+    - No frame queue or grabber thread
+
+Architecture (OpenCV fallback):
     - Frame grabber thread captures into a queue
     - Main thread consumes frames and writes to chunk files
     - Double-buffering via queue ensures seamless chunk transitions
@@ -13,6 +18,7 @@ Architecture:
 
 import cv2
 import shutil
+import subprocess
 import time
 import queue
 import threading
@@ -47,6 +53,7 @@ class VideoRecorder:
         use_picamera: bool = False,
         recording_mode: str = "continuous",
         interval_minutes: float = 5,
+        bitrate: int = 20_000_000,
     ):
         """
         Initialize the video recorder.
@@ -62,6 +69,7 @@ class VideoRecorder:
             use_picamera: Use picamera2 instead of OpenCV (for Raspberry Pi)
             recording_mode: "continuous" (no gaps) or "interval" (record every N minutes)
             interval_minutes: Minutes between start of recordings (interval mode only)
+            bitrate: H.264 encoder bitrate in bps (picamera2 hardware encoding only)
         """
         self.output_dir = Path(output_dir)
         self.fps = fps
@@ -73,6 +81,7 @@ class VideoRecorder:
         self.use_picamera = use_picamera
         self.recording_mode = recording_mode
         self.interval_minutes = interval_minutes
+        self.bitrate = bitrate
         
         # Resolution is requested from config and confirmed during init.
         self.resolution: Tuple[int, int] = (0, 0)
@@ -128,6 +137,7 @@ class VideoRecorder:
     def _init_camera_picamera(self) -> None:
         """Initialize camera using picamera2 (Raspberry Pi) and read resolution."""
         from picamera2 import Picamera2
+        from picamera2.encoders import H264Encoder, Quality
         
         self.camera = Picamera2()
         
@@ -148,6 +158,10 @@ class VideoRecorder:
             "FrameRate": float(self.fps),
         })
         
+        # Create hardware H.264 encoder
+        self.encoder = H264Encoder(bitrate=self.bitrate)
+        self.encoder_quality = Quality.HIGH
+        
         self.camera.start()
         
         # Allow camera to warm up
@@ -160,10 +174,8 @@ class VideoRecorder:
             self._init_camera_picamera()
         else:
             self._init_camera_opencv()
-        
-        # Now that we have fps, create the frame queue
-        # Buffer ~5 seconds of frames to handle file transitions
-        self.frame_queue = queue.Queue(maxsize=self.fps * 5)
+            # Buffer ~5 seconds of frames to handle file transitions
+            self.frame_queue = queue.Queue(maxsize=self.fps * 5)
         
         # Recalculate frames per chunk with actual fps
         self.frames_per_chunk = self.fps * self.chunk_duration
@@ -268,6 +280,107 @@ class VideoRecorder:
         filename = f"{self.device_id}_{timestamp}.mp4"
         return self.output_dir / filename
     
+    @staticmethod
+    def _check_ffmpeg_available() -> bool:
+        """Check if ffmpeg is available on the system."""
+        try:
+            subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True,
+                timeout=5,
+            )
+            return True
+        except Exception:
+            return False
+
+    def _remux_chunk(self, src: Path, dst: Path) -> bool:
+        """Remux raw H.264 to MP4 container. Returns True on success."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", str(src),
+                    "-c", "copy",
+                    "-r", str(self.fps),
+                    str(dst),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                src.unlink(missing_ok=True)
+                return True
+            logger.error(f"Remux failed: {result.stderr}")
+            return False
+        except FileNotFoundError:
+            logger.warning("ffmpeg not found, using raw H.264 file")
+            return False
+        except Exception as e:
+            logger.error(f"Remux error: {e}")
+            return False
+
+    def _record_chunk_hardware(self) -> Optional[Path]:
+        """
+        Record a single chunk using picamera2's hardware H.264 encoder.
+
+        The encoder writes raw H.264 to a temp file, then remuxes to MP4.
+        Camera stays running between chunks so there is no re-init delay.
+        """
+        free_bytes = shutil.disk_usage(self.output_dir).free
+        if free_bytes < MIN_FREE_DISK_BYTES:
+            logger.warning(
+                "Skipping chunk because free space is low: %.1fMB available",
+                free_bytes / (1024 * 1024),
+            )
+            return None
+
+        chunk_path = self._generate_chunk_path()
+        temp_h264 = chunk_path.with_suffix(".h264")
+        logger.info(f"Recording chunk: {chunk_path.name}")
+
+        try:
+            self.camera.start_recording(
+                self.encoder,
+                str(temp_h264),
+                quality=self.encoder_quality,
+            )
+
+            chunk_end = time.time() + self.chunk_duration
+            while time.time() < chunk_end and not self.stop_event.is_set():
+                time.sleep(0.1)
+
+            self.camera.stop_recording()
+
+            if self.stop_event.is_set() and not temp_h264.exists():
+                return None
+
+            if temp_h264.exists():
+                has_ffmpeg = self._check_ffmpeg_available()
+                if has_ffmpeg:
+                    remuxed = self._remux_chunk(temp_h264, chunk_path)
+                    if not remuxed:
+                        temp_h264.rename(chunk_path)
+                else:
+                    temp_h264.rename(chunk_path)
+                    logger.warning(
+                        f"Chunk saved as raw H.264 (no ffmpeg): {chunk_path.name}"
+                    )
+
+            if chunk_path.exists():
+                size_mb = chunk_path.stat().st_size / (1024 * 1024)
+                logger.info(
+                    f"Chunk complete: {chunk_path.name} "
+                    f"(hw encoded, {size_mb:.1f}MB)"
+                )
+                return chunk_path
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Hardware encoding error: {e}", exc_info=True)
+            return None
+
     def _record_chunk(self) -> Optional[Path]:
         """
         Record a single video chunk by consuming frames from the queue.
@@ -347,14 +460,24 @@ class VideoRecorder:
         
         try:
             self._init_camera()
-            self._start_grabber()
             
-            while not self.stop_event.is_set():
-                chunk_path = self._record_chunk()
-                if chunk_path:
-                    self.last_chunk_path = chunk_path
-                    if self.video_queue:
-                        self.video_queue.put(chunk_path)
+            if self.use_picamera:
+                # Hardware-accelerated encoding (no frame queue / grabber)
+                while not self.stop_event.is_set():
+                    chunk_path = self._record_chunk_hardware()
+                    if chunk_path:
+                        self.last_chunk_path = chunk_path
+                        if self.video_queue:
+                            self.video_queue.put(chunk_path)
+            else:
+                # Legacy OpenCV path with frame grabber + queue
+                self._start_grabber()
+                while not self.stop_event.is_set():
+                    chunk_path = self._record_chunk()
+                    if chunk_path:
+                        self.last_chunk_path = chunk_path
+                        if self.video_queue:
+                            self.video_queue.put(chunk_path)
                     
         except Exception as e:
             logger.error(f"Recording error: {e}", exc_info=True)
@@ -374,9 +497,13 @@ class VideoRecorder:
                 
                 # Init camera, record one chunk, release camera
                 self._init_camera()
-                self._start_grabber()
                 
-                chunk_path = self._record_chunk()
+                if self.use_picamera:
+                    chunk_path = self._record_chunk_hardware()
+                else:
+                    self._start_grabber()
+                    chunk_path = self._record_chunk()
+                
                 if chunk_path:
                     self.last_chunk_path = chunk_path
                     if self.video_queue:

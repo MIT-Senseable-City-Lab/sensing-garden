@@ -36,10 +36,11 @@ def build_pipeline(
     chunk_duration: int = 60,
     fps: int = 30,
     resolution: tuple[int, int] = (1080, 1080),
+    bitrate: int = 20_000_000,
     enable_recording: bool = True,
     enable_processing: bool = True,
     enable_classification: bool = True,
-    continuous_tracking: bool = True,
+    continuous_tracking: bool = False,
     detection_config_path: Path | None = None,
 ) -> Pipeline:
     """Create a configured edge26 pipeline instance."""
@@ -57,6 +58,7 @@ def build_pipeline(
         chunk_duration=chunk_duration,
         fps=fps,
         resolution=resolution,
+        bitrate=bitrate,
         enable_recording=enable_recording,
         enable_processing=enable_processing,
         enable_classification=enable_classification,

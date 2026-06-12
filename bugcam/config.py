@@ -206,5 +206,5 @@ def is_edge26_classification_enabled() -> bool:
 
 def is_edge26_continuous_tracking_enabled() -> bool:
     """Return whether edge26 continuous tracking is enabled."""
-    value = os.environ.get("BUGCAM_EDGE26_CONTINUOUS_TRACKING", "1").lower()
+    value = os.environ.get("BUGCAM_EDGE26_CONTINUOUS_TRACKING", "0").lower()
     return value not in {"0", "false", "no"}

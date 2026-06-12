@@ -83,7 +83,7 @@ class Pipeline:
         self.enable_recording = pipeline_config.get("enable_recording", True)
         self.enable_processing = pipeline_config.get("enable_processing", True)
         self.enable_classification = pipeline_config.get("enable_classification", True)
-        self.continuous_tracking = pipeline_config.get("continuous_tracking", True)
+        self.continuous_tracking = pipeline_config.get("continuous_tracking", False)
         
         # --- Video sampling (save 1 video per N to output) ---
         self._video_batch_count = 0
@@ -156,6 +156,7 @@ class Pipeline:
             use_picamera=capture["use_picamera"],
             recording_mode=pipeline_cfg.get("recording_mode", "continuous"),
             interval_minutes=pipeline_cfg.get("recording_interval_minutes", 5),
+            bitrate=capture.get("bitrate", 20_000_000),
         )
     
     def _is_flick_video(self, path: Path) -> bool:
