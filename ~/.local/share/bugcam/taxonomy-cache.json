@@ -1,0 +1,14 @@
+{
+  "family_list": [
+    "Unknown"
+  ],
+  "genus_to_family": {
+    "Unknown": "Unknown"
+  },
+  "species_list": [
+    "unknown"
+  ],
+  "species_to_genus": {
+    "unknown": "Unknown"
+  }
+}
