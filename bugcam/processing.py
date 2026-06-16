@@ -20,28 +20,37 @@ MAX_CAPTURE_HEIGHT = 2160
 EDGE26_DETECTION_DEFAULTS = {
     "gmm_history": 500,
     "gmm_var_threshold": 16,
-    "morph_kernel_size": 3,
-    "min_area": 0.0002,
-    "max_area": 0.035,
+    "morph_kernel_size": 5,
+    "min_area": 0.00012,
+    "max_area": 0.0015,
     "min_density": 3.0,
     "min_solidity": 0.55,
-    "min_largest_blob_ratio": 0.80,
-    "max_num_blobs": 5,
-    "min_motion_ratio": 0.15,
-    "max_frame_jump": 0.1,
+    "min_largest_blob_ratio": 0.85,
+    "max_num_blobs": 3,
+    "min_motion_ratio": 0.20,
+    "max_frame_jump": 0.06,
     "max_area_change_ratio": 3.0,
     "min_path_points": 10,
-    "min_displacement": 0.05,
+    "min_displacement": 0.25,
     "max_revisit_ratio": 0.30,
     "min_progression_ratio": 0.70,
-    "max_directional_variance": 0.90,
-    "revisit_radius": 0.05,
+    "max_directional_variance": 0.85,
+    "revisit_radius": 0.025,
+    # Explicit (width, height) in pixels to run the detector at. None = detect
+    # at native resolution. See bugspot for details — bounding boxes are scaled
+    # back to native res so crops/composites stay full resolution.
+    "detection_resolution": [1920, 1080],
+    # Resolution morph_kernel_size/min_density were tuned for. None = treat the
+    # native frame size as the reference. Set to the tuned resolution (e.g.
+    # [3840, 2160] for 4K) to auto-scale those params to the detection
+    # resolution. See bugspot ScaledDetector for details.
+    "reference_resolution": [3840, 2160],
 }
 
 EDGE26_TRACKING_DEFAULTS = {
     "w_dist": 0.6,
     "w_area": 0.4,
-    "cost_threshold": 0.3,
+    "cost_threshold": 0.25,
     "max_lost_frames": 45,
 }
 
@@ -157,10 +166,12 @@ def build_edge26_config(
     chunk_duration: int = 60,
     fps: int = 30,
     resolution: tuple[int, int] = DEFAULT_CAPTURE_RESOLUTION,
+    bitrate: int = 20_000_000,
     enable_recording: bool = True,
     enable_processing: bool = True,
     enable_classification: bool = True,
-    continuous_tracking: bool = True,
+    continuous_tracking: bool = False,
+    detection_in_subprocess: bool = True,
     model_metadata: dict[str, Any] | None = None,
     detection_config_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -191,6 +202,7 @@ def build_edge26_config(
             "enable_processing": enable_processing,
             "enable_classification": enable_classification,
             "continuous_tracking": continuous_tracking,
+            "detection_in_subprocess": detection_in_subprocess,
             "recording_mode": recording_mode,
             "recording_interval_minutes": recording_interval,
         },
@@ -200,6 +212,7 @@ def build_edge26_config(
             "fps": fps,
             "chunk_duration_seconds": chunk_duration,
             "resolution": list(resolution),
+            "bitrate": bitrate,
         },
         "detection": detection_config,
         "tracking": tracking_config,

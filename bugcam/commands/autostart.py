@@ -25,7 +25,7 @@ Type=simple
 User={user}
 Group=video
 WorkingDirectory={workdir}
-ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --upload-poll {poll_interval}{delete_after_upload_arg}
+ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --resolution {resolution} --fps {fps} --upload-poll {poll_interval}{delete_after_upload_arg}{no_upload_arg}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -36,22 +36,11 @@ WantedBy=multi-user.target
 """
 
 
-def _get_bugcam_path() -> Path:
-    try:
-        result = subprocess.run(
-            ["which", "bugcam"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        path = result.stdout.strip()
-        if path:
-            return Path(path)
-    except subprocess.CalledProcessError:
-        pass
+POETRY_PATH = "/home/pi/.local/bin/poetry"
+REPO_DIR = "/home/pi/sensing-garden"
 
-    # Fallback to current Python executable
-    return Path(sys.executable).parent / "bugcam"
+def _get_bugcam_path() -> str:
+    return f"{POETRY_PATH} --directory {REPO_DIR} run bugcam"
 
 
 def _validate_model_name(model: str) -> bool:
@@ -110,12 +99,19 @@ def enable(
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Model to use"),
     recording_mode: str = typer.Option("continuous", "--recording-mode", help="Recording mode: continuous or interval"),
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
-    length: int = typer.Option(60, "--length", "-l", help="Chunk duration in seconds"),
-    poll_interval: int = typer.Option(10, "--poll-interval", help="Upload poll interval in seconds"),
+    length: int = typer.Option(30, "--length", "-l", help="Chunk duration in seconds"),
+    resolution: str = typer.Option("3840x2160", "--resolution", help="Recording resolution in WxH format"),
+    fps: int = typer.Option(15, "--fps", help="Recording frame rate"),
+    poll_interval: int = typer.Option(30, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
         True,
         "--delete-after-upload/--no-delete-after-upload",
         help="Clean up results after uploading",
+    ),
+    enable_upload: bool = typer.Option(
+        True,
+        "--upload/--no-upload",
+        help="Upload results to S3 (default: on)",
     ),
     start_now: bool = typer.Option(True, "--start/--no-start", help="Start service immediately"),
 ) -> None:
@@ -130,20 +126,11 @@ def enable(
 
     try:
         bugcam_path = _get_bugcam_path()
-        if not bugcam_path.exists():
-            console.print(f"[red]Error: bugcam binary not found at {bugcam_path}[/red]")
-            console.print("[yellow]Hint: Install bugcam with 'pipx install .' first[/yellow]")
-            raise typer.Exit(1)
-
         user = os.environ.get("USER", "pi")
         workdir = Path.home()
 
         if not _validate_username(user):
             console.print(f"[red]Error: Invalid username '{user}'[/red]")
-            raise typer.Exit(1)
-
-        if not _validate_path(bugcam_path):
-            console.print(f"[red]Error: Invalid bugcam path[/red]")
             raise typer.Exit(1)
 
         if not _validate_path(workdir):
@@ -165,8 +152,11 @@ def enable(
             recording_mode=recording_mode,
             interval=interval,
             chunk_duration=length,
+            resolution=resolution,
+            fps=fps,
             poll_interval=poll_interval,
             delete_after_upload_arg="" if delete_after_upload else " --no-delete-after-upload",
+            no_upload_arg="" if enable_upload else " --no-upload",
         )
 
         console.print(f"[cyan]Creating systemd service at {SYSTEMD_SERVICE_PATH}[/cyan]")
@@ -198,8 +188,11 @@ def enable(
                 console.print("[green]✓ Service started[/green]")
 
         console.print("\n[bold]Service Details:[/bold]")
-        console.print(f"  Binary:  {bugcam_path}")
+        console.print(f"  Command: {bugcam_path}")
         console.print(f"  Model:   {selected_model}")
+        console.print(f"  Res:     {resolution} @ {fps}fps")
+        console.print(f"  Chunk:   {length}s")
+        console.print(f"  Upload:  {'enabled' if enable_upload else 'disabled'}")
         console.print(f"  User:    {user}")
         console.print("\n[dim]Includes: recording, processing, upload, heartbeat, and DOT receiver[/dim]")
         console.print("[dim]View logs with: bugcam autostart logs[/dim]")

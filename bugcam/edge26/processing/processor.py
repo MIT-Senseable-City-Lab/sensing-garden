@@ -59,7 +59,7 @@ class VideoProcessor:
         # Pipeline toggles
         pipeline_config = config.get("pipeline", {})
         self.enable_classification = pipeline_config.get("enable_classification", True)
-        self.continuous_tracking = pipeline_config.get("continuous_tracking", True)
+        self.continuous_tracking = pipeline_config.get("continuous_tracking", False)
         
         # Classifier (lazy loaded)
         self._classifier: Optional[HailoClassifier] = None

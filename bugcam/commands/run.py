@@ -121,6 +121,8 @@ def _resolve_runtime_settings(
     flick_id: str | None,
     dot_ids: str | None,
     bucket: str | None,
+    *,
+    enable_upload: bool = True,
 ) -> dict[str, Any]:
     config = load_config()
     resolved_api_url = api_url or str(config.get("api_url") or DEFAULT_API_URL)
@@ -133,14 +135,15 @@ def _resolve_runtime_settings(
         field_name
         for field_name, value in (
             ("api_key", resolved_api_key),
-            ("flick_id", resolved_flick_id),
             ("s3_bucket", resolved_bucket),
         )
         if not value
     ]
-    if missing_fields:
+    if missing_fields and enable_upload:
         joined = ", ".join(missing_fields)
         raise typer.BadParameter(f"Missing required config values: {joined}. Run `bugcam setup` or pass CLI flags.")
+    if not resolved_flick_id:
+        raise typer.BadParameter("Missing flick_id. Run `bugcam setup` or pass --flick-id.")
 
     return {
         "api_url": resolved_api_url.rstrip("/"),
@@ -208,7 +211,9 @@ def run(
     mode: str = typer.Option("continuous", "--mode", help="'continuous' (always recording) or 'interval' (record periodically)"),
     interval: int = typer.Option(5, "--interval", help="Minutes between recordings in interval mode"),
     chunk_duration: int = typer.Option(60, "--chunk-duration", help="Length of each recorded chunk in seconds"),
+    fps: int = typer.Option(30, "--fps", help="Recording frame rate"),
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
+    bitrate: int = typer.Option(20_000_000, "--bitrate", help="H.264 encoder bitrate in bps (hardware encoding only)"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
     upload_poll: int = typer.Option(30, "--upload-poll", help="Seconds between upload polls"),
     delete_after_upload: bool = typer.Option(
@@ -224,6 +229,16 @@ def run(
     receiver_port: int = typer.Option(RECEIVER_DEFAULT_PORT, "--receiver-port", help="DOT receiver HTTP port"),
     receiver_host: str = typer.Option(RECEIVER_DEFAULT_HOST, "--receiver-host", help="DOT receiver bind address"),
     detection_config: Path | None = typer.Option(None, "--detection-config", help="Path to detection config YAML file"),
+    detection_in_subprocess: bool = typer.Option(
+        True,
+        "--detection-in-subprocess/--detection-in-thread",
+        help="Run detection in a separate process (own GIL) so it can't starve the recorder threads (default: on)",
+    ),
+    enable_upload: bool = typer.Option(
+        True,
+        "--upload/--no-upload",
+        help="Upload results to S3 (default: on)",
+    ),
 ) -> None:
     """Run recording, processing, uploading, and one-minute heartbeat emission."""
     if mode not in {"continuous", "interval"}:
@@ -240,7 +255,7 @@ def run(
         if not ntp_ok:
             console.print(f"[yellow]Warning[/yellow] {ntp_detail}")
 
-        settings = _resolve_runtime_settings(api_url, api_key, flick_id, dot_ids, bucket)
+        settings = _resolve_runtime_settings(api_url, api_key, flick_id, dot_ids, bucket, enable_upload=enable_upload)
         input_dir.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(parents=True, exist_ok=True)
         selected_model = select_model_reference(model)
@@ -259,7 +274,10 @@ def run(
             recording_mode=mode,
             recording_interval=interval,
             chunk_duration=chunk_duration,
+            fps=fps,
             resolution=parsed_resolution,
+            bitrate=bitrate,
+            detection_in_subprocess=detection_in_subprocess,
             detection_config_path=detection_config,
         )
         upload_stop_event = threading.Event()
@@ -314,7 +332,8 @@ def run(
             )
 
         pipeline.start()
-        upload_thread.start()
+        if enable_upload:
+            upload_thread.start()
         heartbeat_thread.start()
         environment_thread.start()
         if receiver_thread:
@@ -343,7 +362,7 @@ def run(
             environment_thread.join(timeout=1)
         if "receiver_thread" in locals() and receiver_thread:
             receiver_thread.join(timeout=5)
-        if "settings" in locals():
+        if "settings" in locals() and enable_upload:
             upload_ready_results(
                 output_dir,
                 settings["api_url"],

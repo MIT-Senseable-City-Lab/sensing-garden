@@ -21,7 +21,7 @@ def process(
     model: str = typer.Option(..., "--model", help="Model bundle name or model.hef path"),
     flick_id: str | None = typer.Option(None, "--flick-id", help="FLICK device ID"),
     classification: bool = typer.Option(True, "--classification/--no-classification", help="Enable classification"),
-    continuous_tracking: bool = typer.Option(True, "--continuous-tracking/--no-continuous-tracking", help="Track insects across FLICK chunks"),
+    continuous_tracking: bool = typer.Option(False, "--continuous-tracking/--no-continuous-tracking", help="Track insects across FLICK chunks"),
     detection_config: Path | None = typer.Option(None, "--detection-config", help="Path to detection config YAML file"),
 ) -> None:
     """Process existing files without recording."""

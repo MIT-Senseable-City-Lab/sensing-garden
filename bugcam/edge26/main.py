@@ -1,5 +1,6 @@
 import json
 import logging
+import multiprocessing as mp
 import queue
 import shutil
 import sys
@@ -55,13 +56,55 @@ class Pipeline:
         - Classification queue: Disk-based FIFO queue for both FLIK and DOT tracks
     """
     
-    def __init__(self, config: dict):
+    def __init__(
+        self,
+        config: dict,
+        *,
+        detection_child: bool = False,
+        shared_video_queue=None,
+        shared_stop_event=None,
+        shared_recording_stopped=None,
+    ):
         self.config = config
-        self.video_queue = queue.Queue()
-        self.stop_event = threading.Event()
-        self.recording_stopped = threading.Event()
+
+        # --- Pipeline mode (resolved early; queue/event types depend on it) ---
+        pipeline_config = config.get("pipeline", {})
+        self.enable_recording = pipeline_config.get("enable_recording", True)
+        self.enable_processing = pipeline_config.get("enable_processing", True)
+        self.enable_classification = pipeline_config.get("enable_classification", True)
+        self.continuous_tracking = pipeline_config.get("continuous_tracking", False)
+
+        # Run the GIL-heavy detection loop in its own subprocess so it cannot
+        # starve the recorder threads (dropped-frame fix). The child is a
+        # detection-only Pipeline; the parent keeps recording + classification.
+        self.detection_in_subprocess = pipeline_config.get("detection_in_subprocess", False)
+        self._detection_child = detection_child
+        if self._detection_child:
+            # The detection child never records or classifies.
+            self.enable_recording = False
+            self.enable_classification = False
+            self.enable_processing = True
+        # This instance runs the detection loop (and owns the tracker-reset
+        # markers) when monolithic, or when it is the detection child.
+        self._owns_detection = (not self.detection_in_subprocess) or self._detection_child
+
+        # Coordination primitives. In subprocess mode the recorder (parent) and
+        # detection loop (child) live in different processes, so the queue and
+        # events must be multiprocessing-backed and shared between them.
+        if self.detection_in_subprocess:
+            self._mp_ctx = mp.get_context("spawn")
+            self.video_queue = shared_video_queue or self._mp_ctx.JoinableQueue()
+            self.stop_event = shared_stop_event or self._mp_ctx.Event()
+            self.recording_stopped = shared_recording_stopped or self._mp_ctx.Event()
+        else:
+            self._mp_ctx = None
+            self.video_queue = queue.Queue()
+            self.stop_event = threading.Event()
+            self.recording_stopped = threading.Event()
+
         self.recorder_thread = None
         self.detection_thread = None
+        self.detection_process = None
         self.classification_thread = None
         
         # Device config
@@ -78,13 +121,6 @@ class Pipeline:
                          Path(config["paths"]["input_storage"]).parent / "pending"))
         self.classification_queue = ClassificationQueue(pending_dir)
         
-        # Pipeline mode
-        pipeline_config = config.get("pipeline", {})
-        self.enable_recording = pipeline_config.get("enable_recording", True)
-        self.enable_processing = pipeline_config.get("enable_processing", True)
-        self.enable_classification = pipeline_config.get("enable_classification", True)
-        self.continuous_tracking = pipeline_config.get("continuous_tracking", True)
-        
         # --- Video sampling (save 1 video per N to output) ---
         self._video_batch_count = 0
         self._video_sample_saved = False
@@ -99,7 +135,10 @@ class Pipeline:
         #    Persisted via .last_recording marker file so it survives restarts.
         self._reset_after_video: str = ""
         self._pending_tracker_reset = False
-        if self.continuous_tracking:
+        # Only the instance that runs the detection loop touches the tracker-reset
+        # markers. In subprocess mode that's the child (at its own startup), so the
+        # parent must not consume/unlink the marker out from under it.
+        if self.continuous_tracking and self._owns_detection:
             self._load_last_recording_marker()
         
         # Initialize components based on mode
@@ -156,6 +195,7 @@ class Pipeline:
             use_picamera=capture["use_picamera"],
             recording_mode=pipeline_cfg.get("recording_mode", "continuous"),
             interval_minutes=pipeline_cfg.get("recording_interval_minutes", 5),
+            bitrate=capture.get("bitrate", 20_000_000),
         )
     
     def _is_flick_video(self, path: Path) -> bool:
@@ -1115,15 +1155,28 @@ class Pipeline:
         else:
             self.recording_stopped.set()  # No recording
         
-        # Start detection worker
+        # Start detection worker — an in-process thread, or a dedicated
+        # subprocess (separate interpreter/GIL) when detection_in_subprocess is
+        # enabled, so detection can't starve the recorder threads.
         if self.enable_processing and self.processor:
-            self.detection_thread = threading.Thread(
-                target=self._detection_worker,
-                daemon=False,
-                name="Detection"
-            )
-            self.detection_thread.start()
-            logger.info("Detection thread started")
+            if self.detection_in_subprocess and not self._detection_child:
+                self.detection_process = self._mp_ctx.Process(
+                    target=_detection_subprocess_entry,
+                    args=(self.config, self.video_queue,
+                          self.stop_event, self.recording_stopped),
+                    name="DetectionProcess",
+                    daemon=False,
+                )
+                self.detection_process.start()
+                logger.info(f"Detection subprocess started (pid={self.detection_process.pid})")
+            else:
+                self.detection_thread = threading.Thread(
+                    target=self._detection_worker,
+                    daemon=False,
+                    name="Detection"
+                )
+                self.detection_thread.start()
+                logger.info("Detection thread started")
             
             # Start classification worker
             if self.enable_classification:
@@ -1177,8 +1230,16 @@ class Pipeline:
         # Stop recorder first
         self.stop_recording()
         
-        # Stop threads
+        # Stop threads / detection subprocess
         self.stop_event.set()
+        
+        if self.detection_process:
+            self.detection_process.join(timeout=30.0)
+            if self.detection_process.is_alive():
+                logger.warning("Detection subprocess did not exit in time; terminating")
+                self.detection_process.terminate()
+                self.detection_process.join(timeout=5.0)
+            logger.info("Detection subprocess stopped")
         
         if self.detection_thread:
             self.detection_thread.join(timeout=30.0)
@@ -1196,6 +1257,10 @@ class Pipeline:
         if self.recorder_thread:
             self.recorder_thread.join()
         
+        # Wait for detection subprocess to finish (if running)
+        if self.detection_process:
+            self.detection_process.join()
+        
         # Wait for detection thread to finish (if running)
         if self.detection_thread:
             self.detection_thread.join()
@@ -1203,3 +1268,31 @@ class Pipeline:
         # Wait for classification thread to finish (if running)
         if self.classification_thread:
             self.classification_thread.join()
+
+
+def _detection_subprocess_entry(config, video_queue, stop_event, recording_stopped):
+    """Spawned-subprocess entrypoint for the detection loop.
+
+    Runs in its own interpreter (own GIL) so the GIL-heavy detection work cannot
+    starve the recorder threads in the parent process. Builds a detection-only
+    ``Pipeline`` that shares the recorder's video queue and stop/recording
+    events, then runs the detection worker loop. All outputs (crops, composites,
+    and the disk-based classification queue) are written to disk exactly as in
+    the in-process path, so detection results are unchanged.
+    """
+    try:
+        setup_logging(Path(config["paths"]["logs_dir"]))
+    except Exception:
+        logging.basicConfig(level=logging.INFO)
+    logger.info("Detection subprocess starting")
+    detector = Pipeline(
+        config,
+        detection_child=True,
+        shared_video_queue=video_queue,
+        shared_stop_event=stop_event,
+        shared_recording_stopped=recording_stopped,
+    )
+    try:
+        detector._detection_worker()
+    finally:
+        logger.info("Detection subprocess exiting")
