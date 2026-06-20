@@ -1,13 +1,11 @@
 import typer
 import subprocess
-import sys
 import os
 import re
 import tempfile
 from pathlib import Path
 from rich.console import Console
 from typing import Optional
-from ..config import get_default_dot_ids, get_default_flick_id, get_input_storage_dir, get_output_storage_dir
 from ..runtime import select_model_reference
 from ..utils import handle_numpy_error
 
@@ -134,7 +132,7 @@ def enable(
             raise typer.Exit(1)
 
         if not _validate_path(workdir):
-            console.print(f"[red]Error: Invalid working directory path[/red]")
+            console.print("[red]Error: Invalid working directory path[/red]")
             raise typer.Exit(1)
 
         selected_model = select_model_reference(model)
@@ -182,7 +180,7 @@ def enable(
                     handle_numpy_error(console)
                     raise typer.Exit(1)
                 else:
-                    console.print(f"[red]Service failed to start[/red]")
+                    console.print("[red]Service failed to start[/red]")
                     console.print("\nCheck logs with: [cyan]bugcam autostart logs[/cyan]")
             else:
                 console.print("[green]✓ Service started[/green]")

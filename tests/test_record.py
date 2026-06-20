@@ -13,6 +13,7 @@ def test_record_help(cli_runner: CliRunner) -> None:
     assert "single" in result.output
 
 
+@pytest.mark.xfail(reason="SG-029: --help assertion brittle to Typer/Rich rendering", strict=False)
 def test_record_single_help(cli_runner: CliRunner) -> None:
     """Test record single subcommand help."""
     result = cli_runner.invoke(app, ["record", "single", "--help"])

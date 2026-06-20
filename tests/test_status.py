@@ -1,5 +1,4 @@
 """Tests for bugcam status command."""
-import pytest
 from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from bugcam.cli import app

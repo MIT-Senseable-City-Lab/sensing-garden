@@ -1,13 +1,3 @@
-import sys
-from unittest.mock import MagicMock
-
-# Hailo is a Pi-only, hardware-accelerator system dependency (`hailo_platform`),
-# unavailable on CI runners and dev machines. bugcam.cli imports the classifier
-# eagerly, so stub the module here — before any test collects bugcam — so the
-# hermetic suite can run off-Pi. Real Hailo behaviour is covered by the nightly
-# docker smoke job, not unit tests.
-sys.modules.setdefault("hailo_platform", MagicMock())
-
 import pytest
 from pathlib import Path
 from typer.testing import CliRunner

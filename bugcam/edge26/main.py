@@ -571,7 +571,7 @@ class Pipeline:
             # Recording-stop boundary: reset tracker after the last
             # video from the previous recording session
             if self._reset_after_video and video_path.name == self._reset_after_video:
-                logger.info(f"Last recorded video processed, resetting tracker")
+                logger.info("Last recorded video processed, resetting tracker")
                 self.processor.reset_tracker()
                 self._clear_last_recording_marker()
             
@@ -642,7 +642,7 @@ class Pipeline:
                 }
                 self.writer.write_results(results=empty_results, output_dir=output_dir)
                 (output_dir / ".done").write_text("classified=0\nexpected=0\n")
-                logger.info(f"  No confirmed tracks, marked directory done")
+                logger.info("  No confirmed tracks, marked directory done")
             
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
@@ -978,7 +978,7 @@ class Pipeline:
                     self.processor.create_dot_composite(
                         track_dir, background_path, labels_path, composite_path
                     )
-                    logger.debug(f"  Composite saved")
+                    logger.debug("  Composite saved")
             except Exception as e:
                 logger.warning(f"  Could not create composite: {e}")
         

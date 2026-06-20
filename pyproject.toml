@@ -48,6 +48,14 @@ markers = [
     "rpi: marks tests that only run on Raspberry Pi hardware",
 ]
 
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["time-lapse"]  # standalone experiment, not part of the bugcam package
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F841"]   # `with patch(...) as m` handles are kept for the patch side-effect
+"scripts/**" = ["E402"]  # helper scripts adjust sys.path before importing
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

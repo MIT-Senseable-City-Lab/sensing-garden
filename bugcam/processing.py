@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
-    get_config_path,
     get_edge26_taxonomy_cache_path,
 )
 from .model_bundles import sha256_file
