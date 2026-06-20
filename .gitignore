@@ -2,6 +2,7 @@ models
 resources
 run_tests
 venv_hailo_rpi5
+.venv/
 hailort.log
 hailort*.log
 log-files
