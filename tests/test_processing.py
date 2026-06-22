@@ -1,22 +1,20 @@
 """Tests for BugCam edge26 processing integration."""
 import hashlib
-import pytest
 from pathlib import Path
 from unittest.mock import patch
 
 from bugcam.processing import build_bundle_provenance, build_edge26_config
 
 BUGSPOT_RATIO_DETECTION_VALUES: tuple[tuple[str, float | int], ...] = (
-    ("min_area", 0.0002),
-    ("max_area", 0.035),
-    ("min_displacement", 0.05),
-    ("max_frame_jump", 0.1),
-    ("revisit_radius", 0.05),
-    ("morph_kernel_size", 3),
+    ("min_area", 0.00012),
+    ("max_area", 0.0015),
+    ("min_displacement", 0.25),
+    ("max_frame_jump", 0.06),
+    ("revisit_radius", 0.025),
+    ("morph_kernel_size", 5),
 )
 
 
-@pytest.mark.xfail(reason="SG-028: detection min_area default drift (yaml 0.00012 vs test 0.0002)", strict=False)
 def test_build_edge26_config_uses_bugspot_ratio_detection_defaults(tmp_path: Path) -> None:
     config = build_edge26_config(
         flick_id="flick01",
