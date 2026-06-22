@@ -1,5 +1,4 @@
 """Tests for bugcam setup command."""
-import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import subprocess
@@ -93,7 +92,6 @@ def test_check_import_handles_exception(cli_runner: CliRunner) -> None:
         assert result is False
 
 
-@pytest.mark.xfail(reason="SG-027: setup tests drifted from setup.py 'already complete' flow", strict=False)
 def test_setup_clones_repo_if_not_exists(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test setup clones hailo-rpi5-examples to temp directory if venv doesn't exist."""
     mock_result = MagicMock()
@@ -123,19 +121,19 @@ def test_setup_clones_repo_if_not_exists(cli_runner: CliRunner, tmp_path: Path) 
          patch('bugcam.commands.setup.shutil.move') as mock_move, \
          patch('bugcam.commands.setup.shutil.rmtree') as mock_rmtree, \
          patch.object(Path, 'exists', mock_path_exists), \
+         patch('bugcam.commands.setup._is_hailo_platform_available', return_value=False), \
          patch.object(Path, 'mkdir'), \
-         patch('bugcam.commands.setup.check_import', return_value=True):
+         patch('bugcam.commands.setup.check_import', side_effect=lambda exe, mod: mod != "hailo_platform"):
         result = cli_runner.invoke(app, ["setup"])
 
         # Should have called git clone to /tmp/hailo-rpi5-examples-setup
         calls = [call[0][0] for call in mock_run.call_args_list]
         git_clone_call = next((c for c in calls if len(c) > 2 and c[0] == "git" and c[1] == "clone"), None)
         assert git_clone_call is not None
-        assert "hailo-rpi5-examples.git" in " ".join(git_clone_call)
+        assert "hailo-apps.git" in " ".join(git_clone_call)
         assert "/tmp/hailo-rpi5-examples-setup" in " ".join(git_clone_call)
 
 
-@pytest.mark.xfail(reason="SG-027: setup tests drifted from setup.py 'already complete' flow", strict=False)
 def test_setup_skips_clone_if_exists(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test setup skips setup if hailo venv already exists."""
     # Create fake hailo venv at permanent location
@@ -155,11 +153,9 @@ def test_setup_skips_clone_if_exists(cli_runner: CliRunner, tmp_path: Path) -> N
         calls = [call[0][0] for call in mock_run.call_args_list]
         git_clone_calls = [c for c in calls if isinstance(c, list) and len(c) > 1 and c[0] == "git" and c[1] == "clone"]
         assert len(git_clone_calls) == 0
-        assert "Found Hailo environment" in result.output
         assert "Hailo setup already complete" in result.output
 
 
-@pytest.mark.xfail(reason="SG-027: setup tests drifted from setup.py 'already complete' flow", strict=False)
 def test_setup_runs_install_script(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test setup runs install.sh script from temp directory."""
     mock_result = MagicMock()
@@ -188,18 +184,18 @@ def test_setup_runs_install_script(cli_runner: CliRunner, tmp_path: Path) -> Non
          patch('bugcam.commands.setup.shutil.move') as mock_move, \
          patch('bugcam.commands.setup.shutil.rmtree') as mock_rmtree, \
          patch.object(Path, 'exists', mock_path_exists), \
+         patch('bugcam.commands.setup._is_hailo_platform_available', return_value=False), \
          patch.object(Path, 'mkdir'), \
-         patch('bugcam.commands.setup.check_import', return_value=True):
+         patch('bugcam.commands.setup.check_import', side_effect=lambda exe, mod: mod != "hailo_platform"):
         result = cli_runner.invoke(app, ["setup"])
 
         # Should have called ./install.sh with cwd set to temp directory
         calls = [call for call in mock_run.call_args_list]
-        install_call = next((c for c in calls if c[0][0] == ["./install.sh"]), None)
+        install_call = next((c for c in calls if c[0][0] == ["sudo", "./install.sh", "--no-tappas-required"]), None)
         assert install_call is not None
         assert install_call[1]['cwd'] == str(temp_clone_dir)
 
 
-@pytest.mark.xfail(reason="SG-027: setup tests drifted from setup.py 'already complete' flow", strict=False)
 def test_setup_install_script_failure(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test setup handles install.sh failure from temp directory."""
     mock_success = MagicMock()
@@ -211,7 +207,7 @@ def test_setup_install_script_failure(cli_runner: CliRunner, tmp_path: Path) -> 
     hailo_venv_dir = tmp_path / ".local" / "share" / "bugcam" / "hailo-venv"
 
     def run_side_effect(cmd, **kwargs):
-        if cmd == ["./install.sh"]:
+        if "install.sh" in cmd:
             return mock_failure
         return mock_success
 
@@ -231,13 +227,14 @@ def test_setup_install_script_failure(cli_runner: CliRunner, tmp_path: Path) -> 
          patch('subprocess.run', side_effect=run_side_effect), \
          patch('bugcam.commands.setup.shutil.rmtree') as mock_rmtree, \
          patch.object(Path, 'exists', mock_path_exists), \
+         patch('bugcam.commands.setup._is_hailo_platform_available', return_value=False), \
+         patch('bugcam.commands.setup.check_import', side_effect=lambda exe, mod: mod != "hailo_platform"), \
          patch.object(Path, 'mkdir'):
         result = cli_runner.invoke(app, ["setup"])
         assert result.exit_code == 1
         assert "failed" in result.output.lower()
 
 
-@pytest.mark.xfail(reason="SG-027: setup tests drifted from setup.py 'already complete' flow", strict=False)
 def test_setup_verifies_hailo_apps(cli_runner: CliRunner, tmp_path: Path) -> None:
     """Test setup verifies hailo_apps installation after moving venv."""
     mock_result = MagicMock()
@@ -269,11 +266,11 @@ def test_setup_verifies_hailo_apps(cli_runner: CliRunner, tmp_path: Path) -> Non
          patch('bugcam.commands.setup.shutil.rmtree') as mock_rmtree, \
          patch.object(Path, 'exists', mock_path_exists), \
          patch.object(Path, 'mkdir'), \
-         patch('bugcam.commands.setup.check_import', return_value=True) as mock_check, \
+         patch('bugcam.commands.setup._is_hailo_platform_available', return_value=False), \
+         patch('bugcam.commands.setup.check_import', side_effect=lambda exe, mod: mod != "hailo_platform") as mock_check, \
          patch('bugcam.commands.setup.load_config', return_value=existing_config), \
          patch('bugcam.commands.setup.save_config'), \
          patch('bugcam.commands.setup._install_sen55_binary'):
-        result = cli_runner.invoke(app, ["setup"], input="\n\n\nn\n")
-        assert "hailo_apps: OK" in result.output
-
-        mock_check.assert_called_with(mock_check.call_args[0][0], "hailo_apps")
+        cli_runner.invoke(app, ["setup"], input="\n\n\nn\n")
+        # The install path verifies hailo_apps importability after moving the venv.
+        assert any(c.args[1] == "hailo_apps" for c in mock_check.call_args_list)

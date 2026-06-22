@@ -217,13 +217,11 @@ def _prompt_storage_paths(existing_config: dict[str, Any], external_drives: list
     default_pending = str(existing_config.get("pending_dir") or str(Path.home() / "bugcam" / "pending"))
 
     # Ask about external drive ONLY for storage dirs (input/output/pending)
-    use_external = False
     if external_drives:
         if len(external_drives) == 1:
             drive = external_drives[0]
             console.print(f"\n[cyan]External drive detected:[/cyan] {drive}")
             if typer.confirm("Use external drive for video storage?", default=True):
-                use_external = True
                 base = f"{drive}/bugcam"
                 default_input = base + "/incoming"
                 default_output = base + "/outputs"
@@ -233,7 +231,6 @@ def _prompt_storage_paths(existing_config: dict[str, Any], external_drives: list
             for i, drive in enumerate(external_drives, 1):
                 console.print(f"  {i}. {drive}")
             if typer.confirm("Use an external drive for video storage?", default=True):
-                use_external = True  # FIXME: computed but never applied
                 if len(external_drives) == 1:
                     drive = external_drives[0]
                 else:
