@@ -23,7 +23,6 @@ from bugcam.pollen.archive import Archiver
 from bugcam.pollen.presign import RateLimitError
 from bugcam.pollen.staging import StagingArea
 from bugcam.pollen.store import PollenStore, UploadRow
-from bugcam.pollen.upload_utils import content_type_for
 from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SIZE, Uploader
 
 logger = logging.getLogger("bugcam.pollen")

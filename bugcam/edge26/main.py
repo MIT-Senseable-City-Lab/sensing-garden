@@ -64,8 +64,10 @@ class Pipeline:
         shared_video_queue=None,
         shared_stop_event=None,
         shared_recording_stopped=None,
+        on_result_ready=None,
     ):
         self.config = config
+        self._on_result_ready = on_result_ready
 
         # --- Pipeline mode (resolved early; queue/event types depend on it) ---
         pipeline_config = config.get("pipeline", {})
@@ -198,6 +200,14 @@ class Pipeline:
             bitrate=capture.get("bitrate", 20_000_000),
         )
     
+    def _notify_result_ready(self, output_dir: Path) -> None:
+        """Tell the upload owner (Pollen) a result dir is finalized, if wired."""
+        if self._on_result_ready is not None:
+            try:
+                self._on_result_ready(output_dir)
+            except Exception:
+                logger.error("result-ready callback failed", exc_info=True)
+
     def _is_flick_video(self, path: Path) -> bool:
         """Check if a path is a FLICK video (matches flick_id prefix)."""
         return (path.is_file()
@@ -643,7 +653,8 @@ class Pipeline:
                 self.writer.write_results(results=empty_results, output_dir=output_dir)
                 (output_dir / ".done").write_text("classified=0\nexpected=0\n")
                 logger.info("  No confirmed tracks, marked directory done")
-            
+                self._notify_result_ready(output_dir)
+
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
     
@@ -1026,11 +1037,10 @@ class Pipeline:
                 logger.warning(f"Could not read detection metadata: {e}")
         return {}
     
-    @staticmethod
-    def _check_classification_complete(output_dir: Path) -> None:
+    def _check_classification_complete(self, output_dir: Path) -> None:
         """
         Increment completed count and check if all tracks for this dir are done.
-        
+
         When detection enqueues tracks, it writes .expected_tracks with the count.
         Each call to this method increments .completed_tracks. When
         completed >= expected, writes .done to signal the upload thread.
@@ -1040,12 +1050,12 @@ class Pipeline:
         expected_path = output_dir / ".expected_tracks"
         if not expected_path.exists():
             return
-        
+
         try:
             expected = int(expected_path.read_text().strip())
         except (ValueError, OSError):
             return
-        
+
         # Atomically increment completed count
         completed_path = output_dir / ".completed_tracks"
         try:
@@ -1053,7 +1063,7 @@ class Pipeline:
         except (ValueError, OSError):
             completed = 1
         completed_path.write_text(str(completed))
-        
+
         if completed >= expected:
             done_path = output_dir / ".done"
             done_path.write_text(f"classified={completed}\nexpected={expected}\n")
@@ -1062,6 +1072,7 @@ class Pipeline:
             completed_path.unlink(missing_ok=True)
             detection_meta_path = output_dir / ".detection.json"
             detection_meta_path.unlink(missing_ok=True)
+            self._notify_result_ready(output_dir)
     
     def _sweep_stale_directories(self) -> None:
         """Clean up FLIK output directories that are stuck without .done markers.

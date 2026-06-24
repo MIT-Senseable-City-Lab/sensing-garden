@@ -43,6 +43,7 @@ def build_pipeline(
     continuous_tracking: bool = False,
     detection_in_subprocess: bool = True,
     detection_config_path: Path | None = None,
+    on_result_ready=None,
 ) -> Pipeline:
     """Create a configured edge26 pipeline instance."""
     model_path, labels_path = resolve_model_assets(model_reference)
@@ -69,7 +70,7 @@ def build_pipeline(
         detection_config_path=detection_config_path,
     )
     setup_logging(Path(config["paths"]["logs_dir"]))
-    return Pipeline(config)
+    return Pipeline(config, on_result_ready=on_result_ready)
 
 
 def resolve_bundle_provenance(model_reference: str) -> dict[str, str]:
