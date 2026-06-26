@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 import requests
+
+from bugcam.usage_logger import log_usage
 
 RESULTS_FILENAME = "results.json"
 MANIFEST_FILENAME = "manifest.json"
@@ -39,12 +42,14 @@ def _iter_upload_files(local_dir: Path) -> list[Path]:
 
 
 def get_upload_url(api_url: str, api_key: str, s3_key: str) -> str:
+    t0 = time.monotonic()
     response = requests.post(
         f"{api_url.rstrip('/')}/upload-url",
         json={"s3_key": s3_key},
         headers={"X-Api-Key": api_key},
         timeout=REQUEST_TIMEOUT_SECONDS,
     )
+    duration_ms = (time.monotonic() - t0) * 1000
     if response.status_code == 429:
         retry_after = None
         if "Retry-After" in response.headers:
@@ -58,42 +63,92 @@ def get_upload_url(api_url: str, api_key: str, s3_key: str) -> str:
     upload_url = payload.get("upload_url")
     if not isinstance(upload_url, str) or not upload_url:
         raise ValueError("upload_url missing from backend response")
+    log_usage(
+        operation="get_upload_url",
+        endpoint=f"{api_url}/upload-url",
+        bytes_sent=len(json.dumps({"s3_key": s3_key}).encode("utf-8")),
+        success=True,
+        s3_key=s3_key,
+        duration_ms=duration_ms,
+    )
     return upload_url
 
 
 def upload_bytes(api_url: str, api_key: str, data: bytes, s3_key: str, content_type: str) -> None:
     upload_url = get_upload_url(api_url, api_key, s3_key)
-    response = requests.put(
-        upload_url,
-        data=data,
-        headers={"Content-Type": content_type},
-        timeout=UPLOAD_TIMEOUT_SECONDS,
+    bytes_sent = len(data)
+    t0 = time.monotonic()
+    try:
+        response = requests.put(
+            upload_url,
+            data=data,
+            headers={"Content-Type": content_type},
+            timeout=UPLOAD_TIMEOUT_SECONDS,
+        )
+        duration_ms = (time.monotonic() - t0) * 1000
+        if response.status_code == 429:
+            retry_after = None
+            if "Retry-After" in response.headers:
+                try:
+                    retry_after = int(response.headers["Retry-After"])
+                except (ValueError, TypeError):
+                    pass
+            raise RateLimitError(retry_after=retry_after)
+        response.raise_for_status()
+    except Exception:
+        log_usage(
+            operation="upload_bytes",
+            endpoint=upload_url.split("?")[0],
+            bytes_sent=bytes_sent,
+            success=False,
+            s3_key=s3_key,
+        )
+        raise
+    log_usage(
+        operation="upload_bytes",
+        endpoint=upload_url.split("?")[0],
+        bytes_sent=bytes_sent,
+        success=True,
+        s3_key=s3_key,
+        duration_ms=duration_ms,
     )
-    if response.status_code == 429:
-        retry_after = None
-        if "Retry-After" in response.headers:
-            try:
-                retry_after = int(response.headers["Retry-After"])
-            except (ValueError, TypeError):
-                pass
-        raise RateLimitError(retry_after=retry_after)
-    response.raise_for_status()
 
 
 def upload_file(api_url: str, api_key: str, local_path: Path, s3_key: str) -> None:
     """Upload one file through a presigned PUT URL."""
     upload_url = get_upload_url(api_url, api_key, s3_key)
     data = local_path.read_bytes()
-    response = requests.put(upload_url, data=data, timeout=UPLOAD_TIMEOUT_SECONDS)
-    if response.status_code == 429:
-        retry_after = None
-        if "Retry-After" in response.headers:
-            try:
-                retry_after = int(response.headers["Retry-After"])
-            except (ValueError, TypeError):
-                pass
-        raise RateLimitError(retry_after=retry_after)
-    response.raise_for_status()
+    bytes_sent = len(data)
+    t0 = time.monotonic()
+    try:
+        response = requests.put(upload_url, data=data, timeout=UPLOAD_TIMEOUT_SECONDS)
+        duration_ms = (time.monotonic() - t0) * 1000
+        if response.status_code == 429:
+            retry_after = None
+            if "Retry-After" in response.headers:
+                try:
+                    retry_after = int(response.headers["Retry-After"])
+                except (ValueError, TypeError):
+                    pass
+            raise RateLimitError(retry_after=retry_after)
+        response.raise_for_status()
+    except Exception:
+        log_usage(
+            operation="upload_file",
+            endpoint=upload_url.split("?")[0],
+            bytes_sent=bytes_sent,
+            success=False,
+            s3_key=s3_key,
+        )
+        raise
+    log_usage(
+        operation="upload_file",
+        endpoint=upload_url.split("?")[0],
+        bytes_sent=bytes_sent,
+        success=True,
+        s3_key=s3_key,
+        duration_ms=duration_ms,
+    )
 
 
 def upload_directory(api_url: str, api_key: str, local_dir: Path, s3_prefix: str) -> None:
