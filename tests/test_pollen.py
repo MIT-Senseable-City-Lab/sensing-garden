@@ -173,12 +173,11 @@ class TestBatched:
         pol = _pollen(cfg, up, archiver=TarArchiver(), clock=lambda: datetime(2026, 2, 4, 13, 0, 0))
         a = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
         b = _write(cfg.output_root, "flick1/c/crops/t/frame_000000.jpg", b"img")
-        pol.enqueue(a, "result")
-        pol.enqueue(b, "result")
+        pol.enqueue_set([a, b], device="flick1", kind="result")
 
         pol._tick()
 
-        assert up.uploaded == ["v2/archives/flick1/flick1_20260204_130000.tar"]
+        assert up.uploaded == ["v2/archives/flick1/20260204_130000.tar"]
         assert a.exists() and b.exists()  # producer files untouched; staged copies cleaned
         assert pol.store.pending_count() == 0
 
@@ -186,8 +185,8 @@ class TestBatched:
         cfg = _config(tmp_path, batch=True)
         up = FakeUploader()
         pol = _pollen(cfg, up, archiver=TarArchiver(), clock=lambda: datetime(2026, 2, 4, 13, 0, 0))
-        pol.enqueue(_write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}'), "result")
-        pol.enqueue(_write(cfg.output_root, "dot1/20260204/results.json", b'{"tracks":[{"track_id":"t"}]}'), "result")
+        pol.enqueue_set([_write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')], device="flick1", kind="result")
+        pol.enqueue_set([_write(cfg.output_root, "dot1/20260204/results.json", b'{"tracks":[{"track_id":"t"}]}')], device="dot1", kind="result")
 
         pol._tick()
 
@@ -200,10 +199,10 @@ class TestBatched:
         """If the archive upload fails the member rows must stay pending so the
         next tick retries — no silent data loss."""
         cfg = _config(tmp_path, batch=True)
-        up = FakeUploader(fail_keys={"v2/archives/flick1/flick1_20260204_130000.tar"})
+        up = FakeUploader(fail_keys={"v2/archives/flick1/20260204_130000.tar"})
         pol = _pollen(cfg, up, archiver=TarArchiver(), clock=lambda: datetime(2026, 2, 4, 13, 0, 0))
         a = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        pol.enqueue(a, "result")
+        pol.enqueue_set([a], device="flick1", kind="result")
 
         pol._tick()
 

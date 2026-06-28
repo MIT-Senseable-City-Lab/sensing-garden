@@ -1,7 +1,7 @@
 """The archiving interface and its first implementation, TarArchiver.
 
 Bundles queued items into one uncompressed tar whose members are named by their
-canonical v1 keys, shipped to v2/archives/<group>/<group>_<ts>.tar -- the same shape the
+canonical v1 keys, shipped to v2/archives/<device>/<ts>.tar -- the same shape the
 backend ingestion branches consume.
 """
 import tarfile
@@ -40,7 +40,7 @@ class TestTarArchiver:
         artifact = archiver.pack("flick1", items, staging, timestamp="20260204_130000")
 
         assert isinstance(artifact, ArchiveArtifact)
-        assert artifact.s3_key == "v2/archives/flick1/flick1_20260204_130000.tar"
+        assert artifact.s3_key == "v2/archives/flick1/20260204_130000.tar"
         assert artifact.path.exists()
         assert artifact.member_keys == [it.s3_key for it in items]
 
@@ -58,4 +58,4 @@ class TestTarArchiver:
         items = _make_items(tmp_path)
         archiver = TarArchiver(archive_key_prefix="v2/batches")
         artifact = archiver.pack("dot1", items, tmp_path / "s", timestamp="20260204_130000")
-        assert artifact.s3_key == "v2/batches/dot1/dot1_20260204_130000.tar"
+        assert artifact.s3_key == "v2/batches/dot1/20260204_130000.tar"

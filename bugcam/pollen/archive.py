@@ -1,11 +1,11 @@
 """Archiving interface for Pollen, with a tar-based first implementation.
 
-An Archiver bundles a group of queued items into a single artifact for one
-upload. TarArchiver writes an uncompressed tar whose members are named by each
-item's canonical v1 key (so the tar is self-describing and the backend can map a
-member straight to its destination), shipped to v2/archives/<group>/<group>_<ts>.tar.
-Other strategies (e.g. compressed, or a different container) can implement the
-same interface later.
+An Archiver bundles a device's queued items into a single artifact for one upload.
+TarArchiver writes an uncompressed tar whose members are named by each item's
+canonical v1 key (so the tar is self-describing and the backend can map a member
+straight to its destination), shipped to v2/archives/<device>/<ts>.tar. Other
+strategies (e.g. compressed, or a different container) can implement the same
+interface later.
 """
 from __future__ import annotations
 
@@ -29,13 +29,20 @@ class Archiver(ABC):
     @abstractmethod
     def pack(
         self,
-        group: str,
+        device: str,
         items: list[UploadRow],
         staging_dir: Path,
         *,
         timestamp: str,
     ) -> Optional[ArchiveArtifact]:
-        """Bundle ``items`` into one artifact, or return None if there is nothing."""
+        """Bundle ``items`` into one artifact, or return None if there is nothing.
+
+        Args:
+            device: the owning device id; the archive is grouped/keyed under it.
+            items: the queued rows to bundle (their staged copies are the bytes).
+            staging_dir: directory to write the archive file into locally.
+            timestamp: seal time, used in the archive's filename.
+        """
 
 
 class TarArchiver(Archiver):
@@ -44,7 +51,7 @@ class TarArchiver(Archiver):
 
     def pack(
         self,
-        group: str,
+        device: str,
         items: list[UploadRow],
         staging_dir: Path,
         *,
@@ -54,7 +61,7 @@ class TarArchiver(Archiver):
             return None
         staging_dir = Path(staging_dir)
         staging_dir.mkdir(parents=True, exist_ok=True)
-        s3_key = f"{self.archive_key_prefix}/{group}/{group}_{timestamp}.tar"
+        s3_key = f"{self.archive_key_prefix}/{device}/{timestamp}.tar"
         tar_path = staging_dir / s3_key.replace("/", "_")
         with tarfile.open(tar_path, "w") as tar:  # uncompressed -> valid member offsets
             for item in items:

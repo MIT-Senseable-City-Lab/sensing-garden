@@ -69,8 +69,8 @@ def test_enqueue_set_lands_in_one_archive(tmp_path):
     assert len(tars) == 1
 
 
-def test_group_of_uses_passed_device_not_key(tmp_path):
-    """Grouping follows the explicit device even when the key would parse differently."""
+def test_device_of_uses_passed_device(tmp_path):
+    """Grouping follows the explicit device stored on the row."""
     pol = _pollen(tmp_path, batch=True)
     pol.archiver = TarArchiver()
     pol._clock = lambda: datetime(2026, 1, 1, 0, 0, 0)
@@ -78,4 +78,4 @@ def test_group_of_uses_passed_device_not_key(tmp_path):
     pol.enqueue_set([_write(out, "FLIK4/20260101_000000_000000/results.json")], device="DEVICE-X", kind="result")
 
     row = pol.store.claim_pending()[0]
-    assert pol._group_of(row) == "DEVICE-X"
+    assert pol._device_of(row) == "DEVICE-X"

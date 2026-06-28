@@ -1,6 +1,6 @@
 """Pollen: the device-side upload subsystem.
 
-Owns a SQLite-backed queue, the upload loop, and cleanup. The app enqueues an
+Owns a SQLite-backed queue, the upload loop, retention, and cleanup. The app enqueues an
 artifact (result / heartbeat / log) as it is produced; a background loop uploads
 pending items (per-object, or bundled into an archive when batching is on),
 marks each success, then deletes the local file and prunes its row.
@@ -288,7 +288,7 @@ class Pollen:
 
     def _upload_batched(self, pending: list[UploadRow]) -> int:
         # Archive rows already in flight (e.g. from a previous interrupted tick)
-        # upload directly; the rest are bundled per group.
+        # upload directly; the rest are bundled per device.
         failures = 0
         for row in (r for r in pending if r.kind == ARCHIVE_KIND):
             if not self._upload_one(row):
@@ -297,13 +297,13 @@ class Pollen:
         if not members:
             return failures
 
-        groups: dict[str, list[UploadRow]] = defaultdict(list)
+        by_device: dict[str, list[UploadRow]] = defaultdict(list)
         for row in members:
-            groups[self._group_of(row)].append(row)
+            by_device[self._device_of(row)].append(row)
 
         timestamp = self._clock().strftime("%Y%m%d_%H%M%S")
-        for group, items in groups.items():
-            artifact = self.archiver.pack(group, items, self.config.staging_dir, timestamp=timestamp)
+        for device, items in by_device.items():
+            artifact = self.archiver.pack(device, items, self.config.staging_dir, timestamp=timestamp)
             if artifact is None:
                 continue
             tar_id = self.store.enqueue(str(artifact.path), kind=ARCHIVE_KIND, s3_key=artifact.s3_key)
@@ -322,14 +322,9 @@ class Pollen:
                 failures += 1
         return failures
 
-    def _group_of(self, row: UploadRow) -> str:
-        # Device is passed explicitly at enqueue and stored on the row; fall back to the
-        # legacy key parse (v1/<device>/...) only for pre-existing rows without it.
-        device = row.metadata.get("device")
-        if device:
-            return device
-        parts = row.s3_key.split("/")
-        return parts[1] if len(parts) > 1 else "batch"
+    def _device_of(self, row: UploadRow) -> str:
+        # Device is passed explicitly at enqueue and stored on the row.
+        return row.metadata["device"]
 
     def _policy_for(self, kind: str) -> KindPolicy:
         """Resolve the retention policy for a kind: explicit per-kind override, else the
