@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -32,6 +32,13 @@ MAX_RETRY_DELAY_SECONDS = 300  # matches the legacy upload loop
 STUCK_WARN_SECONDS = 3600      # warn loudly once the oldest item has waited this long
 
 
+@dataclass(frozen=True)
+class KindPolicy:
+    """Per-kind retention. ``keep_after_upload`` retains a local copy (in retained/) plus
+    a dedup tombstone after upload; otherwise the staged copy and the row are dropped."""
+    keep_after_upload: bool = False
+
+
 @dataclass
 class PollenConfig:
     db_path: Path
@@ -44,6 +51,7 @@ class PollenConfig:
     batch: bool = False
     delete_after_upload: bool = True
     retain_uploaded: bool = False  # keep a local copy (in retained/) after upload
+    retention_by_kind: dict[str, KindPolicy] = field(default_factory=dict)  # per-kind override
     reconcile_grace_seconds: float = 300.0  # min age before an unreferenced staged link is swept
 
 
@@ -82,15 +90,13 @@ class Pollen:
         label: str = "object",
         *,
         content_type: Optional[str] = None,
-        retain: bool = False,
     ) -> Optional[int]:
-        """Queue an artifact for upload. Returns the row id, or None if skipped.
+        """Queue a single artifact for upload. Returns the row id, or None if skipped.
 
-        The producer decides *what* to enqueue (the skip rules live there now). The
-        file is hardlinked into staging and uploaded from there, so the producer is
-        free to delete its own copy at any time. ``retain`` keeps the producer file
-        as a dedup tombstone after upload; ``content_type`` overrides the default
-        derived from the filename. ``label`` is a free-text tag (grouping/metrics).
+        The producer decides *what* to enqueue and owns its own copy. The file is
+        hardlinked into staging and uploaded from there. Retention after upload is a
+        per-kind policy (see ``_policy_for``), not a per-call flag. ``content_type``
+        overrides the default derived from the filename; ``label`` is the kind tag.
         """
         path = Path(path)
         if not path.exists():
@@ -98,7 +104,7 @@ class Pollen:
         s3_key = self._derive_key(path)
         if self.store.has_key(s3_key):
             return None  # already queued or a tombstone -> skip before staging (no churn)
-        metadata: dict = {"retain": retain}
+        metadata: dict = {}
         if content_type is not None:
             metadata["content_type"] = content_type
         size = path.stat().st_size
@@ -325,17 +331,24 @@ class Pollen:
         parts = row.s3_key.split("/")
         return parts[1] if len(parts) > 1 else "batch"
 
+    def _policy_for(self, kind: str) -> KindPolicy:
+        """Resolve the retention policy for a kind: explicit per-kind override, else the
+        default derived from the global delete_after_upload / retain_uploaded knobs."""
+        policy = self.config.retention_by_kind.get(kind)
+        if policy is not None:
+            return policy
+        keep = (not self.config.delete_after_upload) or self.config.retain_uploaded
+        return KindPolicy(keep_after_upload=keep)
+
     def _cleanup(self) -> None:
-        # Pollen only ever handles its own staged copy; the producer owns (and deletes)
-        # its files on its own schedule. With retain_uploaded on, Pollen keeps a local
-        # copy in the retained area instead of dropping the staged one.
+        # Retention is decided per kind, by the spooler -- not the producer. keep_after_upload
+        # retains a local copy (retained/) plus a dedup tombstone; otherwise the staged copy
+        # and row are dropped. The producer owns and deletes its own originals either way.
         for row in self.store.uploaded_rows():
             staged = Path(row.staging_path)
-            if self.config.retain_uploaded:
+            if self._policy_for(row.kind).keep_after_upload:
                 self._staging.retain(staged)
+                self.store.mark_done(row.id)  # tombstone dedups re-enqueues of the same key
             else:
                 self._staging.unlink(staged)
-            if self.config.delete_after_upload and not row.metadata.get("retain", False):
                 self.store.delete(row.id)
-            else:
-                self.store.mark_done(row.id)  # tombstone dedups re-enqueues of the same key

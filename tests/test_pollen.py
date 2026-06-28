@@ -54,14 +54,6 @@ class TestEnqueue:
         rid = pol.enqueue(path, "heartbeat")
         assert pol.store.get(rid).s3_key == "v1/flick1/heartbeats/h.json"
 
-    def test_retain_arg_stored_in_metadata(self, tmp_path):
-        cfg = _config(tmp_path)
-        pol = _pollen(cfg)
-        path = _write(cfg.output_root, "dot1/20260204/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        rid = pol.enqueue(path, "result", retain=True)
-        assert pol.store.get(rid).metadata.get("retain") is True
-
-
 class TestTick:
     def test_uploads_then_deletes_and_prunes(self, tmp_path):
         cfg = _config(tmp_path)
@@ -78,21 +70,19 @@ class TestTick:
         assert path.exists()              # producer file untouched (producer owns cleanup)
         assert pol.store.get(rid) is None
 
-    def test_retain_keeps_file_as_tombstone(self, tmp_path):
+    def test_keep_after_upload_leaves_tombstone(self, tmp_path):
         from bugcam.pollen.store import UploadStatus
 
-        cfg = _config(tmp_path)
+        cfg = _config(tmp_path, delete_after_upload=False)  # keep_after_upload for all kinds
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "dot1/20260204/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        rid = pol.enqueue(path, "result", retain=True)
+        rid = pol.enqueue(path, "result")
 
         pol._tick()
 
-        assert path.exists()  # DOT day-bucket retained
-        # row kept as a 'done' tombstone so a re-scan of the same content is deduped
+        # row kept as a 'done' tombstone so a re-enqueue of the same key is deduped
         assert pol.store.get(rid).status == UploadStatus.DONE
-        # an unchanged re-enqueue is ignored; the queue stays empty
-        assert pol.enqueue(path, "result", retain=True) is None
+        assert pol.enqueue(path, "result") is None
         assert pol.store.pending_count() == 0
 
     def test_failed_upload_leaves_row_pending(self, tmp_path):
@@ -279,6 +269,23 @@ class TestRetainUploaded:
         assert not (cfg.output_root / RETAINED_SUBDIR).exists() or not any(
             (cfg.output_root / RETAINED_SUBDIR).rglob("*")
         )
+
+    def test_per_kind_policy_overrides_default(self, tmp_path):
+        """A per-kind override keeps one kind as a tombstone while others are dropped."""
+        from bugcam.pollen.pollen import KindPolicy
+        from bugcam.pollen.store import UploadStatus
+
+        cfg = _config(tmp_path, retention_by_kind={"log": KindPolicy(keep_after_upload=True)})
+        pol = _pollen(cfg)
+        log = _write(cfg.output_root, "flick1/logs/edge26_20260101.log", b"log")
+        res = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
+        log_id = pol.enqueue(log, "log")
+        res_id = pol.enqueue(res, "result")
+
+        pol._tick()
+
+        assert pol.store.get(log_id).status == UploadStatus.DONE  # kept (tombstone)
+        assert pol.store.get(res_id) is None                      # dropped (default policy)
 
 
 class TestEnqueueDedup:
