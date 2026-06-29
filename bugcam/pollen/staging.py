@@ -80,7 +80,25 @@ class StagingArea:
         return dst
 
     def unlink(self, staged_path: Path) -> None:
-        Path(staged_path).unlink(missing_ok=True)
+        staged_path = Path(staged_path)
+        staged_path.unlink(missing_ok=True)
+        self._prune_empty_dirs(staged_path.parent)
+
+    def _prune_empty_dirs(self, start: Path) -> None:
+        """Remove now-empty dirs from ``start`` upward, stopping at (and never
+        removing) the staging root that contains it. A no-op if ``start`` is not
+        under a known staging dir, so the mirrored tree never lingers empty."""
+        start = Path(start)
+        staging = next((s for _root, s in self._roots if s == start or s in start.parents), None)
+        if staging is None:
+            return
+        current = start
+        while current != staging:
+            try:
+                current.rmdir()
+            except OSError:
+                return  # non-empty or already gone -> stop climbing
+            current = current.parent
 
     def retain(self, staged_path: Path) -> Path:
         """Move a staged copy into the retained area (same mount), out of staging.
@@ -95,6 +113,7 @@ class StagingArea:
             dst.parent.mkdir(parents=True, exist_ok=True)
             if staged_path.exists():
                 os.replace(staged_path, dst)  # same mount -> atomic rename
+            self._prune_empty_dirs(staged_path.parent)
             return dst
         self.unlink(staged_path)  # not under a known staging dir; nothing to retain
         return staged_path

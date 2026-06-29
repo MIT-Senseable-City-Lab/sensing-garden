@@ -71,6 +71,33 @@ class TestLink:
         assert not dst.exists()
 
 
+class TestPruneEmptyDirs:
+    def test_unlink_prunes_emptied_dirs_up_to_staging_root(self, tmp_path):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        dst = area.link(_write(out / "FLIK4" / "20260627_200000_000000" / "crops" / "x.jpg"))
+        area.unlink(dst)
+        staging = out / STAGING_SUBDIR
+        assert not (staging / "FLIK4").exists()  # mirrored tree gone
+        assert staging.exists()  # staging root itself preserved
+
+    def test_unlink_keeps_dirs_with_siblings(self, tmp_path):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        keep = area.link(_write(out / "FLIK4" / "a.json"))
+        drop = area.link(_write(out / "FLIK4" / "deep" / "b.json"))
+        area.unlink(drop)
+        assert not drop.parent.exists()  # emptied subdir pruned
+        assert keep.exists()  # sibling and its dir untouched
+
+    def test_retain_prunes_emptied_staging_dirs(self, tmp_path):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        dst = area.link(_write(out / "FLIK4" / "20260627" / "results.json"))
+        area.retain(dst)
+        assert not (out / STAGING_SUBDIR / "FLIK4").exists()
+
+
 class TestMountValidation:
     def test_source_on_unknown_mount_raises(self, tmp_path):
         out = tmp_path / "out"
