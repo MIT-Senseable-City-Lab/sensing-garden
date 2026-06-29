@@ -600,11 +600,17 @@ class Pipeline:
             
             # Save detection metadata for classification thread to merge into results
             if confirmed_count > 0:
+                # Backend parses video_timestamp as ISO-8601; date_time is the
+                # compact YYYYMMDD_HHMMSS_micros video stem (matches processor.py).
+                date_str, time_str = date_time.split('_')[:2]
+                video_timestamp_iso = datetime.strptime(
+                    f"{date_str}_{time_str}", "%Y%m%d_%H%M%S"
+                ).isoformat()
                 detection_meta = {
                     "source_device": self.flick_id,
                     "date": date_time[:8],
                     "video_file": video_path.name,
-                    "video_timestamp": date_time,
+                    "video_timestamp": video_timestamp_iso,
                     "model_id": self.config.get("model", {}).get("model_id"),
                     "video_info": {
                         "fps": result.video_info.get("fps"),
