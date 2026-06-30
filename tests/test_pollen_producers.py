@@ -66,7 +66,7 @@ class TestEnvironment:
         env.parent.mkdir(parents=True)
         env.write_text('{"temperature": 22.5}', encoding="utf-8")
 
-        pol.enqueue(env, "environment")
+        pol.enqueue_set([env], device="flick1", kind="environment")
 
         rows = pol.store.claim_pending()
         assert len(rows) == 1

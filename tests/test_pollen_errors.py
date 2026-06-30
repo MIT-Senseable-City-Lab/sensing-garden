@@ -108,7 +108,7 @@ def _enqueue_file(pol, name=b"data"):
     path = pol.config.output_root / "flick1" / "c" / "results.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"tracks":[{"track_id":"t"}]}', encoding="utf-8")
-    return path, pol.enqueue(path, "result")
+    return path, pol.enqueue_set([path], device="flick1", kind="result")[0]
 
 
 class TestFailureKeepsData:

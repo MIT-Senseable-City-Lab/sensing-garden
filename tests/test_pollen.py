@@ -51,7 +51,7 @@ class TestEnqueue:
         cfg = _config(tmp_path)
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "flick1/heartbeats/h.json", b"{}")
-        rid = pol.enqueue(path, "heartbeat")
+        rid = pol.enqueue_set([path], device="flick1", kind="heartbeat")[0]
         assert pol.store.get(rid).s3_key == "v1/flick1/heartbeats/h.json"
 
 class TestTick:
@@ -60,7 +60,7 @@ class TestTick:
         up = FakeUploader()
         pol = _pollen(cfg, up)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        rid = pol.enqueue(path, "result")
+        rid = pol.enqueue_set([path], device="flick1", kind="result")[0]
         staged = pol.store.get(rid).staging_path
 
         pol._tick()
@@ -76,13 +76,13 @@ class TestTick:
         cfg = _config(tmp_path, delete_after_upload=False)  # keep_after_upload for all kinds
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "dot1/20260204/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        rid = pol.enqueue(path, "result")
+        rid = pol.enqueue_set([path], device="flick1", kind="result")[0]
 
         pol._tick()
 
         # row kept as a 'done' tombstone so a re-enqueue of the same key is deduped
         assert pol.store.get(rid).status == UploadStatus.DONE
-        assert pol.enqueue(path, "result") is None
+        assert pol.enqueue_set([path], device="flick1", kind="result") == []
         assert pol.store.pending_count() == 0
 
     def test_failed_upload_leaves_row_pending(self, tmp_path):
@@ -90,7 +90,7 @@ class TestTick:
         up = FakeUploader(fail_keys={"v1/flick1/c/results.json"})
         pol = _pollen(cfg, up)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        rid = pol.enqueue(path, "result")
+        rid = pol.enqueue_set([path], device="flick1", kind="result")[0]
 
         pol._tick()
 
@@ -106,7 +106,7 @@ class TestFlush:
         up = FakeUploader()
         pol = _pollen(cfg, up)
         for i in range(5):
-            pol.enqueue(_write(cfg.output_root, f"flick1/c{i}/results.json", b'{"tracks":[{"track_id":"t"}]}'), "result")
+            pol.enqueue_set([_write(cfg.output_root, f"flick1/c{i}/results.json", b'{"tracks":[{"track_id":"t"}]}')], device="flick1", kind="result")
 
         pol.flush()
 
@@ -121,7 +121,7 @@ class TestLifecycle:
         pol = _pollen(cfg, up)
         pol.start()
         try:
-            pol.enqueue(_write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}'), "result")
+            pol.enqueue_set([_write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')], device="flick1", kind="result")
             deadline = time.time() + 3.0
             while not up.uploaded and time.time() < deadline:
                 time.sleep(0.01)
@@ -148,7 +148,7 @@ class TestEnqueueSource:
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
 
         def source(p):
-            p.enqueue(path, "result")
+            p.enqueue_set([path], device="flick1", kind="result")
 
         pol = _pollen(cfg, up, enqueue_source=source)
         pol._tick()
@@ -161,7 +161,7 @@ class TestEnqueueSource:
         up = FakeUploader()
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
         pol = _pollen(cfg, up, enqueue_source=lambda p: (_ for _ in ()).throw(RuntimeError("scan broke")))
-        pol.enqueue(path, "result")
+        pol.enqueue_set([path], device="flick1", kind="result")
         pol._tick()
         assert up.uploaded == ["v1/flick1/c/results.json"]
 
@@ -215,7 +215,7 @@ class TestStagingDecouplesProducer:
         cfg = _config(tmp_path)
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        row = pol.store.get(pol.enqueue(path, "result"))
+        row = pol.store.get(pol.enqueue_set([path], device="flick1", kind="result")[0])
         assert row.producer_name == str(path)
         assert Path(row.staging_path) != path
         assert Path(row.staging_path).stat().st_ino == path.stat().st_ino
@@ -234,7 +234,7 @@ class TestStagingDecouplesProducer:
         pol = _pollen(cfg, up)
         body = b'{"tracks":[{"track_id":"t"}]}'
         path = _write(cfg.output_root, "flick1/c/results.json", body)
-        pol.enqueue(path, "result")
+        pol.enqueue_set([path], device="flick1", kind="result")
         path.unlink()  # producer drops its copy before Pollen uploads
         pol.flush()
         assert up.read["v1/flick1/c/results.json"] == body
@@ -248,7 +248,7 @@ class TestRetainUploaded:
         up = FakeUploader()
         pol = _pollen(cfg, up)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        staged = Path(pol.store.get(pol.enqueue(path, "result")).staging_path)
+        staged = Path(pol.store.get(pol.enqueue_set([path], device="flick1", kind="result")[0]).staging_path)
 
         pol._tick()
 
@@ -263,7 +263,7 @@ class TestRetainUploaded:
         cfg = _config(tmp_path)  # retain_uploaded defaults False
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        pol.enqueue(path, "result")
+        pol.enqueue_set([path], device="flick1", kind="result")
         pol._tick()
         assert not (cfg.output_root / RETAINED_SUBDIR).exists() or not any(
             (cfg.output_root / RETAINED_SUBDIR).rglob("*")
@@ -278,8 +278,8 @@ class TestRetainUploaded:
         pol = _pollen(cfg)
         log = _write(cfg.output_root, "flick1/logs/edge26_20260101.log", b"log")
         res = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        log_id = pol.enqueue(log, "log")
-        res_id = pol.enqueue(res, "result")
+        log_id = pol.enqueue_set([log], device="flick1", kind="log")[0]
+        res_id = pol.enqueue_set([res], device="flick1", kind="result")[0]
 
         pol._tick()
 
@@ -292,10 +292,10 @@ class TestEnqueueDedup:
         cfg = _config(tmp_path)
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        first = pol.enqueue(path, "result")
+        first = pol.enqueue_set([path], device="flick1", kind="result")[0]
         assert first is not None
         # same key again -> skipped, and no second staged link is created
-        assert pol.enqueue(path, "result") is None
+        assert pol.enqueue_set([path], device="flick1", kind="result") == []
         staged_links = list((cfg.output_root / STAGING_SUBDIR).rglob("*"))
         assert len([p for p in staged_links if p.is_file()]) == 1
 
@@ -325,7 +325,7 @@ class TestReconcile:
         cfg = _config(tmp_path, reconcile_grace_seconds=0)
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        staged = Path(pol.store.get(pol.enqueue(path, "result")).staging_path)
+        staged = Path(pol.store.get(pol.enqueue_set([path], device="flick1", kind="result")[0]).staging_path)
         pol.reconcile()
         assert staged.exists()  # referenced by a row
 
@@ -333,7 +333,7 @@ class TestReconcile:
         cfg = _config(tmp_path)
         pol = _pollen(cfg)
         path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
-        rid = pol.enqueue(path, "result")
+        rid = pol.enqueue_set([path], device="flick1", kind="result")[0]
         Path(pol.store.get(rid).staging_path).unlink()  # staged copy vanishes
         pol.reconcile()
         assert pol.store.get(rid) is None

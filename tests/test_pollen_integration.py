@@ -31,7 +31,7 @@ def test_telemetry_enqueue_and_flush(tmp_path):
     hb.parent.mkdir(parents=True)
     hb.write_text('{"device_id":"flick1"}', encoding="utf-8")
 
-    staged = pol.store.get(pol.enqueue(hb, "heartbeat")).staging_path
+    staged = pol.store.get(pol.enqueue_set([hb], device="flick1", kind="heartbeat")[0]).staging_path
     pol.flush()
 
     assert uploaded == ["v1/flick1/heartbeats/20260204_120000.json"]

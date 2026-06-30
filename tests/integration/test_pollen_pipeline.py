@@ -20,7 +20,7 @@ def test_enqueue_and_flush_uploads_and_cleans_up(presign_url, device_api_key, s3
     hb.parent.mkdir(parents=True)
     hb.write_text('{"device_id":"FLIK2"}', encoding="utf-8")
 
-    pol.enqueue(hb, "heartbeat")
+    pol.enqueue_set([hb], device=DEVICE_ID, kind="heartbeat")
     pol.flush()
 
     key = f"v1/{DEVICE_ID}/heartbeats/20260204_120000.json"

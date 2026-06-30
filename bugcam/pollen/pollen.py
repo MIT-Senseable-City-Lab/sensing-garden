@@ -84,36 +84,6 @@ class Pollen:
     # ------------------------------------------------------------------ #
     # enqueue
     # ------------------------------------------------------------------ #
-    def enqueue(
-        self,
-        path: str | Path,
-        label: str = "object",
-        *,
-        content_type: Optional[str] = None,
-    ) -> Optional[int]:
-        """Queue a single artifact for upload. Returns the row id, or None if skipped.
-
-        The producer decides *what* to enqueue and owns its own copy. The file is
-        hardlinked into staging and uploaded from there. Retention after upload is a
-        per-kind policy (see ``_policy_for``), not a per-call flag. ``content_type``
-        overrides the default derived from the filename; ``label`` is the kind tag.
-        """
-        path = Path(path)
-        if not path.exists():
-            return None
-        s3_key = self._derive_key(path)
-        if self.store.has_key(s3_key):
-            return None  # already queued or a tombstone -> skip before staging (no churn)
-        metadata: dict = {}
-        if content_type is not None:
-            metadata["content_type"] = content_type
-        size = path.stat().st_size
-        staged = self._staging.link(path)
-        return self.store.enqueue(
-            str(staged), kind=label, s3_key=s3_key, producer_name=str(path),
-            metadata=metadata, size=size,
-        )
-
     def enqueue_set(self, files: list[str | Path], *, device: str, kind: str) -> list[int]:
         """Queue a logical set atomically: stage every file, then insert all rows in one
         transaction so claim/archive never splits the set. ``device`` is the batch group

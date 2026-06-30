@@ -1,7 +1,7 @@
 """Wiring helpers that build a Pollen instance from bugcam runtime settings.
 
 Keeps construction details (state-dir paths, presigner, archiver selection) out
-of the app entrypoint so producers just call ``pollen.enqueue(...)``. The config
+of the app entrypoint so producers just call ``pollen.enqueue_set(...)``. The config
 object (PollenConfig) is built here from settings resolved in the run command.
 """
 from __future__ import annotations
