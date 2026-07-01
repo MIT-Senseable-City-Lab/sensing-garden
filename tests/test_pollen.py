@@ -184,6 +184,9 @@ class TestBatched:
         assert "v1/dot1/20260204/videos/clip.mp4" in up.uploaded   # shipped individually
         assert any(k.endswith(".tar") for k in up.uploaded)        # results still tarred
         assert pol.store.pending_count() == 0
+        # result archive must ship BEFORE the large video, not after
+        tar_idx = next(i for i, k in enumerate(up.uploaded) if k.endswith(".tar"))
+        assert tar_idx < up.uploaded.index("v1/dot1/20260204/videos/clip.mp4")
 
     def test_batched_packs_uploads_and_cleans_members(self, tmp_path):
         cfg = _config(tmp_path, batch=True)

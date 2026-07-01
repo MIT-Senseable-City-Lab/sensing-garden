@@ -269,16 +269,10 @@ class Pollen:
             if not self._upload_one(row):
                 failures += 1
         members = [r for r in pending if r.kind != ARCHIVE_KIND]
-        # Un-batched kinds (videos) ship as their own objects -- see UNBATCHED_KINDS.
-        for row in (r for r in members if r.kind in UNBATCHED_KINDS):
-            if not self._upload_one(row):
-                failures += 1
-        members = [r for r in members if r.kind not in UNBATCHED_KINDS]
-        if not members:
-            return failures
-
+        # Batch and ship the result archives FIRST (small, indexed) -- the large
+        # un-batched videos go last (below) so results never wait behind a slow video PUT.
         by_device: dict[str, list[UploadRow]] = defaultdict(list)
-        for row in members:
+        for row in (r for r in members if r.kind not in UNBATCHED_KINDS):
             by_device[self._device_of(row)].append(row)
 
         timestamp = self._clock().strftime("%Y%m%d_%H%M%S")
@@ -301,6 +295,12 @@ class Pollen:
                 raise
             except Exception:
                 logger.exception("archive upload failed for %s (will retry)", artifact.s3_key)
+                failures += 1
+
+        # Un-batched kinds (videos) ship individually and LAST: large, un-indexed, low
+        # priority -- they must not delay the result archives above (see UNBATCHED_KINDS).
+        for row in (r for r in members if r.kind in UNBATCHED_KINDS):
+            if not self._upload_one(row):
                 failures += 1
         return failures
 
