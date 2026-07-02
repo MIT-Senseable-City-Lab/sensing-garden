@@ -89,14 +89,17 @@ def test_dot_done_signal_processing_uses_existing_track_crops(tmp_path: Path) ->
     assert entry.track_id == "track-a"
     assert entry.time == "123456"
     assert entry.num_crops == 1
+    # Per-track terminal dir: <dot>/<YYYYMMDD>/<track_id>_<HHMMSS>/
+    track_out = output_dir / "dot01" / "20260417" / "track-a_123456"
+    assert Path(entry.output_dir) == track_out
     # Track should be deleted from input after queuing
     assert not track_dir.exists()
-    # Crops should be copied to output
-    assert (output_dir / "dot01" / "20260417" / "crops" / "track-a_123456" / "frame_000001.jpg").exists()
-    # Labels should be copied to output
-    assert (output_dir / "dot01" / "20260417" / "labels" / "track-a.json").exists()
-    # Expected tracks marker should be written
-    expected_path = output_dir / "dot01" / "20260417" / ".expected_tracks"
+    # Crops should be copied into the per-track dir
+    assert (track_out / "crops" / "track-a_123456" / "frame_000001.jpg").exists()
+    # Labels should be copied into the per-track dir
+    assert (track_out / "labels" / "track-a.json").exists()
+    # Expected-tracks marker is 1 (one track per dir)
+    expected_path = track_out / ".expected_tracks"
     assert expected_path.exists()
     assert expected_path.read_text().strip() == "1"
 

@@ -346,9 +346,13 @@ def run(
 
         on_result_ready = None
         on_log_complete = None
+        on_video_ready = None
         if pollen_instance is not None:
             on_result_ready = lambda d: publish_result_dir(  # noqa: E731 - produce-site adapter
                 pollen_instance, d, settings["flick_id"], settings["dot_ids"]
+            )
+            on_video_ready = lambda v, dev: pollen_instance.enqueue_set(  # noqa: E731 - produce-site adapter
+                [v], device=dev, kind="video"
             )
 
             def on_log_complete(path: Path) -> None:  # ship a rolled-over log, then drop our copy
@@ -370,6 +374,7 @@ def run(
             detection_config_path=detection_config,
             on_result_ready=on_result_ready,
             on_log_complete=on_log_complete,
+            on_video_ready=on_video_ready,
         )
         heartbeat_stop_event = threading.Event()
         environment_stop_event = threading.Event()

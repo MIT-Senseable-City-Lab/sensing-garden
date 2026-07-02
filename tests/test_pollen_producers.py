@@ -50,11 +50,11 @@ class TestEmptyDirSweep:
         publish_result_dir(pol, rd, "flick1", [])  # produce-site enqueue removes the FLIK dir
         assert not rd.exists()
 
-    def test_retained_dot_dir_not_removed(self, tmp_path):
+    def test_dot_dir_removed_after_enqueue(self, tmp_path):
         pol, out = _pollen(tmp_path)
         rd = _result_dir(out, "dot1", "20260204")
-        publish_result_dir(pol, rd, "flick1", ["dot1"])  # DOT files retained -> dir kept
-        assert rd.exists()
+        publish_result_dir(pol, rd, "flick1", ["dot1"])  # DOT is now a terminal unit -> removed
+        assert not rd.exists()
 
 
 class TestEnvironment:

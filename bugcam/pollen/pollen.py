@@ -249,6 +249,7 @@ class Pollen:
             self.store.record_attempt(row.id)
             self.uploader.upload(row)
             self.store.mark_uploaded(row.id)
+            logger.info("uploaded %s (kind=%s)", row.s3_key, row.kind)
             return True
         except RateLimitError:
             raise
@@ -285,6 +286,8 @@ class Pollen:
                 self.store.mark_uploaded(tar_id)
                 for item in items:
                     self.store.mark_uploaded(item.id)
+                logger.info("uploaded archive %s (%d members, device=%s)",
+                            artifact.s3_key, len(items), device)
             except RateLimitError:
                 raise
             except Exception:
