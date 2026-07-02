@@ -8,14 +8,14 @@ from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SI
 
 class TestResolveSettings:
     def test_batch_cli_wins(self, mocker):
-        mocker.patch.object(run, "load_config", return_value={"pollen_batch": False})
+        mocker.patch.object(run, "load_config", return_value={"archive_batch": False})
         s = run._resolve_pollen_settings(True, upload_poll=30)
         assert s["batch"] is True
 
     def test_config_used_when_cli_unset(self, mocker):
         mocker.patch.object(run, "load_config", return_value={
-            "pollen_batch": True,
-            "pollen_poll_interval": 5, "pollen_multipart_threshold": 111, "pollen_part_size": 222,
+            "archive_batch": True,
+            "upload_poll_interval": 5, "upload_multipart_threshold": 111, "upload_part_size": 222,
         })
         s = run._resolve_pollen_settings(None, upload_poll=30)
         assert s == {"batch": True, "poll_interval": 5.0,

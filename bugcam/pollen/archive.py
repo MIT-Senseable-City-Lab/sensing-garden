@@ -3,7 +3,7 @@
 An Archiver bundles a group of queued items into a single artifact for one
 upload. TarArchiver writes an uncompressed tar whose members are named by each
 item's canonical v1 key (so the tar is self-describing and the backend can map a
-member straight to its destination), shipped to v2/archives/<group>/<ts>.tar.
+member straight to its destination), shipped to v2/archives/<group>/<group>_<ts>.tar.
 Other strategies (e.g. compressed, or a different container) can implement the
 same interface later.
 """
@@ -54,7 +54,7 @@ class TarArchiver(Archiver):
             return None
         staging_dir = Path(staging_dir)
         staging_dir.mkdir(parents=True, exist_ok=True)
-        s3_key = f"{self.archive_key_prefix}/{group}/{timestamp}.tar"
+        s3_key = f"{self.archive_key_prefix}/{group}/{group}_{timestamp}.tar"
         tar_path = staging_dir / s3_key.replace("/", "_")
         with tarfile.open(tar_path, "w") as tar:  # uncompressed -> valid member offsets
             for item in items:

@@ -188,7 +188,7 @@ class TestBatched:
 
         pol._tick()
 
-        assert up.uploaded == ["v2/archives/flick1/20260204_130000.tar"]
+        assert up.uploaded == ["v2/archives/flick1/flick1_20260204_130000.tar"]
         assert a.exists() and b.exists()  # producer files untouched; staged copies cleaned
         assert pol.store.pending_count() == 0
 
@@ -210,7 +210,7 @@ class TestBatched:
         """If the archive upload fails the member rows must stay pending so the
         next tick retries — no silent data loss."""
         cfg = _config(tmp_path, batch=True)
-        up = FakeUploader(fail_keys={"v2/archives/flick1/20260204_130000.tar"})
+        up = FakeUploader(fail_keys={"v2/archives/flick1/flick1_20260204_130000.tar"})
         pol = _pollen(cfg, up, archiver=TarArchiver(), clock=lambda: datetime(2026, 2, 4, 13, 0, 0))
         a = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
         pol.enqueue(a, "result")

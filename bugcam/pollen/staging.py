@@ -4,6 +4,10 @@ Hardlinks can't cross filesystems, so the staged copy must live on the same moun
 as the source file. StagingArea co-locates a staging dir with each source root and
 hardlinks enqueued files into it, mirroring their layout. Pollen uploads from (and
 later unlinks) the staged copy, leaving the producer's file untouched.
+
+NOTE: multiple source roots (the per-mount logic below) is for a future multi-mount
+setup (e.g. DOT data on a separate disk). Today only a single root is wired and
+tested; the multi-root paths are unexercised. See spooler-refactor spec open #3.
 """
 from __future__ import annotations
 

@@ -49,13 +49,17 @@ def _heartbeat_loop(
     dot_ids: list[str],
     stop_event: threading.Event,
     pollen: Any = None,
+    interval: float = HEARTBEAT_INTERVAL_SECONDS,
 ) -> None:
     while not stop_event.is_set():
         path = write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids)
         if pollen is not None:
+            # Heartbeats are telemetry, not durable artifacts; we ship them through the
+            # spooler for now, but the delivery semantics (file vs real-time POST) are
+            # still open -- see the spooler-refactor spec, open question #1.
             pollen.enqueue(path, "heartbeat")  # staged hardlink; our copy is done
             path.unlink(missing_ok=True)
-        stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
+        stop_event.wait(interval)
 
 
 def _environment_loop(
@@ -210,19 +214,26 @@ def _release_pid_file(pid_path: Path) -> None:
         pid_path.unlink(missing_ok=True)
 
 
-def _resolve_pollen_settings(pollen_batch: bool | None, upload_poll: int) -> dict[str, Any]:
-    """Resolve Pollen settings: CLI flag wins, then the config file, then default.
+def _resolve_pollen_settings(archive_batch: bool | None, upload_poll: int) -> dict[str, Any]:
+    """Resolve upload settings: CLI flag wins, then the config file, then default.
 
-    Config-file keys: pollen_batch, pollen_poll_interval,
-    pollen_multipart_threshold, pollen_part_size.
+    Config-file keys: archive_batch, upload_poll_interval,
+    upload_multipart_threshold, upload_part_size.
     """
     cfg = load_config()
     return {
-        "batch": pollen_batch if pollen_batch is not None else bool(cfg.get("pollen_batch", False)),
-        "poll_interval": float(cfg.get("pollen_poll_interval", upload_poll)),
-        "multipart_threshold": int(cfg.get("pollen_multipart_threshold", DEFAULT_MULTIPART_THRESHOLD)),
-        "part_size": int(cfg.get("pollen_part_size", DEFAULT_PART_SIZE)),
+        "batch": archive_batch if archive_batch is not None else bool(cfg.get("archive_batch", False)),
+        "poll_interval": float(cfg.get("upload_poll_interval", upload_poll)),
+        "multipart_threshold": int(cfg.get("upload_multipart_threshold", DEFAULT_MULTIPART_THRESHOLD)),
+        "part_size": int(cfg.get("upload_part_size", DEFAULT_PART_SIZE)),
     }
+
+
+def _resolve_heartbeat_interval(heartbeat_interval: float | None) -> float:
+    """Resolve the heartbeat cadence: CLI flag wins, then config, then default."""
+    if heartbeat_interval is not None:
+        return float(heartbeat_interval)
+    return float(load_config().get("heartbeat_interval", HEARTBEAT_INTERVAL_SECONDS))
 
 
 @app.callback()
@@ -241,7 +252,8 @@ def run(
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
     bitrate: int = typer.Option(20_000_000, "--bitrate", help="H.264 encoder bitrate in bps (hardware encoding only)"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
-    upload_poll: int = typer.Option(30, "--upload-poll", help="Seconds between upload polls"),
+    upload_poll: int = typer.Option(30, "--upload-poll", help="Seconds between upload polls; with --archive-batch this is also the batch cadence (one tar per device per poll) (config: upload_poll_interval)"),
+    heartbeat_interval: float | None = typer.Option(None, "--heartbeat-interval", help="Seconds between heartbeat snapshots (config: heartbeat_interval, default 60)"),
     with_receiver: bool = typer.Option(
         True,
         "--with-receiver/--no-receiver",
@@ -265,10 +277,10 @@ def run(
         "--upload/--no-upload",
         help="Upload results to S3; --no-upload disables all uploads (default: on)",
     ),
-    pollen_batch: bool | None = typer.Option(
+    archive_batch: bool | None = typer.Option(
         None,
-        "--pollen-batch/--no-pollen-batch",
-        help="Bundle outputs into hourly tars instead of per-object uploads (config: pollen_batch)",
+        "--archive-batch/--no-archive-batch",
+        help="Bundle outputs into per-device tar archives instead of per-object uploads; cadence follows --upload-poll (config: archive_batch)",
     ),
 ) -> None:
     """Run recording, processing, uploading, and one-minute heartbeat emission."""
@@ -287,6 +299,7 @@ def run(
             console.print(f"[yellow]Warning[/yellow] {ntp_detail}")
 
         settings = _resolve_runtime_settings(api_url, api_key, flick_id, dot_ids, bucket, enable_upload=enable_upload)
+        resolved_heartbeat_interval = _resolve_heartbeat_interval(heartbeat_interval)
         input_dir.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -294,7 +307,7 @@ def run(
         # --no-upload disables it entirely (no device -> S3 traffic at all).
         pollen_instance = None
         if enable_upload:
-            pollen_settings = _resolve_pollen_settings(pollen_batch, upload_poll)
+            pollen_settings = _resolve_pollen_settings(archive_batch, upload_poll)
             pollen_instance = build_pollen(
                 output_dir,
                 settings["api_url"],
@@ -313,6 +326,9 @@ def run(
             # The manifest is a fixed-key object the queue does not own; ship it once
             # at startup. A missing manifest is non-fatal -- the backend resolves
             # devices from each result's source_device.
+            # TODO: this writes to a shared v1/manifest.json (matches master); confirm a
+            # single shared key is right vs a device-specific one -- multiple FLIK devices
+            # on one bucket would overwrite each other. (PR #3 review).
             try:
                 manifest = json.dumps(
                     {"flick_id": settings["flick_id"], "dot_ids": settings["dot_ids"]}, indent=2
@@ -363,6 +379,7 @@ def run(
                 settings["dot_ids"],
                 heartbeat_stop_event,
                 pollen_instance,
+                resolved_heartbeat_interval,
             ),
             daemon=True,
             name="BugCamHeartbeat",
