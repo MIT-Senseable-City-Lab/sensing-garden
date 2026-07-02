@@ -178,3 +178,33 @@ def test_run_resolves_flick_id_from_config() -> None:
         settings = _resolve_runtime_settings(None, None, None, None, None)
 
     assert settings["flick_id"] == "flick-config"
+
+
+def _build_with_detection_yaml(tmp_path: Path, yaml_text: str, **overrides):
+    cfg = tmp_path / "detection.yaml"
+    cfg.write_text(yaml_text, encoding="utf-8")
+    kwargs = dict(
+        flick_id="flick01",
+        dot_ids=["dot01"],
+        input_dir=str(tmp_path / "input"),
+        output_dir=str(tmp_path / "outputs"),
+        model_path=str(tmp_path / "bundle" / "model.hef"),
+        labels_path=str(tmp_path / "bundle" / "labels.txt"),
+        detection_config_path=cfg,
+    )
+    kwargs.update(overrides)
+    return build_edge26_config(**kwargs)
+
+
+def test_capture_fps_and_exposure_from_config_file(tmp_path: Path) -> None:
+    config = _build_with_detection_yaml(
+        tmp_path, "fps: 12\nexposure_time: 15000\nmorph_kernel_size: 5\n", fps=30,
+    )
+    assert config["capture"]["fps"] == 12
+    assert config["capture"]["exposure_time"] == 15000
+
+
+def test_capture_config_respects_existing_defaults_when_absent(tmp_path: Path) -> None:
+    config = _build_with_detection_yaml(tmp_path, "morph_kernel_size: 5\n", fps=30)
+    assert config["capture"]["fps"] == 30
+    assert config["capture"]["exposure_time"] is None

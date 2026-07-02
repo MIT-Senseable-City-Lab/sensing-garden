@@ -56,6 +56,9 @@ EDGE26_TRACKING_DEFAULTS = {
 
 DETECTION_KEYS = set(EDGE26_DETECTION_DEFAULTS.keys())
 TRACKING_KEYS = set(EDGE26_TRACKING_DEFAULTS.keys())
+# Capture (camera) keys the detection config file may also carry. fps is an int;
+# exposure_time is manual shutter in microseconds (omit for auto-exposure).
+CAPTURE_KEYS = {"fps", "exposure_time"}
 
 YAML_TO_CONFIG_KEYS = {
     "tracker_w_dist": "w_dist",
@@ -93,14 +96,15 @@ def get_detection_config_path(custom_path: Path | None = None) -> Path | None:
 
 def load_detection_config(
     config_path: Path | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]] | None:
-    """Load detection and tracking config from a YAML file.
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+    """Load detection, tracking, and capture config from a YAML file.
 
     Args:
         config_path: Path to the YAML config file. If None, checks default location.
 
     Returns:
-        Tuple of (detection_dict, tracking_dict) if config loaded, None otherwise.
+        Tuple of (detection_dict, tracking_dict, capture_dict) if config loaded,
+        None otherwise.
 
     Raises:
         FileNotFoundError: If specified config file doesn't exist.
@@ -118,6 +122,7 @@ def load_detection_config(
 
     detection = {}
     tracking = {}
+    capture = {}
 
     for yaml_key, value in data.items():
         if yaml_key in YAML_TO_CONFIG_KEYS:
@@ -130,13 +135,17 @@ def load_detection_config(
             detection[yaml_key] = value
         elif yaml_key in TRACKING_KEYS:
             tracking[yaml_key] = value
+        elif yaml_key in CAPTURE_KEYS:
+            capture[yaml_key] = value
         else:
-            valid_keys = sorted(DETECTION_KEYS | TRACKING_KEYS | set(YAML_TO_CONFIG_KEYS.keys()))
+            valid_keys = sorted(
+                DETECTION_KEYS | TRACKING_KEYS | CAPTURE_KEYS | set(YAML_TO_CONFIG_KEYS.keys())
+            )
             raise ValueError(
                 f"Unknown key '{yaml_key}' in detection config. Valid keys: {valid_keys}"
             )
 
-    return detection, tracking
+    return detection, tracking, capture
 
 
 def parse_capture_resolution(value: str) -> tuple[int, int]:
@@ -167,6 +176,7 @@ def build_edge26_config(
     fps: int = 30,
     resolution: tuple[int, int] = DEFAULT_CAPTURE_RESOLUTION,
     bitrate: int = 20_000_000,
+    exposure_time: int | None = None,
     enable_recording: bool = True,
     enable_processing: bool = True,
     enable_classification: bool = True,
@@ -181,12 +191,19 @@ def build_edge26_config(
     config_path = get_detection_config_path(detection_config_path)
     loaded_config = load_detection_config(config_path)
     if loaded_config:
-        detection_overrides, tracking_overrides = loaded_config
+        detection_overrides, tracking_overrides, capture_overrides = loaded_config
         detection_config = detection_overrides
         tracking_config = tracking_overrides
     else:
         detection_config = dict(EDGE26_DETECTION_DEFAULTS)
         tracking_config = dict(EDGE26_TRACKING_DEFAULTS)
+        capture_overrides = {}
+
+    # Config-file capture settings win when present so operators can set
+    # fps/exposure without CLI flags; absent keys keep the existing default
+    # (the passed fps, and auto-exposure).
+    fps = capture_overrides.get("fps", fps)
+    exposure_time = capture_overrides.get("exposure_time", exposure_time)
 
     return {
         "device": {
@@ -213,6 +230,7 @@ def build_edge26_config(
             "chunk_duration_seconds": chunk_duration,
             "resolution": list(resolution),
             "bitrate": bitrate,
+            "exposure_time": exposure_time,
         },
         "detection": detection_config,
         "tracking": tracking_config,

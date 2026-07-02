@@ -52,3 +52,17 @@ revisit_radius:           0.025
 max_revisit_ratio:        0.30
 min_progression_ratio:    0.70
 max_directional_variance: 0.85
+
+# =============================================================================
+# Capture (camera) settings — optional; omit to keep the CLI/pipeline defaults
+# =============================================================================
+# fps: recording frame rate. Also sets the sensor FrameDurationLimits and the
+# mux rate, so the file value drives all three. At 4K the 4608x2592 sensor mode
+# tops out ~14.35fps, so keep fps <= 14 there. Omit to use the --fps default.
+# fps: 14
+#
+# exposure_time: manual shutter in MICROSECONDS. Omit for auto-exposure
+# (recommended — auto floats the shutter and won't overexpose). If set, it is
+# clamped to the frame period (1e6/fps); lower values cut motion blur at the
+# cost of a darker/noisier image in low light.
+# exposure_time: 20000
