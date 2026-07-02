@@ -106,6 +106,28 @@ class PollenStore:
             except sqlite3.IntegrityError:
                 return None
 
+    def enqueue_many(self, specs: list[dict[str, Any]]) -> list[int]:
+        """Insert a set of rows in one transaction (single lock acquisition) so a
+        concurrent ``claim_pending`` observes them all-or-nothing -- a logical set
+        never splits across archives. Skips specs whose s3_key already exists.
+        Each spec: staging_path, kind, s3_key, [producer_name], [metadata], [size]."""
+        now = _now()
+        ids: list[int] = []
+        with self._lock:
+            for spec in specs:
+                try:
+                    cur = self._conn.execute(
+                        "INSERT INTO uploads (staging_path, producer_name, kind, s3_key, status, metadata, size, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (spec["staging_path"], spec.get("producer_name"), spec["kind"], spec["s3_key"],
+                         UploadStatus.PENDING.value, json.dumps(spec.get("metadata") or {}), spec.get("size"), now, now),
+                    )
+                    ids.append(int(cur.lastrowid))
+                except sqlite3.IntegrityError:
+                    continue  # key already queued/shipped -> dedup
+            self._conn.commit()
+        return ids
+
     def mark_uploading(self, row_id: int, upload_id: Optional[str] = None) -> None:
         self._update(row_id, status=UploadStatus.UPLOADING.value, upload_id=upload_id)
 

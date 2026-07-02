@@ -108,6 +108,27 @@ class Pollen:
             metadata=metadata, size=size,
         )
 
+    def enqueue_set(self, files: list[str | Path], *, device: str, kind: str) -> list[int]:
+        """Queue a logical set atomically: stage every file, then insert all rows in one
+        transaction so claim/archive never splits the set. ``device`` is the batch group
+        (stored explicitly, not parsed from the key). The producer owns its files and
+        should delete them after this returns. Returns the row ids enqueued."""
+        specs: list[dict] = []
+        for path in files:
+            path = Path(path)
+            if not path.exists():
+                continue
+            s3_key = self._derive_key(path)
+            if self.store.has_key(s3_key):
+                continue  # already queued/shipped -> skip before staging (no churn)
+            size = path.stat().st_size
+            staged = self._staging.link(path)
+            specs.append({
+                "staging_path": str(staged), "kind": kind, "s3_key": s3_key,
+                "producer_name": str(path), "metadata": {"device": device}, "size": size,
+            })
+        return self.store.enqueue_many(specs)
+
     def _derive_key(self, path: Path) -> str:
         root = self.config.output_root.resolve()
         resolved = Path(path).resolve()
@@ -296,7 +317,11 @@ class Pollen:
         return failures
 
     def _group_of(self, row: UploadRow) -> str:
-        # Canonical key is v1/<device>/...; group a batch per device.
+        # Device is passed explicitly at enqueue and stored on the row; fall back to the
+        # legacy key parse (v1/<device>/...) only for pre-existing rows without it.
+        device = row.metadata.get("device")
+        if device:
+            return device
         parts = row.s3_key.split("/")
         return parts[1] if len(parts) > 1 else "batch"
 

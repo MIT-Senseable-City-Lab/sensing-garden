@@ -14,7 +14,7 @@ from rich.console import Console
 
 from bugcam.commands.heartbeat import write_heartbeat_snapshot
 from bugcam.pollen.integration import build_pollen
-from bugcam.pollen.producers import enqueue_result_dir
+from bugcam.edge26.result_publish import publish_result_dir
 from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SIZE
 from bugcam.config import (
     DEFAULT_API_URL,
@@ -57,7 +57,7 @@ def _heartbeat_loop(
             # Heartbeats are telemetry, not durable artifacts; we ship them through the
             # spooler for now, but the delivery semantics (file vs real-time POST) are
             # still open -- see the spooler-refactor spec, open question #1.
-            pollen.enqueue(path, "heartbeat")  # staged hardlink; our copy is done
+            pollen.enqueue_set([path], device=flick_id, kind="heartbeat")  # staged; our copy is done
             path.unlink(missing_ok=True)
         stop_event.wait(interval)
 
@@ -73,7 +73,7 @@ def _environment_loop(
         try:
             path, _payload = collect_environment_reading(output_dir=output_dir, flick_id=flick_id)
             if pollen is not None:
-                pollen.enqueue(path, "environment")  # staged hardlink; our copy is done
+                pollen.enqueue_set([path], device=flick_id, kind="environment")  # staged; copy done
                 path.unlink(missing_ok=True)
             warning_emitted = False
         except Exception as exc:
@@ -347,12 +347,12 @@ def run(
         on_result_ready = None
         on_log_complete = None
         if pollen_instance is not None:
-            on_result_ready = lambda d: enqueue_result_dir(  # noqa: E731 - small adapter
+            on_result_ready = lambda d: publish_result_dir(  # noqa: E731 - produce-site adapter
                 pollen_instance, d, settings["flick_id"], settings["dot_ids"]
             )
 
             def on_log_complete(path: Path) -> None:  # ship a rolled-over log, then drop our copy
-                pollen_instance.enqueue(path, "log")
+                pollen_instance.enqueue_set([path], device=settings["flick_id"], kind="log")
                 path.unlink(missing_ok=True)
         pipeline = build_pipeline(
             flick_id=settings["flick_id"],

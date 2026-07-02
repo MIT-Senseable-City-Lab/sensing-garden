@@ -7,7 +7,7 @@ longer scanned here; see test_log_shipping.
 from pathlib import Path
 
 from bugcam.pollen.pollen import Pollen, PollenConfig
-from bugcam.pollen.producers import enqueue_result_dir
+from bugcam.edge26.result_publish import publish_result_dir
 
 
 class FakeUploader:
@@ -47,13 +47,13 @@ class TestEmptyDirSweep:
     def test_enqueued_flik_dir_is_removed(self, tmp_path):
         pol, out = _pollen(tmp_path)
         rd = _result_dir(out, "flick1", "20260204_120000")
-        enqueue_result_dir(pol, rd, "flick1", [])  # produce-site enqueue removes the FLIK dir
+        publish_result_dir(pol, rd, "flick1", [])  # produce-site enqueue removes the FLIK dir
         assert not rd.exists()
 
     def test_retained_dot_dir_not_removed(self, tmp_path):
         pol, out = _pollen(tmp_path)
         rd = _result_dir(out, "dot1", "20260204")
-        enqueue_result_dir(pol, rd, "flick1", ["dot1"])  # DOT files retained -> dir kept
+        publish_result_dir(pol, rd, "flick1", ["dot1"])  # DOT files retained -> dir kept
         assert rd.exists()
 
 

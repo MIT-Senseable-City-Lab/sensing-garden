@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from bugcam.pollen.pollen import Pollen, PollenConfig
-from bugcam.pollen.producers import enqueue_result_dir
+from bugcam.edge26.result_publish import publish_result_dir
 
 
 class FakeUploader:
@@ -39,26 +39,26 @@ class TestEnqueueResultDir:
     def test_flik_dir_enqueues_files(self, tmp_path):
         pol, out = _pollen(tmp_path)
         rd = _result_dir(out, "flick1", "20260204_120000")
-        n = enqueue_result_dir(pol, rd, "flick1", [])
+        n = publish_result_dir(pol, rd, "flick1", [])
         assert n == 2
-        assert all(r.metadata.get("retain") is False for r in pol.store.claim_pending())
+        assert all(r.metadata.get("device") == "flick1" for r in pol.store.claim_pending())
 
-    def test_dot_dir_enqueues_with_retain(self, tmp_path):
+    def test_dot_dir_enqueues_with_device(self, tmp_path):
         pol, out = _pollen(tmp_path)
         rd = _result_dir(out, "dot1", "20260204")
-        enqueue_result_dir(pol, rd, "flick1", ["dot1"])
-        assert all(r.metadata.get("retain") is True for r in pol.store.claim_pending())
+        publish_result_dir(pol, rd, "flick1", ["dot1"])
+        assert all(r.metadata.get("device") == "dot1" for r in pol.store.claim_pending())
 
     def test_empty_flik_dir_removed(self, tmp_path):
         pol, out = _pollen(tmp_path)
         rd = _result_dir(out, "flick1", "20260204_120000", tracks=())
-        assert enqueue_result_dir(pol, rd, "flick1", []) == 0
+        assert publish_result_dir(pol, rd, "flick1", []) == 0
         assert not rd.exists()
 
     def test_unknown_device_ignored(self, tmp_path):
         pol, out = _pollen(tmp_path)
         rd = _result_dir(out, "stranger", "20260204_120000")
-        assert enqueue_result_dir(pol, rd, "flick1", ["dot1"]) == 0
+        assert publish_result_dir(pol, rd, "flick1", ["dot1"]) == 0
 
 
 class TestPipelineHook:
