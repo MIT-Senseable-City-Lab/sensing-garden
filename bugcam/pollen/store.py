@@ -177,7 +177,13 @@ class PollenStore:
             ).fetchone() is not None
 
     def prune_missing(self) -> int:
-        """Drop shipped rows (uploaded or done tombstones) whose file is gone."""
+        """Drop shipped rows (uploaded or done tombstones) whose file is gone.
+
+        TODO: this stats ``producer_name`` -- a path outside the upload subsystem's
+        own staging -- which is the one place we reach into dirs we don't own. It
+        exists only to bound the dedup tombstones (keep them until the producer's
+        file is gone, so a rescan can't re-upload). Remove this external scan once the
+        rest of the codebase is trusted never to re-enqueue an already-shipped key."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, producer_name, staging_path FROM uploads WHERE status IN (?, ?)",

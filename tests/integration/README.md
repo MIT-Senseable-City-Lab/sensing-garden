@@ -1,3 +1,6 @@
+# TODO I think these should be reconfigured, I was mostly using ministack but I know some of the old stuff referred to the real backend in a hardcoded way.
+
+
 # Pollen integration tests
 
 These exercise the **real** Pollen upload client against the **real** backend

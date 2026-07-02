@@ -14,7 +14,7 @@ from rich.console import Console
 
 from bugcam.commands.heartbeat import write_heartbeat_snapshot
 from bugcam.pollen.integration import build_pollen
-from bugcam.pollen.producers import enqueue_ready_outputs, enqueue_result_dir
+from bugcam.pollen.producers import enqueue_result_dir
 from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SIZE
 from bugcam.config import (
     DEFAULT_API_URL,
@@ -312,14 +312,12 @@ def run(
                 output_dir,
                 settings["api_url"],
                 settings["api_key"],
+                state_dir=get_state_dir(),
                 poll_interval=pollen_settings["poll_interval"],
                 multipart_threshold=pollen_settings["multipart_threshold"],
                 part_size=pollen_settings["part_size"],
                 batch=pollen_settings["batch"],
                 delete_after_upload=delete_after_upload,
-                enqueue_source=lambda p: enqueue_ready_outputs(
-                    p, output_dir, settings["flick_id"], settings["dot_ids"]
-                ),
             )
             console.print(f"[dim]Upload[/dim] enabled (batch={pollen_settings['batch']})")
 
@@ -347,10 +345,15 @@ def run(
         console.print(f"[dim]Model[/dim] {provenance['model_id']}")
 
         on_result_ready = None
+        on_log_complete = None
         if pollen_instance is not None:
             on_result_ready = lambda d: enqueue_result_dir(  # noqa: E731 - small adapter
                 pollen_instance, d, settings["flick_id"], settings["dot_ids"]
             )
+
+            def on_log_complete(path: Path) -> None:  # ship a rolled-over log, then drop our copy
+                pollen_instance.enqueue(path, "log")
+                path.unlink(missing_ok=True)
         pipeline = build_pipeline(
             flick_id=settings["flick_id"],
             dot_ids=settings["dot_ids"],
@@ -366,6 +369,7 @@ def run(
             detection_in_subprocess=detection_in_subprocess,
             detection_config_path=detection_config,
             on_result_ready=on_result_ready,
+            on_log_complete=on_log_complete,
         )
         heartbeat_stop_event = threading.Event()
         environment_stop_event = threading.Event()

@@ -15,18 +15,26 @@ from bugcam.edge26.capture import VideoRecorder
 from bugcam.edge26.processing import VideoProcessor, HailoClassifier
 from bugcam.edge26.output import ResultsWriter
 from bugcam.edge26.queue import ClassificationQueue, QueueEntry
+from bugcam.log_shipping import DailyLogHandler, ship_existing_logs
 
 
-def setup_logging(log_dir: Path) -> None:
-    """Configure logging to console and file."""
+def setup_logging(log_dir: Path, *, on_log_complete=None) -> None:
+    """Configure logging to console and a daily-rotating file.
+
+    When ``on_log_complete`` is given, the log mechanism owns shipping: a completed
+    (rolled-over) file is pushed to it, and any non-today logs left by a prior run are
+    shipped now. The upload subsystem never scans for logs."""
     log_dir.mkdir(parents=True, exist_ok=True)
-    
-    log_file = log_dir / f"edge26_{datetime.now().strftime('%Y%m%d')}.log"
-    
+
+    #TODO I think this is handling logging for the application broadly,
+    # so it should be declared outside of edge26
+    file_handler = DailyLogHandler(log_dir)
+    file_handler.on_complete = on_log_complete
+
     # Format
     fmt = "%(asctime)s | %(levelname)-8s | %(message)s"
     datefmt = "%H:%M:%S"
-    
+
     # Root logger
     logging.basicConfig(
         level=logging.INFO,
@@ -34,10 +42,13 @@ def setup_logging(log_dir: Path) -> None:
         datefmt=datefmt,
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
+            file_handler,
         ]
     )
-    
+
+    if on_log_complete is not None:
+        ship_existing_logs(on_log_complete, log_dir)
+
     # Reduce noise from libraries
     logging.getLogger("PIL").setLevel(logging.WARNING)
     logging.getLogger("hailo_platform").setLevel(logging.WARNING)

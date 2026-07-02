@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Optional
 
-from bugcam.config import get_state_dir
 from bugcam.pollen.archive import TarArchiver
 from bugcam.pollen.pollen import Pollen, PollenConfig
 from bugcam.pollen.presign import Presigner
@@ -17,9 +16,11 @@ from bugcam.pollen.staging import STAGING_SUBDIR
 from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SIZE
 
 
-def build_pollen_config(output_dir: Path, *, state_dir: Path | None = None, **overrides) -> PollenConfig:
-    """Build the PollenConfig from resolved knobs (CLI args / config file)."""
-    base = (state_dir or get_state_dir()) / "pollen"
+def build_pollen_config(output_dir: Path, *, state_dir: Path, **overrides) -> PollenConfig:
+    """Build the PollenConfig from resolved knobs (CLI args / config file). ``state_dir``
+    is resolved on the bugcam side and passed in -- the pollen package owns no config
+    resolution of its own."""
+    base = Path(state_dir) / "pollen"
     # Staging co-locates with output_dir so hardlink-on-enqueue stays on one mount
     # (os.link -> EXDEV across mounts); the db can live elsewhere under state_dir.
     # TODO: multi-mount sources (e.g. DOT data on a separate disk) need a staging
