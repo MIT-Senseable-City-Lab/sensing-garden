@@ -6,6 +6,7 @@ resumes from where it left off rather than restarting. HTTP session is injectabl
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -18,9 +19,17 @@ try:
 except ImportError:
     requests = None  # type: ignore
 
+logger = logging.getLogger("bugcam.pollen")
+
 DEFAULT_PART_SIZE = 64 * 1024 * 1024          # 64 MiB
 DEFAULT_MULTIPART_THRESHOLD = 256 * 1024 * 1024  # 256 MiB
 MAX_MULTIPART_ATTEMPTS = 5  # after this many tries, assume the upload id is dead
+DEFAULT_CONNECT_TIMEOUT = 30.0  # seconds; fail fast on an unreachable host
+# The per-request read timeout scales with the payload (bytes / this floor rate), so a
+# slow-but-steady large transfer (e.g. a 1.5 GB video on ~0.7 MB/s -> multipart parts)
+# isn't killed mid-flight, while a tiny PUT still fails fast on a genuine stall.
+DEFAULT_MIN_THROUGHPUT = 256 * 1024  # bytes/s (0.25 MB/s)
+MIN_READ_TIMEOUT = 60.0  # seconds floor for small payloads
 
 
 class UploadError(Exception):
@@ -35,13 +44,26 @@ class Uploader:
         *,
         multipart_threshold: int = DEFAULT_MULTIPART_THRESHOLD,
         part_size: int = DEFAULT_PART_SIZE,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        min_throughput: float = DEFAULT_MIN_THROUGHPUT,
         session: Any = None,
     ) -> None:
         self.presigner = presigner
         self.store = store
         self.multipart_threshold = multipart_threshold
         self.part_size = part_size
+        self.connect_timeout = connect_timeout
+        self.min_throughput = min_throughput
         self._session = session or (requests.Session() if requests else None)
+
+    def _timeout_for(self, nbytes: int) -> float:
+        """A single timeout (both connect and read legs) scaled to the payload. requests
+        holds the connect-leg timeout on the socket until the *response* arrives, so a
+        large body's send must fit inside it -- a fixed 30s connect leg kills any upload
+        that takes >30s to send (e.g. a 150 MB video on a ~0.7 MB/s link). Scaling both
+        gives the send a size-proportional budget; small uploads still fail fast (the
+        floor). Down hosts are caught by this budget and retried next tick."""
+        return max(self.connect_timeout, MIN_READ_TIMEOUT, nbytes / self.min_throughput)
 
     def upload(self, row: UploadRow) -> None:
         path = Path(row.staging_path)
@@ -60,7 +82,7 @@ class Uploader:
         if self._session is None:
             raise UploadError("no HTTP session available")
         headers = {"Content-Type": content_type} if content_type else {}
-        resp = self._session.put(url, data=data, headers=headers)
+        resp = self._session.put(url, data=data, headers=headers, timeout=self._timeout_for(len(data)))
         status = getattr(resp, "status_code", None)
         # S3 throttling comes back as 503 SlowDown; treat it like a rate limit so
         # the loop backs off instead of hammering.
@@ -84,6 +106,7 @@ class Uploader:
             pass
 
     def _multipart(self, row: UploadRow, path: Path, content_type: str) -> None:
+        size = path.stat().st_size
         upload_id = row.upload_id
         already_done = {p["part_number"] for p in row.parts}
 
@@ -98,6 +121,8 @@ class Uploader:
         if not upload_id:
             upload_id = self.presigner.create_multipart(row.s3_key)
             self.store.mark_uploading(row.id, upload_id=upload_id)
+        logger.info("multipart upload %s (%.0f MB, %.0f MiB parts, attempt %d)",
+                    row.s3_key, size / 1e6, self.part_size / 1048576, row.attempts + 1)
 
         try:
             part_number = 1
@@ -113,10 +138,13 @@ class Uploader:
                         if not etag:
                             raise UploadError(f"missing ETag for part {part_number} of {row.s3_key}")
                         self.store.record_part(row.id, part_number, etag)
+                        logger.info("multipart %s part %d uploaded (%.0f MB)",
+                                    row.s3_key, part_number, len(chunk) / 1e6)
                     part_number += 1
 
             parts = self.store.get(row.id).parts
             self.presigner.complete_multipart(row.s3_key, upload_id, parts)
+            logger.info("multipart complete %s (%d parts)", row.s3_key, len(parts))
         except MultipartUploadGoneError as exc:
             # The upload was reaped server-side; drop the stale state so the next
             # attempt starts a fresh multipart.

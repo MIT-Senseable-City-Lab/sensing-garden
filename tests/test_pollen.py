@@ -167,6 +167,24 @@ class TestEnqueueSource:
 
 
 class TestBatched:
+    def test_batched_uploads_videos_individually(self, tmp_path):
+        # Videos must NOT be bundled into the per-device tar (they bloat it past the
+        # multipart threshold and trap the small result data); they ship as their own
+        # objects while results still batch.
+        cfg = _config(tmp_path, batch=True)
+        up = FakeUploader()
+        pol = _pollen(cfg, up, archiver=TarArchiver(), clock=lambda: datetime(2026, 2, 4, 13, 0, 0))
+        r = _write(cfg.output_root, "dot1/20260204/t1/results.json", b'{"tracks":[{"track_id":"t"}]}')
+        v = _write(cfg.output_root, "dot1/20260204/videos/clip.mp4", b"vid")
+        pol.enqueue_set([r], device="dot1", kind="result")
+        pol.enqueue_set([v], device="dot1", kind="video")
+
+        pol._tick()
+
+        assert "v1/dot1/20260204/videos/clip.mp4" in up.uploaded   # shipped individually
+        assert any(k.endswith(".tar") for k in up.uploaded)        # results still tarred
+        assert pol.store.pending_count() == 0
+
     def test_batched_packs_uploads_and_cleans_members(self, tmp_path):
         cfg = _config(tmp_path, batch=True)
         up = FakeUploader()
@@ -337,3 +355,13 @@ class TestReconcile:
         Path(pol.store.get(rid).staging_path).unlink()  # staged copy vanishes
         pol.reconcile()
         assert pol.store.get(rid) is None
+
+
+def test_read_timeout_scales_with_payload():
+    """Per-request read timeout scales with payload so a slow large transfer survives,
+    while a small one fails fast (the floor)."""
+    from bugcam.pollen.transport import Uploader, MIN_READ_TIMEOUT
+
+    up = Uploader(presigner=None, store=None)
+    assert up._timeout_for(100) == MIN_READ_TIMEOUT                   # tiny -> floor
+    assert up._timeout_for(1500 * 1024 * 1024) > 2200                # 1.5 GB > ~2194s @ 0.7 MB/s

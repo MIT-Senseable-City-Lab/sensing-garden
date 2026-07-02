@@ -28,6 +28,10 @@ from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SI
 logger = logging.getLogger("bugcam.pollen")
 
 ARCHIVE_KIND = "archive"
+# Kinds that are uploaded individually even in batch mode: large, un-indexed artifacts
+# (videos) would otherwise push a per-device tar past the multipart threshold and trap
+# the small result data inside a slow/stuck multipart upload.
+UNBATCHED_KINDS = frozenset({"video"})
 MAX_RETRY_DELAY_SECONDS = 300  # matches the legacy upload loop
 STUCK_WARN_SECONDS = 3600      # warn loudly once the oldest item has waited this long
 
@@ -265,6 +269,11 @@ class Pollen:
             if not self._upload_one(row):
                 failures += 1
         members = [r for r in pending if r.kind != ARCHIVE_KIND]
+        # Un-batched kinds (videos) ship as their own objects -- see UNBATCHED_KINDS.
+        for row in (r for r in members if r.kind in UNBATCHED_KINDS):
+            if not self._upload_one(row):
+                failures += 1
+        members = [r for r in members if r.kind not in UNBATCHED_KINDS]
         if not members:
             return failures
 

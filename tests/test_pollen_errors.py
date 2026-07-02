@@ -32,7 +32,7 @@ class _Session:
     def post(self, url, json=None, headers=None, timeout=None):
         return self._resp
 
-    def put(self, url, data=None, headers=None):
+    def put(self, url, data=None, headers=None, timeout=None):
         return self._resp
 
 

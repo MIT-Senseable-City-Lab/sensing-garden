@@ -42,8 +42,8 @@ class FakeSession:
     def __init__(self):
         self.puts = []
 
-    def put(self, url, data=None, headers=None):
-        self.puts.append({"url": url, "data": data, "headers": headers or {}})
+    def put(self, url, data=None, headers=None, timeout=None):
+        self.puts.append({"url": url, "data": data, "headers": headers or {}, "timeout": timeout})
         return FakeResp(etag=f'"etag-{len(self.puts)}"')
 
 

@@ -44,7 +44,7 @@ class _Resp:
 
 
 class _Session:
-    def put(self, url, data=None, headers=None):
+    def put(self, url, data=None, headers=None, timeout=None):
         return _Resp()
 
 
