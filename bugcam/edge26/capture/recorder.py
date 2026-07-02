@@ -141,32 +141,44 @@ class VideoRecorder:
         
         self.camera = Picamera2()
         
-        # Create requested video config and read final applied resolution
+        # Pin the sensor frame duration so the frame rate actually holds. Setting
+        # only FrameRate lets auto-exposure stretch the exposure past the frame
+        # period in low light, collapsing the true rate; FrameDurationLimits caps
+        # exposure at the frame period so the rate stays fixed (darker/noisier
+        # instead of slower). Applied via the config so it takes effect atomically.
+        frame_duration_us = round(1_000_000 / self.fps)
         # Picamera2 "RGB888" outputs BGR order [B,G,R] which matches OpenCV expectation.
         config = self.camera.create_video_configuration(
-            main={"size": self.requested_resolution, "format": "RGB888"}
+            main={"size": self.requested_resolution, "format": "RGB888"},
+            controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
         )
         self.camera.configure(config)
-        
+
         # Read resolution from the configured camera
         width = config["main"]["size"][0]
         height = config["main"]["size"][1]
         self.resolution = (width, height)
-        
-        # Set frame rate
-        self.camera.set_controls({
-            "FrameRate": float(self.fps),
-        })
-        
+
         # Create hardware H.264 encoder
         self.encoder = H264Encoder(bitrate=self.bitrate)
         self.encoder_quality = Quality.HIGH
         
         self.camera.start()
-        
-        # Allow camera to warm up
+
+        # Allow camera to warm up and AE to settle
         time.sleep(2)
-        logger.info(f"PiCamera started: {self.resolution} @ {self.fps}fps")
+
+        # Confirm the achieved frame rate. FrameDurationLimits pins the sensor,
+        # but a request above the selected sensor mode's ceiling (e.g. 15fps on
+        # the 4608x2592 mode, capped ~14.35fps) is clamped. Read the realised
+        # duration and mux at that rate so the MP4 is tagged truthfully instead
+        # of being time-compressed by the fixed '-r self.fps' remux.
+        metadata = self.camera.capture_metadata()
+        actual_fd = metadata.get("FrameDuration")
+        if actual_fd:
+            self.fps = round(1_000_000 / actual_fd)
+        logger.info(f"PiCamera started: {self.resolution} @ {self.fps}fps "
+                    f"(frame duration {actual_fd}us)")
     
     def _init_camera(self) -> None:
         """Initialize the camera and read its resolution."""

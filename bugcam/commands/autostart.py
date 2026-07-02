@@ -101,7 +101,7 @@ def enable(
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
     length: int = typer.Option(30, "--length", "-l", help="Chunk duration in seconds"),
     resolution: str = typer.Option("3840x2160", "--resolution", help="Recording resolution in WxH format"),
-    fps: int = typer.Option(15, "--fps", help="Recording frame rate"),
+    fps: int = typer.Option(14, "--fps", help="Recording frame rate (14 is the 4608x2592 sensor-mode ceiling at 4K)"),
     poll_interval: int = typer.Option(30, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
         True,
