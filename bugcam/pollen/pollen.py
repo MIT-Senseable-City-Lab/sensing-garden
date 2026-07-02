@@ -342,9 +342,11 @@ class Pollen:
         # Un-batched kinds (videos) ship individually and LAST, capped per tick so a
         # backlog cannot starve archive retries or delay cleanup for hours. Attempts-
         # first ordering keeps one failing video from monopolising the capped lane.
+        def _video_order(r: UploadRow) -> tuple[int, int]:
+            return (r.attempts, r.id)
         videos = sorted(
             (r for r in members if r.kind in UNBATCHED_KINDS),
-            key=lambda r: (r.attempts, r.id),
+            key=_video_order,
         )
         for row in videos[: self.config.videos_per_tick]:
             if self._drop_if_lost(row):

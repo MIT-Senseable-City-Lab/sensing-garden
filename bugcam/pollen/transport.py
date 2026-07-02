@@ -121,8 +121,8 @@ class Uploader:
         if not upload_id:
             upload_id = self.presigner.create_multipart(row.s3_key)
             self.store.mark_uploading(row.id, upload_id=upload_id)
-        logger.info("multipart upload %s (%.0f MB, %.0f MiB parts, attempt %d)",
-                    row.s3_key, size / 1e6, self.part_size / 1048576, row.attempts + 1)
+        logger.debug("multipart upload %s (%.0f MB, %.0f MiB parts, attempt %d)",
+                     row.s3_key, size / 1e6, self.part_size / 1048576, row.attempts + 1)
 
         try:
             part_number = 1
@@ -138,8 +138,8 @@ class Uploader:
                         if not etag:
                             raise UploadError(f"missing ETag for part {part_number} of {row.s3_key}")
                         self.store.record_part(row.id, part_number, etag)
-                        logger.info("multipart %s part %d uploaded (%.0f MB)",
-                                    row.s3_key, part_number, len(chunk) / 1e6)
+                        logger.debug("multipart %s part %d uploaded (%.0f MB)",
+                                     row.s3_key, part_number, len(chunk) / 1e6)
                     part_number += 1
 
             parts = self.store.get(row.id).parts

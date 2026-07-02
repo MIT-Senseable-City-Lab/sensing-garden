@@ -23,7 +23,8 @@ def setup_logging(log_dir: Path, *, on_log_complete=None) -> None:
 
     When ``on_log_complete`` is given, the log mechanism owns shipping: a completed
     (rolled-over) file is pushed to it, and any non-today logs left by a prior run are
-    shipped now. The upload subsystem never scans for logs."""
+    shipped now. The upload subsystem never scans for logs. When it is ``None``
+    (uploads disabled), nothing ships logs -- they accumulate on disk locally."""
     log_dir.mkdir(parents=True, exist_ok=True)
 
     #TODO I think this is handling logging for the application broadly,

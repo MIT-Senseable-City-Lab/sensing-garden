@@ -54,9 +54,8 @@ def _heartbeat_loop(
     while not stop_event.is_set():
         path = write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids)
         if pollen is not None:
-            # Heartbeats are telemetry, not durable artifacts; we ship them through the
-            # spooler for now, but the delivery semantics (file vs real-time POST) are
-            # still open -- see the spooler-refactor spec, open question #1.
+            # Heartbeats are telemetry, not durable artifacts; shipped through the
+            # spooler for now, though file-vs-real-time-POST delivery is still open.
             pollen.enqueue_set([path], device=flick_id, kind="heartbeat")  # staged; our copy is done
             path.unlink(missing_ok=True)
         stop_event.wait(interval)
@@ -328,7 +327,7 @@ def run(
             # devices from each result's source_device.
             # TODO: this writes to a shared v1/manifest.json (matches master); confirm a
             # single shared key is right vs a device-specific one -- multiple FLIK devices
-            # on one bucket would overwrite each other. (PR #3 review).
+            # on one bucket would overwrite each other.
             try:
                 manifest = json.dumps(
                     {"flick_id": settings["flick_id"], "dot_ids": settings["dot_ids"]}, indent=2
