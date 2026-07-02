@@ -218,7 +218,7 @@ def _resolve_pollen_settings(archive_batch: bool | None, upload_poll: int) -> di
     """Resolve upload settings: CLI flag wins, then the config file, then default.
 
     Config-file keys: archive_batch, upload_poll_interval,
-    upload_multipart_threshold, upload_part_size.
+    upload_multipart_threshold, upload_part_size, upload_videos_per_tick.
     """
     cfg = load_config()
     return {
@@ -226,6 +226,7 @@ def _resolve_pollen_settings(archive_batch: bool | None, upload_poll: int) -> di
         "poll_interval": float(cfg.get("upload_poll_interval", upload_poll)),
         "multipart_threshold": int(cfg.get("upload_multipart_threshold", DEFAULT_MULTIPART_THRESHOLD)),
         "part_size": int(cfg.get("upload_part_size", DEFAULT_PART_SIZE)),
+        "videos_per_tick": int(cfg.get("upload_videos_per_tick", 1)),
     }
 
 
@@ -317,6 +318,7 @@ def run(
                 multipart_threshold=pollen_settings["multipart_threshold"],
                 part_size=pollen_settings["part_size"],
                 batch=pollen_settings["batch"],
+                videos_per_tick=pollen_settings["videos_per_tick"],
                 delete_after_upload=delete_after_upload,
             )
             console.print(f"[dim]Upload[/dim] enabled (batch={pollen_settings['batch']})")

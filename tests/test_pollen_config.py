@@ -16,10 +16,11 @@ class TestResolveSettings:
         mocker.patch.object(run, "load_config", return_value={
             "archive_batch": True,
             "upload_poll_interval": 5, "upload_multipart_threshold": 111, "upload_part_size": 222,
+            "upload_videos_per_tick": 3,
         })
         s = run._resolve_pollen_settings(None, upload_poll=30)
         assert s == {"batch": True, "poll_interval": 5.0,
-                     "multipart_threshold": 111, "part_size": 222}
+                     "multipart_threshold": 111, "part_size": 222, "videos_per_tick": 3}
 
     def test_defaults(self, mocker):
         mocker.patch.object(run, "load_config", return_value={})
@@ -28,6 +29,7 @@ class TestResolveSettings:
         assert s["poll_interval"] == 30.0  # falls back to --upload-poll
         assert s["multipart_threshold"] == DEFAULT_MULTIPART_THRESHOLD
         assert s["part_size"] == DEFAULT_PART_SIZE
+        assert s["videos_per_tick"] == 1
 
 
 class TestBuildConfig:

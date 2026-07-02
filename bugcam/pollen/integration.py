@@ -33,6 +33,7 @@ def build_pollen_config(output_dir: Path, *, state_dir: Path, **overrides) -> Po
         multipart_threshold=int(overrides.get("multipart_threshold", DEFAULT_MULTIPART_THRESHOLD)),
         part_size=int(overrides.get("part_size", DEFAULT_PART_SIZE)),
         batch=bool(overrides.get("batch", False)),
+        videos_per_tick=int(overrides.get("videos_per_tick", 1)),
         delete_after_upload=bool(overrides.get("delete_after_upload", True)),
         retain_uploaded=bool(overrides.get("retain_uploaded", False)),
         reconcile_grace_seconds=float(overrides.get("reconcile_grace_seconds", 300.0)),

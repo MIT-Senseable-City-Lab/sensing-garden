@@ -53,6 +53,7 @@ class PollenConfig:
     multipart_threshold: int = DEFAULT_MULTIPART_THRESHOLD
     part_size: int = DEFAULT_PART_SIZE
     batch: bool = False
+    videos_per_tick: int = 1  # max un-batched videos per tick, so a backlog can't starve archives
     delete_after_upload: bool = True
     retain_uploaded: bool = False  # keep a local copy (in retained/) after upload
     retention_by_kind: dict[str, KindPolicy] = field(default_factory=dict)  # per-kind override
@@ -239,16 +240,30 @@ class Pollen:
             except Exception:
                 logger.exception("pollen enqueue source failed")
         pending = self.store.claim_pending()
-        if self.config.batch and self.archiver is not None:
-            failures = self._upload_batched(pending)
-        else:
-            failures = sum(0 if self._upload_one(row) else 1 for row in pending)
-        self._cleanup()
+        failures = 0
+        try:
+            if self.config.batch and self.archiver is not None:
+                failures = self._upload_batched(pending)
+            else:
+                failures = sum(0 if self._upload_one(row) else 1 for row in pending)
+        except Exception as exc:
+            logger.warning("tick aborted (%s: %s); running cleanup anyway", type(exc).__name__, exc)
+            raise
+        finally:
+            # Cleanup only touches UPLOADED rows, so it is safe (and necessary)
+            # even when the upload leg aborted mid-tick.
+            cleaned, retained = self._cleanup()
+            logger.info(
+                "tick summary: uploaded=%d failed=%d cleaned=%d retained=%d pending=%d",
+                cleaned + retained, failures, cleaned, retained, self.store.pending_count(),
+            )
         return failures
 
     def _upload_one(self, row: UploadRow) -> bool:
         """Upload one row. True on success; False on a per-file error (left pending,
         not deleted). RateLimitError propagates so the whole loop backs off."""
+        size = f"{row.size / 1e6:.1f} MB" if row.size else "size unknown"
+        logger.info("uploading %s (kind=%s, %s, attempt %d)", row.s3_key, row.kind, size, row.attempts + 1)
         try:
             self.store.record_attempt(row.id)
             self.uploader.upload(row)
@@ -257,18 +272,27 @@ class Pollen:
             return True
         except RateLimitError:
             raise
-        except Exception:
-            logger.exception("upload failed for %s (will retry; file kept)", row.s3_key)
+        except Exception as exc:
+            # Transient (timeouts, connection resets) and self-retried -- one line, no
+            # traceback; the file is kept and the row stays pending.
+            logger.warning(
+                "upload failed %s (kind=%s, attempt %d, file kept, will retry): %s: %s",
+                row.s3_key, row.kind, row.attempts + 1, type(exc).__name__, exc,
+            )
             return False
 
     def _upload_batched(self, pending: list[UploadRow]) -> int:
-        # Archive rows already in flight (e.g. from a previous interrupted tick)
-        # upload directly; the rest are bundled per device.
+        # Archive rows already in flight (e.g. from a previous failed tick) retry
+        # directly; their members ride them, so they are excluded from re-packing.
         failures = 0
+        reserved: set[int] = set()
+        for row in pending:
+            if row.kind == ARCHIVE_KIND:
+                reserved.update(row.metadata.get("members", []))
         for row in (r for r in pending if r.kind == ARCHIVE_KIND):
-            if not self._upload_one(row):
+            if not self._upload_archive_row(row):
                 failures += 1
-        members = [r for r in pending if r.kind != ARCHIVE_KIND]
+        members = [r for r in pending if r.kind != ARCHIVE_KIND and r.id not in reserved]
         # Batch and ship the result archives FIRST (small, indexed) -- the large
         # un-batched videos go last (below) so results never wait behind a slow video PUT.
         by_device: dict[str, list[UploadRow]] = defaultdict(list)
@@ -277,32 +301,49 @@ class Pollen:
 
         timestamp = self._clock().strftime("%Y%m%d_%H%M%S")
         for device, items in by_device.items():
+            s3_key = self.archiver.key_for(device, timestamp)
+            if self.store.has_key(s3_key):
+                # Same key as a queued tar (fixed timestamp within one poll): packing
+                # would overwrite its staged file. Members wait for the next tick.
+                logger.info("archive %s already queued; %d member(s) wait for the next tick",
+                            s3_key, len(items))
+                continue
             artifact = self.archiver.pack(device, items, self.config.staging_dir, timestamp=timestamp)
             if artifact is None:
+                logger.info("nothing to pack for device %s", device)
                 continue
-            tar_id = self.store.enqueue(str(artifact.path), kind=ARCHIVE_KIND, s3_key=artifact.s3_key)
+            tar_id = self.store.enqueue(
+                str(artifact.path), kind=ARCHIVE_KIND, s3_key=artifact.s3_key,
+                metadata={"members": [item.id for item in items]},
+            )
             if tar_id is None:
-                continue  # archive key already queued (same timestamp); try next tick
-            try:
-                self.store.record_attempt(tar_id)
-                self.uploader.upload(self.store.get(tar_id))
-                self.store.mark_uploaded(tar_id)
-                for item in items:
-                    self.store.mark_uploaded(item.id)
+                logger.info("archive %s already queued; skipping re-enqueue", artifact.s3_key)
+                continue
+            if self._upload_archive_row(self.store.get(tar_id)):
                 logger.info("uploaded archive %s (%d members, device=%s)",
                             artifact.s3_key, len(items), device)
-            except RateLimitError:
-                raise
-            except Exception:
-                logger.exception("archive upload failed for %s (will retry)", artifact.s3_key)
+            else:
                 failures += 1
 
-        # Un-batched kinds (videos) ship individually and LAST: large, un-indexed, low
-        # priority -- they must not delay the result archives above (see UNBATCHED_KINDS).
-        for row in (r for r in members if r.kind in UNBATCHED_KINDS):
+        # Un-batched kinds (videos) ship individually and LAST, capped per tick so a
+        # backlog cannot starve archive retries or delay cleanup for hours. Attempts-
+        # first ordering keeps one failing video from monopolising the capped lane.
+        videos = sorted(
+            (r for r in members if r.kind in UNBATCHED_KINDS),
+            key=lambda r: (r.attempts, r.id),
+        )
+        for row in videos[: self.config.videos_per_tick]:
             if not self._upload_one(row):
                 failures += 1
         return failures
+
+    def _upload_archive_row(self, row: UploadRow) -> bool:
+        """Upload a tar row; on success its members shipped inside it, so mark them."""
+        if not self._upload_one(row):
+            return False
+        for member_id in row.metadata.get("members", []):
+            self.store.mark_uploaded(member_id)
+        return True
 
     def _device_of(self, row: UploadRow) -> str:
         # Device is passed explicitly at enqueue and stored on the row.
@@ -317,15 +358,21 @@ class Pollen:
         keep = (not self.config.delete_after_upload) or self.config.retain_uploaded
         return KindPolicy(keep_after_upload=keep)
 
-    def _cleanup(self) -> None:
+    def _cleanup(self) -> tuple[int, int]:
         # Retention is decided per kind, by the spooler -- not the producer. keep_after_upload
         # retains a local copy (retained/) plus a dedup tombstone; otherwise the staged copy
         # and row are dropped. The producer owns and deletes its own originals either way.
+        cleaned = retained = 0
         for row in self.store.uploaded_rows():
             staged = Path(row.staging_path)
             if self._policy_for(row.kind).keep_after_upload:
                 self._staging.retain(staged)
                 self.store.mark_done(row.id)  # tombstone dedups re-enqueues of the same key
+                retained += 1
+                logger.info("retained %s (staged copy moved to retained/; keep_after_upload)", row.s3_key)
             else:
                 self._staging.unlink(staged)
                 self.store.delete(row.id)
+                cleaned += 1
+                logger.info("cleaned %s (staged copy deleted; delete_after_upload)", row.s3_key)
+        return cleaned, retained
