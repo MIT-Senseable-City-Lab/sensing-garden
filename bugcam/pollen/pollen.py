@@ -245,7 +245,11 @@ class Pollen:
             if self.config.batch and self.archiver is not None:
                 failures = self._upload_batched(pending)
             else:
-                failures = sum(0 if self._upload_one(row) else 1 for row in pending)
+                for row in pending:
+                    if self._drop_if_lost(row):
+                        continue
+                    if not self._upload_one(row):
+                        failures += 1
         except Exception as exc:
             logger.warning("tick aborted (%s: %s); running cleanup anyway", type(exc).__name__, exc)
             raise
@@ -284,12 +288,14 @@ class Pollen:
     def _upload_batched(self, pending: list[UploadRow]) -> int:
         # Archive rows already in flight (e.g. from a previous failed tick) retry
         # directly; their members ride them, so they are excluded from re-packing.
+        # A tar whose staged file is lost is dropped WITHOUT reserving: its members
+        # become free to re-pack into a fresh tar this same tick.
         failures = 0
         reserved: set[int] = set()
-        for row in pending:
-            if row.kind == ARCHIVE_KIND:
-                reserved.update(row.metadata.get("members", []))
         for row in (r for r in pending if r.kind == ARCHIVE_KIND):
+            if self._drop_if_lost(row):
+                continue
+            reserved.update(row.metadata.get("members", []))
             if not self._upload_archive_row(row):
                 failures += 1
         members = [r for r in pending if r.kind != ARCHIVE_KIND and r.id not in reserved]
@@ -297,6 +303,8 @@ class Pollen:
         # un-batched videos go last (below) so results never wait behind a slow video PUT.
         by_device: dict[str, list[UploadRow]] = defaultdict(list)
         for row in (r for r in members if r.kind not in UNBATCHED_KINDS):
+            if self._drop_if_lost(row):  # a lost member must not crash pack()
+                continue
             by_device[self._device_of(row)].append(row)
 
         timestamp = self._clock().strftime("%Y%m%d_%H%M%S")
@@ -308,7 +316,13 @@ class Pollen:
                 logger.info("archive %s already queued; %d member(s) wait for the next tick",
                             s3_key, len(items))
                 continue
-            artifact = self.archiver.pack(device, items, self.config.staging_dir, timestamp=timestamp)
+            try:
+                artifact = self.archiver.pack(device, items, self.config.staging_dir, timestamp=timestamp)
+            except Exception as exc:  # one device's bad pack must not wedge the queue
+                logger.warning("packing archive for device %s failed (will retry): %s: %s",
+                               device, type(exc).__name__, exc)
+                failures += 1
+                continue
             if artifact is None:
                 logger.info("nothing to pack for device %s", device)
                 continue
@@ -333,9 +347,21 @@ class Pollen:
             key=lambda r: (r.attempts, r.id),
         )
         for row in videos[: self.config.videos_per_tick]:
+            if self._drop_if_lost(row):
+                continue
             if not self._upload_one(row):
                 failures += 1
         return failures
+
+    def _drop_if_lost(self, row: UploadRow) -> bool:
+        """A pending row whose staged copy vanished can never upload; drop it (the
+        startup reconcile rule, applied mid-run) instead of retrying forever."""
+        if Path(row.staging_path).exists():
+            return False
+        logger.error("staged file gone for %s (kind=%s); dropping row (lost upload)",
+                     row.s3_key, row.kind)
+        self.store.delete(row.id)
+        return True
 
     def _upload_archive_row(self, row: UploadRow) -> bool:
         """Upload a tar row; on success its members shipped inside it, so mark them."""

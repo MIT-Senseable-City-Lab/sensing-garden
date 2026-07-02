@@ -29,6 +29,7 @@ class FakeUploader:
 
     def upload(self, row):
         self.attempts.append(row.s3_key)
+        Path(row.staging_path).stat()  # the real Uploader stats the file too
         for prefix, exc in self.fail.items():
             if row.s3_key.startswith(prefix):
                 raise exc if isinstance(exc, Exception) else RuntimeError("boom")
@@ -225,6 +226,57 @@ class TestCleanupLogging:
             "retained" in m and "v1/flick1/c/results.json" in m
             for m in _messages(caplog)
         )
+
+
+# --- field addendum: a lost staged file is dropped, never retried -------------
+
+class TestMissingStagedFiles:
+    def test_missing_staged_file_drops_row_without_retry(self, tmp_path, caplog):
+        cfg = _config(tmp_path)
+        up = FakeUploader()
+        pol = _pollen(cfg, up)
+        path = _write(cfg.output_root, "flick1/a/vid.mp4", b"A")
+        rid = pol.enqueue_set([path], device="flick1", kind="video")[0]
+        Path(pol.store.get(rid).staging_path).unlink()  # lost outside Pollen
+
+        with caplog.at_level(logging.INFO):
+            pol._tick()
+
+        assert up.attempts == []              # never attempted
+        assert pol.store.get(rid) is None     # dropped, not left to retry forever
+        assert any("staged file gone" in m for m in _messages(caplog, logging.ERROR))
+
+    def test_missing_member_is_dropped_and_the_rest_still_ships(self, tmp_path, caplog):
+        cfg = _config(tmp_path, batch=True)
+        up = FakeUploader()
+        pol = _pollen(cfg, up, archiver=TarArchiver(), clock=TickClock())
+        a = _write(cfg.output_root, "flick1/c1/results.json", b"{}")
+        b = _write(cfg.output_root, "flick1/c2/results.json", b"{}")
+        rid_a, rid_b = pol.enqueue_set([a, b], device="flick1", kind="result")
+        Path(pol.store.get(rid_a).staging_path).unlink()
+
+        with caplog.at_level(logging.INFO):
+            pol._tick()  # must not raise (a crashing pack() wedges the whole queue)
+
+        assert pol.store.get(rid_a) is None   # lost member dropped
+        assert pol.store.get(rid_b) is None   # survivor shipped in the tar and cleaned
+        assert up.uploaded and up.uploaded[0].startswith("v2/archives/flick1/")
+        assert any("staged file gone" in m for m in _messages(caplog, logging.ERROR))
+
+    def test_missing_tar_file_drops_tar_row_and_members_repack(self, tmp_path):
+        cfg = _config(tmp_path, batch=True)
+        up = FakeUploader(fail={"v2/archives/": True})
+        pol = _pollen(cfg, up, archiver=TarArchiver(), clock=TickClock(step=60))
+        path = _write(cfg.output_root, "flick1/c/results.json", b"{}")
+        rid = pol.enqueue_set([path], device="flick1", kind="result")[0]
+        pol._tick()  # tar packed, upload fails -> tar row pending
+        next(cfg.staging_dir.glob("*.tar")).unlink()  # tar lost outside Pollen
+
+        up.fail.clear()
+        pol._tick()  # tar row dropped; member unreserved, re-packed, shipped
+
+        assert pol.store.get(rid) is None
+        assert pol.store.pending_count() == 0
 
 
 # --- spec 6b / V4: at most videos_per_tick videos, attempts-first order -------
