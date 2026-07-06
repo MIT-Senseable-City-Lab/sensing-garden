@@ -1,9 +1,11 @@
 """Upload processed output through backend-issued presigned URLs."""
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -58,14 +60,14 @@ def _uploaded_state_path(results_dir: Path) -> Path:
     return results_dir / UPLOADED_STATE_FILENAME
 
 
-def _load_uploaded_state(results_dir: Path) -> dict[str, list[str]]:
+def _load_uploaded_state(results_dir: Path) -> dict[str, Any]:
     state_path = _uploaded_state_path(results_dir)
     if not state_path.exists():
         return {"track_ids": [], "files": []}
     return json.loads(state_path.read_text(encoding="utf-8"))
 
 
-def _save_uploaded_state(results_dir: Path, state: dict[str, list[str]]) -> None:
+def _save_uploaded_state(results_dir: Path, state: dict[str, Any]) -> None:
     _uploaded_state_path(results_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
@@ -81,9 +83,19 @@ def _log_state_path(log_dir: Path) -> Path:
     return log_dir / LOG_STATE_FILENAME
 
 
-def _heartbeat_fingerprint(path: Path) -> str:
+def _stat_fingerprint(path: Path) -> str:
+    # mtime+size; cheap change-detection for append-only logs/telemetry.
     stat = path.stat()
     return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def _content_fingerprint(path: Path) -> str:
+    # sha256 of bytes; re-uploads only on real content change, unlike mtime+size.
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _load_heartbeat_state(heartbeat_dir: Path) -> dict[str, str]:
@@ -133,6 +145,20 @@ def _load_result_track_ids(results_dir: Path) -> list[str]:
     return [track["track_id"] for track in payload.get("tracks", [])]
 
 
+def _result_has_media(results_dir: Path) -> bool:
+    """True if the result dir holds any crop/composite/video file."""
+    for subdir in ("crops", "composites", "videos"):
+        media_dir = results_dir / subdir
+        if media_dir.is_dir() and any(path.is_file() for path in media_dir.rglob("*")):
+            return True
+    return False
+
+
+def _result_is_empty(results_dir: Path) -> bool:
+    """A result is empty when it has zero tracks and no media (nothing detected)."""
+    return not _load_result_track_ids(results_dir) and not _result_has_media(results_dir)
+
+
 def _upload_relative_file(results_dir: Path, api_url: str, api_key: str, s3_prefix: str, relative_path: Path) -> None:
     upload_file(api_url, api_key, results_dir / relative_path, f"{s3_prefix}/{relative_path.as_posix()}")
 
@@ -144,7 +170,7 @@ def _upload_heartbeat_files(output_dir: Path, api_url: str, api_key: str) -> int
         uploaded_files = _load_heartbeat_state(heartbeat_dir)
         changed = False
         for heartbeat_path in sorted(heartbeat_dir.glob("*.json")):
-            fingerprint = _heartbeat_fingerprint(heartbeat_path)
+            fingerprint = _stat_fingerprint(heartbeat_path)
             if uploaded_files.get(heartbeat_path.name) == fingerprint:
                 continue
             upload_file(
@@ -168,7 +194,7 @@ def _upload_environment_files(output_dir: Path, api_url: str, api_key: str) -> i
         uploaded_files = _load_environment_state(environment_dir)
         changed = False
         for environment_path in sorted(environment_dir.glob("*.json")):
-            fingerprint = _heartbeat_fingerprint(environment_path)
+            fingerprint = _stat_fingerprint(environment_path)
             if uploaded_files.get(environment_path.name) == fingerprint:
                 continue
             upload_file(
@@ -186,13 +212,19 @@ def _upload_environment_files(output_dir: Path, api_url: str, api_key: str) -> i
 
 
 def _upload_log_files(output_dir: Path, api_url: str, api_key: str) -> int:
+    # Never upload the current-day log: it is appended to all day, so its
+    # fingerprint changes every poll and it would be re-PUT in full each cycle.
+    # A day's log uploads exactly once, after rollover, when it is no longer today.
+    today = datetime.now().strftime("%Y%m%d")
     uploaded_count = 0
     for log_dir in _list_log_directories(output_dir):
         device_id = log_dir.parent.name
         uploaded_files = _load_log_state(log_dir)
         changed = False
         for log_path in sorted(path for path in log_dir.iterdir() if path.is_file() and path.name != LOG_STATE_FILENAME):
-            fingerprint = _heartbeat_fingerprint(log_path)
+            if today in log_path.name:
+                continue
+            fingerprint = _stat_fingerprint(log_path)
             if uploaded_files.get(log_path.name) == fingerprint:
                 continue
             upload_file(
@@ -248,10 +280,15 @@ def _upload_new_dot_files(
             uploaded_files.add(relative_path.as_posix())
         track_ids.add(track_id)
 
-    _upload_relative_file(results_dir, api_url, api_key, s3_prefix, Path(RESULTS_FILENAME))
+    # Re-upload results.json only on real content change: a re-PUT re-runs the
+    # whole S3-trigger + DynamoDB path, and this file is polled all day.
+    results_fingerprint = _content_fingerprint(results_dir / RESULTS_FILENAME)
+    if state.get("results_fingerprint") != results_fingerprint:
+        _upload_relative_file(results_dir, api_url, api_key, s3_prefix, Path(RESULTS_FILENAME))
     return {
         "track_ids": sorted(track_ids),
         "files": sorted(uploaded_files),
+        "results_fingerprint": results_fingerprint,
     }
 
 
@@ -275,7 +312,12 @@ def upload_ready_results(
     for results_dir in _list_result_directories(output_dir):
         s3_prefix = f"v1/{results_dir.parent.name}/{results_dir.name}"
         if _is_dot_results_dir(results_dir, dot_ids):
-            # DOT: incremental upload (existing behavior)
+            # DOT: incremental upload (existing behavior). Skip while still empty —
+            # nothing classified yet; the pipeline merges tracks into this day
+            # bucket's results.json as classification completes, so don't delete it
+            # (DOT dir cleanup is handled separately).
+            if _result_is_empty(results_dir):
+                continue
             state = _load_uploaded_state(results_dir)
             new_state = _upload_new_dot_files(results_dir, api_url, api_key, s3_prefix, state)
             if new_state != state:
@@ -285,6 +327,12 @@ def upload_ready_results(
 
         # FLIK: only upload when classification is fully complete
         if not (results_dir / ".done").exists():
+            continue
+
+        # Nothing detected: don't upload an empty record. Clean it up locally
+        # regardless of delete_after_upload — it is junk, not a retained result.
+        if _result_is_empty(results_dir):
+            shutil.rmtree(results_dir)
             continue
 
         upload_directory(api_url, api_key, results_dir, s3_prefix)
