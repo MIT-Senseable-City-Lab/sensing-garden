@@ -1,6 +1,7 @@
 """All-in-one record, process, upload, and heartbeat command."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import threading
@@ -12,7 +13,9 @@ import typer
 from rich.console import Console
 
 from bugcam.commands.heartbeat import write_heartbeat_snapshot
-from bugcam.commands.upload import upload_ready_results, watch_uploads
+from bugcam.pollen.integration import build_pollen
+from bugcam.edge26.result_publish import publish_result_dir
+from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SIZE
 from bugcam.config import (
     DEFAULT_API_URL,
     DEFAULT_S3_BUCKET,
@@ -45,21 +48,32 @@ def _heartbeat_loop(
     output_dir: Path,
     dot_ids: list[str],
     stop_event: threading.Event,
+    pollen: Any = None,
+    interval: float = HEARTBEAT_INTERVAL_SECONDS,
 ) -> None:
     while not stop_event.is_set():
-        write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids)
-        stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
+        path = write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids)
+        if pollen is not None:
+            # Heartbeats are telemetry, not durable artifacts; shipped through the
+            # spooler for now, though file-vs-real-time-POST delivery is still open.
+            pollen.enqueue_set([path], device=flick_id, kind="heartbeat")  # staged; our copy is done
+            path.unlink(missing_ok=True)
+        stop_event.wait(interval)
 
 
 def _environment_loop(
     flick_id: str,
     output_dir: Path,
     stop_event: threading.Event,
+    pollen: Any = None,
 ) -> None:
     warning_emitted = False
     while not stop_event.is_set():
         try:
-            collect_environment_reading(output_dir=output_dir, flick_id=flick_id)
+            path, _payload = collect_environment_reading(output_dir=output_dir, flick_id=flick_id)
+            if pollen is not None:
+                pollen.enqueue_set([path], device=flick_id, kind="environment")  # staged; copy done
+                path.unlink(missing_ok=True)
             warning_emitted = False
         except Exception as exc:
             if not warning_emitted:
@@ -199,6 +213,29 @@ def _release_pid_file(pid_path: Path) -> None:
         pid_path.unlink(missing_ok=True)
 
 
+def _resolve_pollen_settings(archive_batch: bool | None, upload_poll: int) -> dict[str, Any]:
+    """Resolve upload settings: CLI flag wins, then the config file, then default.
+
+    Config-file keys: archive_batch, upload_poll_interval,
+    upload_multipart_threshold, upload_part_size, upload_videos_per_tick.
+    """
+    cfg = load_config()
+    return {
+        "batch": archive_batch if archive_batch is not None else bool(cfg.get("archive_batch", False)),
+        "poll_interval": float(cfg.get("upload_poll_interval", upload_poll)),
+        "multipart_threshold": int(cfg.get("upload_multipart_threshold", DEFAULT_MULTIPART_THRESHOLD)),
+        "part_size": int(cfg.get("upload_part_size", DEFAULT_PART_SIZE)),
+        "videos_per_tick": int(cfg.get("upload_videos_per_tick", 1)),
+    }
+
+
+def _resolve_heartbeat_interval(heartbeat_interval: float | None) -> float:
+    """Resolve the heartbeat cadence: CLI flag wins, then config, then default."""
+    if heartbeat_interval is not None:
+        return float(heartbeat_interval)
+    return float(load_config().get("heartbeat_interval", HEARTBEAT_INTERVAL_SECONDS))
+
+
 @app.callback()
 def run(
     api_url: str | None = typer.Option(None, "--api-url", help="Backend API URL"),
@@ -215,12 +252,8 @@ def run(
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
     bitrate: int = typer.Option(20_000_000, "--bitrate", help="H.264 encoder bitrate in bps (hardware encoding only)"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
-    upload_poll: int = typer.Option(30, "--upload-poll", help="Seconds between upload polls"),
-    delete_after_upload: bool = typer.Option(
-        True,
-        "--delete-after-upload/--no-delete-after-upload",
-        help="Clean up results after uploading",
-    ),
+    upload_poll: int = typer.Option(30, "--upload-poll", help="Seconds between upload polls; with --archive-batch this is also the batch cadence (one tar per device per poll) (config: upload_poll_interval)"),
+    heartbeat_interval: float | None = typer.Option(None, "--heartbeat-interval", help="Seconds between heartbeat snapshots (config: heartbeat_interval, default 60)"),
     with_receiver: bool = typer.Option(
         True,
         "--with-receiver/--no-receiver",
@@ -234,10 +267,20 @@ def run(
         "--detection-in-subprocess/--detection-in-thread",
         help="Run detection in a separate process (own GIL) so it can't starve the recorder threads (default: on)",
     ),
+    delete_after_upload: bool = typer.Option(
+        True,
+        "--delete-after-upload/--no-delete-after-upload",
+        help="Delete local files after they are uploaded (default: on)",
+    ),
     enable_upload: bool = typer.Option(
         True,
         "--upload/--no-upload",
-        help="Upload results to S3 (default: on)",
+        help="Upload results to S3; --no-upload disables all uploads (default: on)",
+    ),
+    archive_batch: bool | None = typer.Option(
+        None,
+        "--archive-batch/--no-archive-batch",
+        help="Bundle outputs into per-device tar archives instead of per-object uploads; cadence follows --upload-poll (config: archive_batch)",
     ),
 ) -> None:
     """Run recording, processing, uploading, and one-minute heartbeat emission."""
@@ -256,8 +299,45 @@ def run(
             console.print(f"[yellow]Warning[/yellow] {ntp_detail}")
 
         settings = _resolve_runtime_settings(api_url, api_key, flick_id, dot_ids, bucket, enable_upload=enable_upload)
+        resolved_heartbeat_interval = _resolve_heartbeat_interval(heartbeat_interval)
         input_dir.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Pollen is the upload subsystem; it owns all device -> S3 traffic.
+        # --no-upload disables it entirely (no device -> S3 traffic at all).
+        pollen_instance = None
+        if enable_upload:
+            pollen_settings = _resolve_pollen_settings(archive_batch, upload_poll)
+            pollen_instance = build_pollen(
+                output_dir,
+                settings["api_url"],
+                settings["api_key"],
+                state_dir=get_state_dir(),
+                poll_interval=pollen_settings["poll_interval"],
+                multipart_threshold=pollen_settings["multipart_threshold"],
+                part_size=pollen_settings["part_size"],
+                batch=pollen_settings["batch"],
+                videos_per_tick=pollen_settings["videos_per_tick"],
+                delete_after_upload=delete_after_upload,
+            )
+            console.print(f"[dim]Upload[/dim] enabled (batch={pollen_settings['batch']})")
+
+            # The manifest is a fixed-key object the queue does not own; ship it once
+            # at startup. A missing manifest is non-fatal -- the backend resolves
+            # devices from each result's source_device.
+            # TODO: this writes to a shared v1/manifest.json (matches master); confirm a
+            # single shared key is right vs a device-specific one -- multiple FLIK devices
+            # on one bucket would overwrite each other.
+            try:
+                manifest = json.dumps(
+                    {"flick_id": settings["flick_id"], "dot_ids": settings["dot_ids"]}, indent=2
+                ).encode("utf-8")
+                pollen_instance.upload_now(manifest, "v1/manifest.json", "application/json")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[yellow]Manifest upload failed[/yellow] {exc} (non-fatal)")
+        else:
+            console.print("[yellow]Uploads disabled[/yellow] (--no-upload)")
+
         selected_model = select_model_reference(model)
         provenance = resolve_bundle_provenance(selected_model)
         if model is None:
@@ -265,6 +345,20 @@ def run(
         console.print(f"[cyan]Running[/cyan] flick={settings['flick_id']} dots={settings['dot_ids'] or '[]'}")
         console.print(f"[dim]Model[/dim] {provenance['model_id']}")
 
+        on_result_ready = None
+        on_log_complete = None
+        on_video_ready = None
+        if pollen_instance is not None:
+            on_result_ready = lambda d: publish_result_dir(  # noqa: E731 - produce-site adapter
+                pollen_instance, d, settings["flick_id"], settings["dot_ids"]
+            )
+            on_video_ready = lambda v, dev: pollen_instance.enqueue_set(  # noqa: E731 - produce-site adapter
+                [v], device=dev, kind="video"
+            )
+
+            def on_log_complete(path: Path) -> None:  # ship a rolled-over log, then drop our copy
+                pollen_instance.enqueue_set([path], device=settings["flick_id"], kind="log")
+                path.unlink(missing_ok=True)
         pipeline = build_pipeline(
             flick_id=settings["flick_id"],
             dot_ids=settings["dot_ids"],
@@ -279,26 +373,13 @@ def run(
             bitrate=bitrate,
             detection_in_subprocess=detection_in_subprocess,
             detection_config_path=detection_config,
+            on_result_ready=on_result_ready,
+            on_log_complete=on_log_complete,
+            on_video_ready=on_video_ready,
         )
-        upload_stop_event = threading.Event()
         heartbeat_stop_event = threading.Event()
         environment_stop_event = threading.Event()
         receiver_stop_event = threading.Event()
-        upload_thread = threading.Thread(
-            target=watch_uploads,
-            args=(
-                output_dir,
-                settings["api_url"],
-                settings["api_key"],
-                settings["flick_id"],
-                settings["dot_ids"],
-                upload_poll,
-                delete_after_upload,
-                upload_stop_event,
-            ),
-            daemon=True,
-            name="BugCamUpload",
-        )
         heartbeat_thread = threading.Thread(
             target=_heartbeat_loop,
             args=(
@@ -307,6 +388,8 @@ def run(
                 output_dir,
                 settings["dot_ids"],
                 heartbeat_stop_event,
+                pollen_instance,
+                resolved_heartbeat_interval,
             ),
             daemon=True,
             name="BugCamHeartbeat",
@@ -317,6 +400,7 @@ def run(
                 settings["flick_id"],
                 output_dir,
                 environment_stop_event,
+                pollen_instance,
             ),
             daemon=True,
             name="BugCamEnvironment",
@@ -331,9 +415,9 @@ def run(
                 name="BugCamReceiver",
             )
 
+        if pollen_instance is not None:
+            pollen_instance.start()
         pipeline.start()
-        if enable_upload:
-            upload_thread.start()
         heartbeat_thread.start()
         environment_thread.start()
         if receiver_thread:
@@ -346,30 +430,20 @@ def run(
         pipeline.stop_recording()
         pipeline.wait()
     finally:
-        if "upload_stop_event" in locals():
-            upload_stop_event.set()
         if "heartbeat_stop_event" in locals():
             heartbeat_stop_event.set()
         if "environment_stop_event" in locals():
             environment_stop_event.set()
         if "receiver_stop_event" in locals() and receiver_thread:
             receiver_stop_event.set()
-        if "upload_thread" in locals():
-            upload_thread.join(timeout=upload_poll + 1)
         if "heartbeat_thread" in locals():
             heartbeat_thread.join(timeout=1)
         if "environment_thread" in locals():
             environment_thread.join(timeout=1)
         if "receiver_thread" in locals() and receiver_thread:
             receiver_thread.join(timeout=5)
-        if "settings" in locals() and enable_upload:
-            upload_ready_results(
-                output_dir,
-                settings["api_url"],
-                settings["api_key"],
-                settings["flick_id"],
-                settings["dot_ids"],
-                delete_after_upload,
-                False,
-            )
+        # Stop Pollen's loop after finishing the current tick; anything still
+        # queued is durable in SQLite and resumes on the next launch.
+        if "pollen_instance" in locals() and pollen_instance is not None:
+            pollen_instance.stop()
         _release_pid_file(pid_path)

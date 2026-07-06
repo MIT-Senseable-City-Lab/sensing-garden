@@ -15,18 +15,27 @@ from bugcam.edge26.capture import VideoRecorder
 from bugcam.edge26.processing import VideoProcessor, HailoClassifier
 from bugcam.edge26.output import ResultsWriter
 from bugcam.edge26.queue import ClassificationQueue, QueueEntry
+from bugcam.log_shipping import DailyLogHandler, ship_existing_logs
 
 
-def setup_logging(log_dir: Path) -> None:
-    """Configure logging to console and file."""
+def setup_logging(log_dir: Path, *, on_log_complete=None) -> None:
+    """Configure logging to console and a daily-rotating file.
+
+    When ``on_log_complete`` is given, the log mechanism owns shipping: a completed
+    (rolled-over) file is pushed to it, and any non-today logs left by a prior run are
+    shipped now. The upload subsystem never scans for logs. When it is ``None``
+    (uploads disabled), nothing ships logs -- they accumulate on disk locally."""
     log_dir.mkdir(parents=True, exist_ok=True)
-    
-    log_file = log_dir / f"edge26_{datetime.now().strftime('%Y%m%d')}.log"
-    
+
+    #TODO I think this is handling logging for the application broadly,
+    # so it should be declared outside of edge26
+    file_handler = DailyLogHandler(log_dir)
+    file_handler.on_complete = on_log_complete
+
     # Format
     fmt = "%(asctime)s | %(levelname)-8s | %(message)s"
     datefmt = "%H:%M:%S"
-    
+
     # Root logger
     logging.basicConfig(
         level=logging.INFO,
@@ -34,10 +43,13 @@ def setup_logging(log_dir: Path) -> None:
         datefmt=datefmt,
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
+            file_handler,
         ]
     )
-    
+
+    if on_log_complete is not None:
+        ship_existing_logs(on_log_complete, log_dir)
+
     # Reduce noise from libraries
     logging.getLogger("PIL").setLevel(logging.WARNING)
     logging.getLogger("hailo_platform").setLevel(logging.WARNING)
@@ -64,8 +76,12 @@ class Pipeline:
         shared_video_queue=None,
         shared_stop_event=None,
         shared_recording_stopped=None,
+        on_result_ready=None,
+        on_video_ready=None,
     ):
         self.config = config
+        self._on_result_ready = on_result_ready
+        self._on_video_ready = on_video_ready
 
         # --- Pipeline mode (resolved early; queue/event types depend on it) ---
         pipeline_config = config.get("pipeline", {})
@@ -198,6 +214,39 @@ class Pipeline:
             bitrate=capture.get("bitrate", 20_000_000),
         )
     
+    def _notify_result_ready(self, output_dir: Path) -> None:
+        """Tell the upload owner (Pollen) a result dir is finalized, if wired."""
+        if self._on_result_ready is not None:
+            try:
+                self._on_result_ready(output_dir)
+            except Exception:
+                logger.error("result-ready callback failed", exc_info=True)
+
+    def _notify_video_ready(self, video_path: Path, device: str) -> bool:
+        """Tell the upload owner a DOT video is ready. DOT videos are not tied to a
+        track, so they ship as their own unit keyed under the device/day. Returns True
+        if an upload owner took it (staged it), so the producer can drop its copy."""
+        if self._on_video_ready is None:
+            return False
+        try:
+            self._on_video_ready(video_path, device)
+            return True
+        except Exception:
+            logger.error("video-ready callback failed", exc_info=True)
+            return False
+
+    def _publish_dot_video(self, entry: QueueEntry) -> None:
+        """Ship a queued DOT video to the upload owner, then drop the local copy. Runs in
+        the main-process classification worker (which holds Pollen); detection only
+        enqueues the task. Raises on failure so the queue retries rather than lose it."""
+        video_path = Path(entry.track_dir)
+        if not video_path.exists():
+            return  # already shipped/cleaned: idempotent
+        if not self._notify_video_ready(video_path, entry.source_device):
+            raise RuntimeError(f"video enqueue failed (no upload owner?): {video_path.name}")
+        video_path.unlink()
+        logger.info("DOT video staged for upload: %s (dropped local copy)", video_path.name)
+
     def _is_flick_video(self, path: Path) -> bool:
         """Check if a path is a FLICK video (matches flick_id prefix)."""
         return (path.is_file()
@@ -308,6 +357,17 @@ class Pipeline:
                             shutil.copy2(vid, dst)
                             logger.info(f"  Video copied: {vid.name}")
                             copied_something = True
+                            # Detection runs in a subprocess with no upload callback, so
+                            # hand the video to the main-process classification worker
+                            # (which owns Pollen) via the disk queue, same path as tracks.
+                            self.classification_queue.enqueue(
+                                entry_type="video",
+                                source_device=dot_id,
+                                date=date_str,
+                                track_id=dst.stem,
+                                track_dir=dst,
+                                output_dir=dst.parent,
+                            )
                         vid.unlink()
             
             background = self._find_latest_background(dot_dir)
@@ -579,11 +639,17 @@ class Pipeline:
             
             # Save detection metadata for classification thread to merge into results
             if confirmed_count > 0:
+                # Backend parses video_timestamp as ISO-8601; date_time is the
+                # compact YYYYMMDD_HHMMSS_micros video stem (matches processor.py).
+                date_str, time_str = date_time.split('_')[:2]
+                video_timestamp_iso = datetime.strptime(
+                    f"{date_str}_{time_str}", "%Y%m%d_%H%M%S"
+                ).isoformat()
                 detection_meta = {
                     "source_device": self.flick_id,
                     "date": date_time[:8],
                     "video_file": video_path.name,
-                    "video_timestamp": date_time,
+                    "video_timestamp": video_timestamp_iso,
                     "model_id": self.config.get("model", {}).get("model_id"),
                     "video_info": {
                         "fps": result.video_info.get("fps"),
@@ -643,7 +709,8 @@ class Pipeline:
                 self.writer.write_results(results=empty_results, output_dir=output_dir)
                 (output_dir / ".done").write_text("classified=0\nexpected=0\n")
                 logger.info("  No confirmed tracks, marked directory done")
-            
+                self._notify_result_ready(output_dir)
+
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
     
@@ -667,59 +734,52 @@ class Pipeline:
             logger.info(f"DOT DETECTION: {dot_dir.name} ({len(ready_tracks)} track(s) ready)")
             logger.info("-" * 50)
             
-            output_dir = self._compute_output_dir(dot_id, date_str)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
+            # Videos are handled separately by _process_dot_media (a standalone unit
+            # under <dot>/<YYYYMMDD>/videos/); detection only owns the tracks.
             background = self._find_latest_background(dot_dir)
-            
-            # Copy background image to output, then point to the copy
-            # so the queue entry references a path that persists after
-            # the incoming DOT directory is cleaned up
-            if background:
-                dst_background = output_dir / background.name
-                shutil.copy2(background, dst_background)
-                logger.info(f"  Background copied: {background.name}")
-                background = dst_background
-            
-            # Copy any new videos to output, then delete from input
-            videos_dir = dot_dir / "videos"
-            if videos_dir.exists():
-                dst_videos = output_dir / "videos"
-                dst_videos.mkdir(parents=True, exist_ok=True)
-                for vid in sorted(videos_dir.iterdir()):
-                    if vid.is_file() and vid.suffix == ".mp4":
-                        shutil.copy2(vid, dst_videos / vid.name)
-                        vid.unlink()
-                        logger.info(f"  Video copied: {vid.name}")
-            
-            # Queue each track for classification
+
+            # Each ready track becomes its own terminal result dir,
+            # <dot>/<YYYYMMDD>/<track_id>_<HHMMSS>/: one results.json + .done,
+            # uploaded once and deleted (no day-bucket accumulation).
             queued_count = 0
             for track_dir in ready_tracks:
                 if self.stop_event.is_set():
                     break
-                
+
                 track_dir_name = track_dir.name
                 track_id = track_dir_name.rsplit("_", 1)[0]
                 track_timestamp = track_dir_name.rsplit("_", 1)[-1] if "_" in track_dir_name else None
-                
+
+                track_output_dir = self._compute_output_dir(dot_id, f"{date_str}/{track_dir_name}")
+                track_output_dir.mkdir(parents=True, exist_ok=True)
+
+                # Background lives in the track dir so the composite step has it after
+                # the incoming DOT dir is cleaned up; the dir is terminal so it's local.
+                track_background = None
+                if background:
+                    track_background = track_output_dir / background.name
+                    shutil.copy2(background, track_background)
+
                 # Copy crops to output
-                dst_crops = output_dir / "crops" / track_dir_name
+                dst_crops = track_output_dir / "crops" / track_dir_name
                 dst_crops.mkdir(parents=True, exist_ok=True)
-                
+
                 crop_count = 0
                 for f in track_dir.iterdir():
                     if f.name != "done.txt" and f.is_file():
                         shutil.copy2(f, dst_crops / f.name)
                         crop_count += 1
-                
+
                 # Copy label file to output
                 label_src = dot_dir / "labels" / f"{track_id}.json"
-                dst_labels = output_dir / "labels"
+                dst_labels = track_output_dir / "labels"
                 dst_labels.mkdir(parents=True, exist_ok=True)
                 if label_src.exists():
                     shutil.copy2(label_src, dst_labels / f"{track_id}.json")
-                
-                # Queue for classification
+
+                # Queue for classification. track_id stays bare: the backend
+                # reconstructs crop/composite keys as {track_id}_{timestamp} and keys
+                # the tracks table on (device_id, timestamp), not track_id.
                 self.classification_queue.enqueue(
                     entry_type="dot",
                     source_device=dot_id,
@@ -727,22 +787,23 @@ class Pipeline:
                     time=track_timestamp,
                     track_id=track_id,
                     track_dir=dst_crops,
-                    output_dir=output_dir,
+                    output_dir=track_output_dir,
                     labels_path=dst_labels / f"{track_id}.json" if label_src.exists() else None,
-                    background_path=background,
+                    background_path=track_background,
                     num_crops=crop_count,
                 )
+                # One track per dir: complete-on-single, so .done fires immediately.
+                (track_output_dir / ".expected_tracks").write_text("1")
                 queued_count += 1
-                
+
                 # Delete processed track from input
                 shutil.rmtree(track_dir)
-                logger.debug(f"  Queued track {track_id} ({crop_count} crops)")
-            
+                logger.info(
+                    "DOT track -> %s/%s/%s (%d crops, bare id=%s)",
+                    dot_id, date_str, track_dir_name, crop_count, track_id,
+                )
+
             logger.info(f"QUEUED: {queued_count} DOT tracks for classification")
-            
-            # Write expected track count for completeness check
-            if queued_count > 0:
-                (output_dir / ".expected_tracks").write_text(str(queued_count))
             
             # Clean up DOT directory if empty after processing
             try:
@@ -783,6 +844,8 @@ class Pipeline:
             try:
                 if entry.entry_type == "flik":
                     self._classify_flik_track(entry)
+                elif entry.entry_type == "video":
+                    self._publish_dot_video(entry)
                 else:
                     self._classify_dot_track(entry)
                 
@@ -1026,11 +1089,10 @@ class Pipeline:
                 logger.warning(f"Could not read detection metadata: {e}")
         return {}
     
-    @staticmethod
-    def _check_classification_complete(output_dir: Path) -> None:
+    def _check_classification_complete(self, output_dir: Path) -> None:
         """
         Increment completed count and check if all tracks for this dir are done.
-        
+
         When detection enqueues tracks, it writes .expected_tracks with the count.
         Each call to this method increments .completed_tracks. When
         completed >= expected, writes .done to signal the upload thread.
@@ -1040,12 +1102,12 @@ class Pipeline:
         expected_path = output_dir / ".expected_tracks"
         if not expected_path.exists():
             return
-        
+
         try:
             expected = int(expected_path.read_text().strip())
         except (ValueError, OSError):
             return
-        
+
         # Atomically increment completed count
         completed_path = output_dir / ".completed_tracks"
         try:
@@ -1053,7 +1115,7 @@ class Pipeline:
         except (ValueError, OSError):
             completed = 1
         completed_path.write_text(str(completed))
-        
+
         if completed >= expected:
             done_path = output_dir / ".done"
             done_path.write_text(f"classified={completed}\nexpected={expected}\n")
@@ -1062,6 +1124,7 @@ class Pipeline:
             completed_path.unlink(missing_ok=True)
             detection_meta_path = output_dir / ".detection.json"
             detection_meta_path.unlink(missing_ok=True)
+            self._notify_result_ready(output_dir)
     
     def _sweep_stale_directories(self) -> None:
         """Clean up FLIK output directories that are stuck without .done markers.
