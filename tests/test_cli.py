@@ -1,7 +1,6 @@
 """Tests for the main bugcam CLI structure."""
-import pytest
-from typer.testing import CliRunner
 from bugcam.cli import app
+from tests.helpers import strip_ansi
 
 
 def test_main_help(cli_runner):
@@ -22,7 +21,7 @@ def test_run_subcommand_help(cli_runner):
     """Test run subcommand is accessible."""
     result = cli_runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--resolution" in result.output
+    assert "--resolution" in strip_ansi(result.output)
 
 
 def test_run_heartbeat_interval_is_one_minute() -> None:

@@ -3,7 +3,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import urllib.error
 
-import pytest
 from typer.testing import CliRunner
 
 from bugcam.cli import app

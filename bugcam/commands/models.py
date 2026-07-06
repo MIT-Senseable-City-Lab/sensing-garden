@@ -17,7 +17,6 @@ from ..model_bundles import (
     BUNDLE_LABELS_FILENAME,
     BUNDLE_MODEL_FILENAME,
     LOCAL_BUNDLES_DIR,
-    ModelBundle,
     get_bundle_dir,
     get_installed_bundles,
     get_models_cache_dir,

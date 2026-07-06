@@ -1,9 +1,9 @@
 """Tests for bugcam record command."""
-import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from typer.testing import CliRunner
 from bugcam.cli import app
+from tests.helpers import strip_ansi
 
 
 def test_record_help(cli_runner: CliRunner) -> None:
@@ -16,10 +16,11 @@ def test_record_help(cli_runner: CliRunner) -> None:
 def test_record_single_help(cli_runner: CliRunner) -> None:
     """Test record single subcommand help."""
     result = cli_runner.invoke(app, ["record", "single", "--help"])
+    output = strip_ansi(result.output)
     assert result.exit_code == 0
-    assert "--length" in result.output
-    assert "--output" in result.output
-    assert "--resolution" in result.output
+    assert "--length" in output
+    assert "--output" in output
+    assert "--resolution" in output
 
 
 def test_record_single_requires_linux(cli_runner: CliRunner) -> None:

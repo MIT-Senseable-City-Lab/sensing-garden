@@ -70,7 +70,8 @@ if is_sourced; then
     fi
 
     if [ $TAPPAS_CORE -eq 1 ]; then
-        # Get the directory of the current script
+        # Get the directory of the current script (works under bash and zsh)
+        # shellcheck disable=SC2296  # ${(%):-%N} is the intentional zsh fallback
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-${(%):-%N}}")" &> /dev/null && pwd)"
         # Check if we are in the defined virtual environment
         if [[ "$VIRTUAL_ENV" == *"$VENV_NAME"* ]]; then

@@ -1,0 +1,5 @@
+# ShellCheck config for bugcam scripts.
+# SC1090: "can't follow non-constant source" — scripts source venv activate paths
+#         built at runtime; not statically resolvable and not a real defect.
+# SC2034: "appears unused" — several vars are exported/consumed by sourced shells.
+disable=SC1090,SC1091,SC2034

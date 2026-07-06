@@ -7,7 +7,7 @@ from flask import Flask
 from pathlib import Path
 import logging
 
-from .config import RECEIVER_DEFAULT_PORT, RECEIVER_DEFAULT_HOST, FINALIZATION_DELAY, STALE_AGE, CHECK_INTERVAL
+from .config import RECEIVER_DEFAULT_PORT, RECEIVER_DEFAULT_HOST
 from .tracker import PendingTrackTracker
 from .routes import register_routes
 

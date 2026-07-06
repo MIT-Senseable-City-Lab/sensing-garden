@@ -105,7 +105,7 @@ class VideoRecorder:
         # Calculate expected frames per chunk
         self.frames_per_chunk = fps * chunk_duration
         
-        logger.info(f"VideoRecorder initialized:")
+        logger.info("VideoRecorder initialized:")
         logger.info(f"  Output: {self.output_dir}")
         logger.info(f"  Target FPS: {fps}, Chunk duration: {chunk_duration}s")
         logger.info(f"  Requested resolution: {resolution[0]}x{resolution[1]}")

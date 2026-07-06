@@ -6,6 +6,8 @@ Uses Hailo HEF models for inference via the VStreams API.
 Taxonomy (family/genus) is resolved from GBIF at startup.
 """
 
+from __future__ import annotations
+
 import logging
 import json
 from dataclasses import dataclass, field
@@ -28,12 +30,15 @@ try:
         OutputVStreamParams,
         VDevice,
     )
-except ImportError as e:
-    raise ImportError(
-        "hailo_platform module not found. This is a system-level dependency for Hailo AI accelerators. "
-        "On Raspberry Pi OS, install it with: sudo apt install python3-hailo-tappas. "
-        "For other platforms, follow Hailo's installation guide: https://hailo.ai/developer-zone/"
-    ) from e
+    _HAILO_IMPORT_ERROR: ImportError | None = None
+except ImportError as e:  # hailo_platform is a Pi-only hardware dependency
+    # Defer the failure: keep the module importable (so `bugcam --help`, the test
+    # suite, and any non-inference code path work off-Pi) and raise only when the
+    # classifier actually loads a model. See _load_model.
+    HEF = ConfigureParams = FormatType = HailoSchedulingAlgorithm = None
+    HailoStreamInterface = InferVStreams = InputVStreamParams = None
+    OutputVStreamParams = VDevice = None
+    _HAILO_IMPORT_ERROR = e
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +257,12 @@ class HailoClassifier:
 
     def _load_model(self) -> None:
         """Load the HEF, configure the device, and build the taxonomy."""
+        if _HAILO_IMPORT_ERROR is not None:
+            raise ImportError(
+                "hailo_platform module not found. This is a system-level dependency for Hailo AI accelerators. "
+                "On Raspberry Pi OS, install it with: sudo apt install python3-hailo-tappas. "
+                "For other platforms, follow Hailo's installation guide: https://hailo.ai/developer-zone/"
+            ) from _HAILO_IMPORT_ERROR
         if self._hef is not None:
             return
 

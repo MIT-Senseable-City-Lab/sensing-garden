@@ -1,0 +1,53 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, ci/setup]
+  schedule:
+    - cron: "0 3 * * *"  # nightly smoke (03:00 UTC)
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3   # runs `ruff check`
+      - run: shellcheck install.sh scripts/*.sh
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0  # cv2 runtime libs
+      - run: pipx install poetry
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+      - run: poetry config virtualenvs.in-project true && poetry install
+      - run: poetry run pytest -m "not integration and not rpi"  # skip hardware-bound tests
+      - run: poetry run python -m compileall bugcam/
+
+  package:  # wheel builds, installs clean, and the CLI entrypoint runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+      - run: pipx install poetry && poetry build
+      - run: python -m venv /tmp/v && /tmp/v/bin/pip install dist/*.whl && /tmp/v/bin/bugcam --help
+
+  nightly-smoke:  # schedule-only: Pi 5 image + on-device smoke script
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f docker/rpi5-smoke.Dockerfile -t bugcam-smoke .
+      - run: docker run --rm bugcam-smoke bash scripts/run_rpi5_smoke.sh
