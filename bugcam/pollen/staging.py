@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import errno
 import os
+import shutil
 from pathlib import Path
 
 STAGING_SUBDIR = ".pollen-staging"
@@ -76,7 +77,10 @@ class StagingArea:
         except OSError as exc:
             if exc.errno == errno.EXDEV:
                 raise CrossMountError(f"{src} and {dst} are on different mounts") from exc
-            raise
+            if exc.errno == errno.EPERM:
+                shutil.copy2(src, dst)
+            else:
+                raise
         return dst
 
     def unlink(self, staged_path: Path) -> None:
