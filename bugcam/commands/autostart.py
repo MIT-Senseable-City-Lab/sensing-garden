@@ -100,7 +100,7 @@ def enable(
     length: int = typer.Option(30, "--length", "-l", help="Chunk duration in seconds"),
     resolution: str = typer.Option("3840x2160", "--resolution", help="Recording resolution in WxH format"),
     fps: int = typer.Option(15, "--fps", help="Recording frame rate"),
-    poll_interval: int = typer.Option(30, "--poll-interval", help="Upload poll interval in seconds"),
+    poll_interval: int = typer.Option(3600, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
         True,
         "--delete-after-upload/--no-delete-after-upload",

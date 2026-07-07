@@ -252,7 +252,7 @@ def run(
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
     bitrate: int = typer.Option(20_000_000, "--bitrate", help="H.264 encoder bitrate in bps (hardware encoding only)"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
-    upload_poll: int = typer.Option(30, "--upload-poll", help="Seconds between upload polls; with --archive-batch this is also the batch cadence (one tar per device per poll) (config: upload_poll_interval)"),
+    upload_poll: int = typer.Option(3600, "--upload-poll", help="Seconds between upload polls; with --archive-batch this is also the batch cadence (one tar per device per poll) (config: upload_poll_interval)"),
     heartbeat_interval: float | None = typer.Option(None, "--heartbeat-interval", help="Seconds between heartbeat snapshots (config: heartbeat_interval, default 60)"),
     with_receiver: bool = typer.Option(
         True,
