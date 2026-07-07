@@ -53,7 +53,7 @@ class PollenConfig:
     multipart_threshold: int = DEFAULT_MULTIPART_THRESHOLD
     part_size: int = DEFAULT_PART_SIZE
     batch: bool = False
-    videos_per_tick: int = 1  # max un-batched videos per tick, so a backlog can't starve archives
+    videos_per_tick: int = 10  # max un-batched videos per tick, so a backlog can't starve archives
     delete_after_upload: bool = True
     retain_uploaded: bool = False  # keep a local copy (in retained/) after upload
     retention_by_kind: dict[str, KindPolicy] = field(default_factory=dict)  # per-kind override
@@ -93,14 +93,24 @@ class Pollen:
         """Queue a logical set atomically: stage every file, then insert all rows in one
         transaction so claim/archive never splits the set. ``device`` is the batch group
         (stored explicitly, not parsed from the key). The producer owns its files and
-        should delete them after this returns. Returns the row ids enqueued."""
+        should delete them after this returns. Returns the row ids enqueued.
+
+        Note: if staging (hardlink) raises partway through the loop, this propagates to
+        the caller and NOTHING from this set is enqueued -- files already staged before
+        the failure become orphaned links, and the producer keeps its originals (since
+        it deletes them only after this call returns). Callers must not swallow the
+        exception silently; see Pipeline._notify_result_ready / _notify_video_ready."""
         specs: list[dict] = []
+        missing = 0
+        deduped = 0
         for path in files:
             path = Path(path)
             if not path.exists():
+                missing += 1
                 continue
             s3_key = self._derive_key(path)
             if self.store.has_key(s3_key):
+                deduped += 1
                 continue  # already queued/shipped -> skip before staging (no churn)
             size = path.stat().st_size
             staged = self._staging.link(path)
@@ -108,7 +118,19 @@ class Pollen:
                 "staging_path": str(staged), "kind": kind, "s3_key": s3_key,
                 "producer_name": str(path), "metadata": {"device": device}, "size": size,
             })
-        return self.store.enqueue_many(specs)
+        if missing or deduped:
+            logger.info(
+                "enqueue_set(device=%s, kind=%s): %d of %d file(s) skipped (missing=%d, already-queued=%d)",
+                device, kind, missing + deduped, len(files), missing, deduped,
+            )
+        ids = self.store.enqueue_many(specs)
+        if len(ids) < len(specs):
+            logger.warning(
+                "enqueue_set(device=%s, kind=%s): %d staged file(s) failed to insert "
+                "(s3_key collision at insert time) -- their staged copies are now orphaned",
+                device, kind, len(specs) - len(ids),
+            )
+        return ids
 
     def _derive_key(self, path: Path) -> str:
         root = self.config.output_root.resolve()
@@ -348,6 +370,15 @@ class Pollen:
             (r for r in members if r.kind in UNBATCHED_KINDS),
             key=_video_order,
         )
+        deferred = len(videos) - min(len(videos), self.config.videos_per_tick)
+        if deferred:
+            # The cap otherwise makes a growing backlog invisible: pending_count()
+            # keeps climbing but nothing in a per-tick log says why videos aren't
+            # draining -- one waits per tick regardless of how many pile up behind it.
+            logger.info(
+                "%d video(s) waiting behind the %d-per-tick cap (oldest: %s, %d attempt(s))",
+                deferred, self.config.videos_per_tick, videos[0].s3_key, videos[0].attempts,
+            )
         for row in videos[: self.config.videos_per_tick]:
             if self._drop_if_lost(row):
                 continue
