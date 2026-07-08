@@ -42,4 +42,8 @@ def result_is_empty(results_json: Path) -> bool:
         media_dir = results_dir / sub
         if media_dir.is_dir() and any(p.is_file() for p in media_dir.rglob("*")):
             return False
+    # The FLIK video sample lands top-level (video.mp4), not under videos/;
+    # a zero-track dir holding one is exactly the backdrop footage case.
+    if any(p.is_file() and p.suffix == ".mp4" for p in results_dir.iterdir()):
+        return False
     return True
