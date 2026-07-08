@@ -143,8 +143,8 @@ class Pipeline:
         self._video_sample_interval = pipeline_config.get("video_sample_interval", 10)
         
         # --- Tracker reset signals (continuous_tracking mode) ---
-        self._sweep_counter = 0
-        self._sweep_interval = 30
+        self._last_sweep_monotonic = time.monotonic()
+        self._sweep_interval_seconds = 300.0
         # 1. Day-change: reset when the date in the filename changes
         self._last_video_date: str = ""
         # 2. Recording-stop: reset after the last recorded video is processed
@@ -508,12 +508,8 @@ class Pipeline:
                     self._process_dot_media(dot_dir)
                     self._process_dot_directory_detection(dot_dir)
                 
-                # Periodically sweep stale output directories
-                self._sweep_counter += 1
-                if self._sweep_counter >= self._sweep_interval:
-                    self._sweep_stale_directories()
-                    self._sweep_counter = 0
-                
+                self._maybe_sweep_stale_directories()
+
             except queue.Empty:
                 # Check for new DOT directories while waiting
                 for dot_dir in self._find_dot_directories():
@@ -521,7 +517,9 @@ class Pipeline:
                         break
                     self._process_dot_media(dot_dir)
                     self._process_dot_directory_detection(dot_dir)
-                
+
+                self._maybe_sweep_stale_directories()
+
                 # If recording stopped, check if we're done
                 if self.recording_stopped.is_set():
                     remaining = self.video_queue.qsize()
@@ -587,33 +585,26 @@ class Pipeline:
             logger.info(f"  BugSpot: {len(result.confirmed_tracks)} confirmed / "
                        f"{len(result.track_paths)} total tracks")
             
-            # Save crops and queue for classification
-            confirmed_count = 0
+            # Collect confirmed tracks whose crops made it to disk. Enqueueing
+            # is deferred until .expected_tracks is on disk (below): the
+            # classification worker can finish a fast track before detection
+            # gets around to writing the count, in which case
+            # _check_classification_complete silently no-ops and the directory
+            # never reaches .done.
+            track_timestamp = date_time.split('_')[-1] if '_' in date_time else None
+            queueable_tracks = []
             for track_id, track in result.confirmed_tracks.items():
                 # BugSpot saves crops using first 8 chars of track UUID
                 # track_id format: {uuid}_{timestamp} -> use first 8 chars for directory
                 base_track_id = track_id.split('-')[0]
                 track_dir = output_dir / "crops" / base_track_id
-                
+
                 if not track_dir.exists():
                     logger.warning(f"Track directory not found: {track_dir}")
                     continue
-                
-                # Extract timestamp from video filename
-                track_timestamp = date_time.split('_')[-1] if '_' in date_time else None
-                
-                # Queue for classification
-                self.classification_queue.enqueue(
-                    entry_type="flik",
-                    source_device=self.flick_id,
-                    date=date_time[:8],  # YYYYMMDD
-                    time=track_timestamp,
-                    track_id=track_id,
-                    track_dir=track_dir,
-                    output_dir=output_dir,
-                    num_crops=len(track.crops),
-                )
-                confirmed_count += 1
+
+                queueable_tracks.append((track_id, track, track_dir))
+            confirmed_count = len(queueable_tracks)
             
             # Sample video: save 1 per N to output (0 = disabled)
             if self._video_sample_interval > 0:
@@ -642,8 +633,6 @@ class Pipeline:
                 logger.info("Last recorded video processed, resetting tracker")
                 self.processor.reset_tracker()
                 self._clear_last_recording_marker()
-            
-            logger.info(f"QUEUED: {confirmed_count} tracks for classification")
             
             # Save detection metadata for classification thread to merge into results
             if confirmed_count > 0:
@@ -696,9 +685,23 @@ class Pipeline:
                 meta_path = output_dir / ".detection.json"
                 meta_path.write_text(json.dumps(detection_meta, indent=2, default=str))
                 
-                # Write expected track count for completeness check
+                # Write expected track count for completeness check -- must be
+                # on disk before the first track is enqueued
                 (output_dir / ".expected_tracks").write_text(str(confirmed_count))
                 logger.info(f"  Detection metadata saved ({confirmed_count} tracks)")
+
+                for track_id, track, track_dir in queueable_tracks:
+                    self.classification_queue.enqueue(
+                        entry_type="flik",
+                        source_device=self.flick_id,
+                        date=date_time[:8],  # YYYYMMDD
+                        time=track_timestamp,
+                        track_id=track_id,
+                        track_dir=track_dir,
+                        output_dir=output_dir,
+                        num_crops=len(track.crops),
+                    )
+                logger.info(f"QUEUED: {confirmed_count} tracks for classification")
             else:
                 # No confirmed tracks — write empty results and mark done so
                 # the upload thread can discover and clean up this directory
@@ -785,6 +788,11 @@ class Pipeline:
                 if label_src.exists():
                     shutil.copy2(label_src, dst_labels / f"{track_id}.json")
 
+                # One track per dir: complete-on-single, so .done fires immediately.
+                # Must be on disk before the enqueue, or a fast classification
+                # no-ops the completion check and the dir never reaches .done.
+                (track_output_dir / ".expected_tracks").write_text("1")
+
                 # Queue for classification. track_id stays bare: the backend
                 # reconstructs crop/composite keys as {track_id}_{timestamp} and keys
                 # the tracks table on (device_id, timestamp), not track_id.
@@ -800,8 +808,6 @@ class Pipeline:
                     background_path=track_background,
                     num_crops=crop_count,
                 )
-                # One track per dir: complete-on-single, so .done fires immediately.
-                (track_output_dir / ".expected_tracks").write_text("1")
                 queued_count += 1
 
                 # Delete processed track from input
@@ -841,14 +847,22 @@ class Pipeline:
         self.classification_queue.recover()
         
         while not self.stop_event.is_set():
-            result = self.classification_queue.get_next()
-            
+            # Nothing in this loop may propagate: an uncaught exception ends the
+            # thread with the traceback going to stderr only (never the daily
+            # log), and classification silently stops for the rest of the run.
+            try:
+                result = self.classification_queue.get_next()
+            except Exception:
+                logger.error("Failed to read classification queue", exc_info=True)
+                time.sleep(1.0)
+                continue
+
             if result is None:
                 time.sleep(0.5)
                 continue
-            
+
             filepath, entry = result
-            
+
             try:
                 if entry.entry_type == "flik":
                     self._classify_flik_track(entry)
@@ -856,17 +870,21 @@ class Pipeline:
                     self._publish_dot_video(entry)
                 else:
                     self._classify_dot_track(entry)
-                
+
                 self.classification_queue.remove(filepath)
-                
+
             except Exception as e:
                 logger.error(f"Classification failed for {filepath.name}: {e}", exc_info=True)
-                should_retry = self.classification_queue.mark_failed(filepath, entry, str(e))
-                if should_retry:
+                try:
+                    should_retry = self.classification_queue.mark_failed(filepath, entry, str(e))
+                    if should_retry:
+                        time.sleep(1.0)
+                    else:
+                        # Permanently failed — still count as completed for .done check
+                        self._check_classification_complete(Path(entry.output_dir))
+                except Exception:
+                    logger.error(f"Failed to record classification failure for {filepath.name}", exc_info=True)
                     time.sleep(1.0)
-                else:
-                    # Permanently failed — still count as completed for .done check
-                    self._check_classification_complete(Path(entry.output_dir))
         
         logger.info("Classification worker stopped")
     
@@ -1120,8 +1138,15 @@ class Pipeline:
         completed_path = output_dir / ".completed_tracks"
         try:
             completed = int(completed_path.read_text().strip()) + 1
-        except (ValueError, OSError):
+        except FileNotFoundError:
             completed = 1
+        except (ValueError, OSError):
+            # An unreadable existing counter must not fall back to 1 -- that
+            # walks the count backwards and the directory can then never reach
+            # .expected_tracks. Skip the increment; the stale sweep finalizes
+            # the directory once the queue drains.
+            logger.warning(f"Unreadable {completed_path}; deferring to stale sweep", exc_info=True)
+            return
         completed_path.write_text(str(completed))
 
         if completed >= expected:
@@ -1134,6 +1159,19 @@ class Pipeline:
             detection_meta_path.unlink(missing_ok=True)
             self._notify_result_ready(output_dir)
     
+    def _maybe_sweep_stale_directories(self) -> None:
+        """Run the stale sweep on a wall-clock cadence, busy or idle.
+
+        Previously gated on a count of dequeued videos, so the sweep starved
+        whenever few videos arrived -- exactly the low-throughput conditions
+        where stuck directories accumulate.
+        """
+        now = time.monotonic()
+        if now - self._last_sweep_monotonic < self._sweep_interval_seconds:
+            return
+        self._last_sweep_monotonic = now
+        self._sweep_stale_directories()
+
     def _sweep_stale_directories(self) -> None:
         """Clean up FLIK output directories that are stuck without .done markers.
         
@@ -1172,9 +1210,10 @@ class Pipeline:
                         if age_seconds > orphan_threshold_seconds:
                             logger.warning(
                                 "orphaned result: %s has been .done for %.0fs but was never "
-                                "published (directory still on disk) -- no automatic retry exists for this",
+                                "published (directory still on disk); retrying publish",
                                 output_dir, age_seconds,
                             )
+                            self._notify_result_ready(output_dir)
                         continue
 
                     results_path = output_dir / "results.json"
@@ -1187,6 +1226,10 @@ class Pipeline:
                         if age_seconds > stale_threshold_seconds:
                             done_path.write_text("swept=stale\n")
                             logger.info(f"Swept stale directory: {output_dir.name} (no .expected_tracks, marked done)")
+                            # Nothing scans for .done markers -- publishing only
+                            # happens through this callback, so fire it or the
+                            # rescue is a dead letter.
+                            self._notify_result_ready(output_dir)
                     
                     elif results_path.exists() and expected_path.exists():
                         # Has expected tracks but not all completed
@@ -1202,9 +1245,22 @@ class Pipeline:
                             completed = 0
                         
                         age_seconds = (datetime.now().timestamp() - output_dir.stat().st_mtime)
-                        if age_seconds > stale_threshold_seconds and completed >= expected:
+                        if age_seconds > stale_threshold_seconds:
+                            if completed < expected:
+                                # No pending or in-flight entries anywhere means the
+                                # missing completions can never arrive (entry lost or
+                                # corrupted); ship what exists instead of stranding it.
+                                # With entries still queued, completions may yet come.
+                                if self.classification_queue.count() > 0:
+                                    continue
+                                logger.warning(
+                                    "Sweeping %s with %d/%d tracks classified; "
+                                    "remaining completions can no longer arrive",
+                                    output_dir.name, completed, expected,
+                                )
                             done_path.write_text(f"swept=stale\ncompleted={completed}\nexpected={expected}\n")
-                            logger.info(f"Swept stale directory: {output_dir.name} (all completed but no .done)")
+                            logger.info(f"Swept stale directory: {output_dir.name} ({completed}/{expected} completed, no .done)")
+                            self._notify_result_ready(output_dir)
                     
                     # Case 2: Empty directory (no results.json, no classification activity)
                     elif not results_path.exists() and not expected_path.exists():
@@ -1220,7 +1276,7 @@ class Pipeline:
                                 shutil.rmtree(output_dir)
                                 logger.info(f"Removed empty stale directory: {output_dir.name}")
         except Exception as e:
-            logger.warning(f"Error during stale directory sweep: {e}")
+            logger.warning(f"Error during stale directory sweep: {e}", exc_info=True)
     
     # ------------------------------------------------------------------
     # Pipeline Control
