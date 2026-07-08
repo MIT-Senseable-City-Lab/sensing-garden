@@ -42,5 +42,13 @@ class TestResultIsEmpty:
         (results_dir / "videos" / "clip.mp4").write_bytes(b"video")
         assert result_is_empty(results) is False
 
+    def test_zero_tracks_with_top_level_video_sample_not_empty(self, tmp_path):
+        # FLIK's every-Nth backdrop sample is saved as <dir>/video.mp4, not
+        # under videos/ -- it must keep the result from being dropped.
+        results_dir = tmp_path / "flick1" / "chunk"
+        results = _write_results(results_dir, [])
+        (results_dir / "video.mp4").write_bytes(b"video")
+        assert result_is_empty(results) is False
+
     def test_unreadable_results_not_empty(self, tmp_path):
         assert result_is_empty(tmp_path / "missing.json") is False

@@ -17,6 +17,11 @@ from bugcam.edge26.output import ResultsWriter
 from bugcam.edge26.queue import ClassificationQueue, QueueEntry
 from bugcam.log_shipping import DailyLogHandler, ship_existing_logs
 
+# Producer-owned utility dirs under a device dir, not per-timestamp result
+# directories -- the sweep and inventory must never treat them as results
+# (rmtree'ing one races its live writer, e.g. the heartbeat loop).
+NON_RESULT_SUBDIRS = {"heartbeats", "environment", "logs"}
+
 
 def setup_logging(log_dir: Path, *, on_log_complete=None) -> None:
     """Configure logging to console and a daily-rotating file.
@@ -145,6 +150,8 @@ class Pipeline:
         # --- Tracker reset signals (continuous_tracking mode) ---
         self._last_sweep_monotonic = time.monotonic()
         self._sweep_interval_seconds = 300.0
+        self._status_interval_seconds = 600.0
+        self._status_thread = None
         # 1. Day-change: reset when the date in the filename changes
         self._last_video_date: str = ""
         # 2. Recording-stop: reset after the last recorded video is processed
@@ -1127,11 +1134,21 @@ class Pipeline:
         """
         expected_path = output_dir / ".expected_tracks"
         if not expected_path.exists():
+            if (output_dir / ".done").exists():
+                # Re-check after finalization (e.g. a retried entry): benign.
+                logger.debug(f"Completion check on already-finalized {output_dir.name}")
+            else:
+                logger.warning(
+                    "completion for %s cannot be tracked: no .expected_tracks and not "
+                    "finalized -- this track's completion is lost (stale sweep must rescue)",
+                    output_dir,
+                )
             return
 
         try:
             expected = int(expected_path.read_text().strip())
         except (ValueError, OSError):
+            logger.warning(f"Unreadable {expected_path}; completion cannot be tracked", exc_info=True)
             return
 
         # Atomically increment completed count
@@ -1148,6 +1165,7 @@ class Pipeline:
             logger.warning(f"Unreadable {completed_path}; deferring to stale sweep", exc_info=True)
             return
         completed_path.write_text(str(completed))
+        logger.info(f"  Classification progress: {completed}/{expected} in {output_dir.name}")
 
         if completed >= expected:
             done_path = output_dir / ".done"
@@ -1189,6 +1207,13 @@ class Pipeline:
         # them the same risked shutil.rmtree racing a live writer (e.g. the heartbeat
         # loop) that finds its own directory briefly empty and mid-write.
         NON_RESULT_SUBDIRS = {"heartbeats", "environment", "logs"}
+        # Per-pass tallies: one summary line per sweep makes stuck-state growth
+        # visible in the daily log without scanning the disk by hand.
+        scanned = 0
+        orphans_retried = 0
+        rescued = 0
+        removed_empty = 0
+        awaiting = 0
 
         try:
             for device_dir in self.results_dir.iterdir():
@@ -1197,6 +1222,7 @@ class Pipeline:
                 for output_dir in device_dir.iterdir():
                     if not output_dir.is_dir() or output_dir.name in NON_RESULT_SUBDIRS:
                         continue
+                    scanned += 1
 
                     done_path = output_dir / ".done"
                     if done_path.exists():
@@ -1214,6 +1240,7 @@ class Pipeline:
                                 output_dir, age_seconds,
                             )
                             self._notify_result_ready(output_dir)
+                            orphans_retried += 1
                         continue
 
                     results_path = output_dir / "results.json"
@@ -1230,6 +1257,7 @@ class Pipeline:
                             # happens through this callback, so fire it or the
                             # rescue is a dead letter.
                             self._notify_result_ready(output_dir)
+                            rescued += 1
                     
                     elif results_path.exists() and expected_path.exists():
                         # Has expected tracks but not all completed
@@ -1252,6 +1280,7 @@ class Pipeline:
                                 # corrupted); ship what exists instead of stranding it.
                                 # With entries still queued, completions may yet come.
                                 if self.classification_queue.count() > 0:
+                                    awaiting += 1
                                     continue
                                 logger.warning(
                                     "Sweeping %s with %d/%d tracks classified; "
@@ -1261,6 +1290,9 @@ class Pipeline:
                             done_path.write_text(f"swept=stale\ncompleted={completed}\nexpected={expected}\n")
                             logger.info(f"Swept stale directory: {output_dir.name} ({completed}/{expected} completed, no .done)")
                             self._notify_result_ready(output_dir)
+                            rescued += 1
+                        else:
+                            awaiting += 1
                     
                     # Case 2: Empty directory (no results.json, no classification activity)
                     elif not results_path.exists() and not expected_path.exists():
@@ -1275,19 +1307,111 @@ class Pipeline:
                             if age_seconds > empty_threshold_seconds:
                                 shutil.rmtree(output_dir)
                                 logger.info(f"Removed empty stale directory: {output_dir.name}")
+                                removed_empty += 1
         except Exception as e:
             logger.warning(f"Error during stale directory sweep: {e}", exc_info=True)
+
+        summary = (
+            f"Sweep pass: {scanned} result dir(s) on disk, {awaiting} awaiting classification, "
+            f"{rescued} rescued, {orphans_retried} orphan publish retries, {removed_empty} empty removed"
+        )
+        # Quiet at debug when there is nothing on disk and nothing happened;
+        # anything else is worth a line in the daily log.
+        if scanned == 0:
+            logger.debug(summary)
+        else:
+            logger.info(summary)
     
+    def _log_results_inventory(self) -> None:
+        """One-shot startup scan of leftover result dirs from prior runs.
+
+        Every dir counted here is work a previous run did not finish shipping;
+        logging the split at boot dates when stuck state appeared without
+        needing shell access to the device.
+        """
+        try:
+            total = finalized_unpublished = awaiting = other = 0
+            if self.results_dir.is_dir():
+                for device_dir in self.results_dir.iterdir():
+                    if not device_dir.is_dir():
+                        continue
+                    for output_dir in device_dir.iterdir():
+                        if not output_dir.is_dir() or output_dir.name in NON_RESULT_SUBDIRS:
+                            continue
+                        total += 1
+                        if (output_dir / ".done").exists():
+                            finalized_unpublished += 1
+                        elif (output_dir / ".expected_tracks").exists():
+                            awaiting += 1
+                        else:
+                            other += 1
+            if total == 0:
+                logger.info("Startup inventory: no leftover result dirs")
+            else:
+                log = logger.warning if finalized_unpublished else logger.info
+                log(
+                    "Startup inventory: %d leftover result dir(s): %d finalized but never "
+                    "published (.done), %d awaiting classification (.expected_tracks), %d other",
+                    total, finalized_unpublished, awaiting, other,
+                )
+        except Exception:
+            logger.warning("Startup inventory scan failed", exc_info=True)
+
+    def _status_loop(self) -> None:
+        """Periodic liveness/backlog line in the daily log.
+
+        A worker that dies from an uncaught exception reports its traceback to
+        stderr only -- the daily log just goes quiet. This line turns that
+        silence into an explicit DEAD marker, plus queue depths for backlog
+        trend analysis after the fact.
+        """
+        while not self.stop_event.wait(self._status_interval_seconds):
+            try:
+                parts = []
+                dead_unexpectedly = []
+                recording_active = not self.recording_stopped.is_set()
+                for name, worker, required in (
+                    ("recorder", self.recorder_thread, recording_active),
+                    # Detection exits legitimately once recording has stopped
+                    # and its queues drain; classification only exits on
+                    # stop_event, so while we are looping it must be alive.
+                    ("detection", self.detection_process or self.detection_thread, recording_active),
+                    ("classification", self.classification_thread, True),
+                ):
+                    if worker is None:
+                        continue
+                    alive = worker.is_alive()
+                    parts.append(f"{name}={'alive' if alive else 'DEAD'}")
+                    if not alive and required:
+                        dead_unexpectedly.append(name)
+                try:
+                    video_backlog = self.video_queue.qsize()
+                except NotImplementedError:
+                    video_backlog = -1
+                line = (
+                    f"STATUS: {' '.join(parts)} | video_queue={video_backlog} "
+                    f"classify_queue={self.classification_queue.count()}"
+                )
+                if dead_unexpectedly:
+                    logger.error(f"{line} -- {', '.join(dead_unexpectedly)} died; "
+                                 "check stderr/journal for the traceback")
+                else:
+                    logger.info(line)
+            except Exception:
+                logger.warning("Status loop error", exc_info=True)
+
     # ------------------------------------------------------------------
     # Pipeline Control
     # ------------------------------------------------------------------
-    
+
     def start(self) -> None:
         """Start the pipeline."""
         logger.info("=" * 60)
         logger.info("STARTING PIPELINE")
         logger.info("=" * 60)
-        
+
+        self._log_results_inventory()
+
         # Start recorder (if enabled)
         if self.enable_recording and self.recorder:
             self.recorder_thread = threading.Thread(
@@ -1333,6 +1457,13 @@ class Pipeline:
                 self.classification_thread.start()
                 logger.info("Classification thread started")
         
+        self._status_thread = threading.Thread(
+            target=self._status_loop,
+            daemon=True,
+            name="PipelineStatus",
+        )
+        self._status_thread.start()
+
         if self.enable_recording and self.enable_processing:
             logger.info("Pipeline running - Ctrl+C to stop recording (processing continues)")
         elif self.enable_recording:
