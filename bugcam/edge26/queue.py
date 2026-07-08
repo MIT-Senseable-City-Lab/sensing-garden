@@ -99,7 +99,10 @@ class ClassificationQueue:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             filename = f"{source_device}_{date}_{timestamp}_{track_id}.json"
             filepath = self.pending_dir / filename
-            temp_path = self.pending_dir / f".tmp_{filename}"
+            # Temp name must not end in .json: get_next()'s *.json glob matches
+            # leading-dot names on Python >= 3.11, so a half-written temp file
+            # could be picked up (or vanish between glob and stat).
+            temp_path = self.pending_dir / f"{filename}.tmp"
             temp_path.write_text(entry.to_json())
             temp_path.rename(filepath)
             logger.debug(f"Queued for classification: {filepath.name}")
@@ -162,7 +165,12 @@ class ClassificationQueue:
 
         with self._lock:
             if filepath.exists():
-                filepath.write_text(entry.to_json())
+                # Rewrite atomically: an in-place write torn by a crash leaves a
+                # truncated entry that get_next() can only discard as corrupted,
+                # permanently losing the track's completion count.
+                temp_path = filepath.with_name(f"{filepath.name}.tmp")
+                temp_path.write_text(entry.to_json())
+                temp_path.rename(filepath)
         logger.warning(f"Entry {filepath.name} failed "
                       f"(retry {entry.retry_count}/{MAX_RETRIES}): {error}")
         return True
@@ -185,6 +193,13 @@ class ClassificationQueue:
 
     def recover(self) -> int:
         """Recover pending entries after crash. Returns count."""
+        # An orphaned temp file is an enqueue that died before the rename: that
+        # track was already counted in .expected_tracks but will never be
+        # classified, so its directory relies on the stale sweep to finalize.
+        with self._lock:
+            for temp_path in list(self.pending_dir.glob("*.tmp")) + list(self.pending_dir.glob(".tmp_*.json")):
+                logger.warning(f"Removing orphaned queue temp file (lost enqueue): {temp_path.name}")
+                temp_path.unlink(missing_ok=True)
         count = self.count()
         if count > 0:
             logger.info(f"Recovered {count} pending classification(s) from {self.pending_dir}")
