@@ -215,24 +215,32 @@ class Pipeline:
         )
     
     def _notify_result_ready(self, output_dir: Path) -> None:
-        """Tell the upload owner (Pollen) a result dir is finalized, if wired."""
-        if self._on_result_ready is not None:
-            try:
-                self._on_result_ready(output_dir)
-            except Exception:
-                logger.error("result-ready callback failed", exc_info=True)
+        # Tell the upload owner (Pollen) a result dir is finalized, if wired.
+        if self._on_result_ready is None:
+            logger.warning(
+                "no upload owner wired; %s is finalized (.done) but will NOT be shipped or retried",
+                output_dir,
+            )
+            return
+        try:
+            self._on_result_ready(output_dir)
+        except Exception:
+            logger.error("result-ready callback failed for %s", output_dir, exc_info=True)
 
     def _notify_video_ready(self, video_path: Path, device: str) -> bool:
         """Tell the upload owner a DOT video is ready. DOT videos are not tied to a
         track, so they ship as their own unit keyed under the device/day. Returns True
         if an upload owner took it (staged it), so the producer can drop its copy."""
         if self._on_video_ready is None:
+            logger.warning(
+                "no upload owner wired; %s (device=%s) will NOT be shipped", video_path, device,
+            )
             return False
         try:
             self._on_video_ready(video_path, device)
             return True
         except Exception:
-            logger.error("video-ready callback failed", exc_info=True)
+            logger.error("video-ready callback failed for %s (device=%s)", video_path, device, exc_info=True)
             return False
 
     def _publish_dot_video(self, entry: QueueEntry) -> None:
@@ -1138,19 +1146,37 @@ class Pipeline:
         """
         stale_threshold_seconds = 30 * 60
         empty_threshold_seconds = 10 * 60
-        
+        orphan_threshold_seconds = 180 * 60
+        # Producer-owned utility dirs, not per-timestamp result directories -- treating
+        # them the same risked shutil.rmtree racing a live writer (e.g. the heartbeat
+        # loop) that finds its own directory briefly empty and mid-write.
+        NON_RESULT_SUBDIRS = {"heartbeats", "environment", "logs"}
+
         try:
             for device_dir in self.results_dir.iterdir():
                 if not device_dir.is_dir():
                     continue
                 for output_dir in device_dir.iterdir():
-                    if not output_dir.is_dir():
+                    if not output_dir.is_dir() or output_dir.name in NON_RESULT_SUBDIRS:
                         continue
-                    
+
                     done_path = output_dir / ".done"
                     if done_path.exists():
+                        # A finalized directory that is still fully present past the
+                        # threshold was never actually published (a successful
+                        # enqueue_set is always followed by shutil.rmtree of this
+                        # exact directory) -- e.g. no upload owner was wired at the
+                        # moment it finished, or the callback raised. Otherwise
+                        # invisible until someone manually finds these on disk.
+                        age_seconds = (datetime.now().timestamp() - done_path.stat().st_mtime)
+                        if age_seconds > orphan_threshold_seconds:
+                            logger.warning(
+                                "orphaned result: %s has been .done for %.0fs but was never "
+                                "published (directory still on disk) -- no automatic retry exists for this",
+                                output_dir, age_seconds,
+                            )
                         continue
-                    
+
                     results_path = output_dir / "results.json"
                     expected_path = output_dir / ".expected_tracks"
                     
