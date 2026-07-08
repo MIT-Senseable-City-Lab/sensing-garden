@@ -286,6 +286,13 @@ def run(
         "--archive-batch/--no-archive-batch",
         help="Bundle outputs into per-device tar archives instead of per-object uploads; cadence follows --upload-poll (config: archive_batch)",
     ),
+    record: bool = typer.Option(
+        True,
+        "--record/--no-record",
+        help="Record from the camera; --no-record watches --input-dir as a drop "
+             "folder instead, processing injected videos/DOT dirs (inject with mv, "
+             "not cp: a file mid-copy can be picked up truncated)",
+    ),
 ) -> None:
     """Run recording, processing, uploading, and one-minute heartbeat emission."""
     if mode not in {"continuous", "interval"}:
@@ -354,6 +361,9 @@ def run(
             console.print(f"[dim]Using model[/dim] {provenance['model_id']}")
         console.print(f"[cyan]Running[/cyan] flick={settings['flick_id']} dots={settings['dot_ids'] or '[]'}")
         console.print(f"[dim]Model[/dim] {provenance['model_id']}")
+        if not record:
+            console.print(f"[yellow]Recording disabled[/yellow] (--no-record); watching {input_dir} for injected input")
+            logger.info("recording disabled for this run (--no-record); processing injected input only")
 
         on_result_ready = None
         on_log_complete = None
@@ -382,6 +392,8 @@ def run(
             resolution=parsed_resolution,
             bitrate=bitrate,
             detection_in_subprocess=detection_in_subprocess,
+            enable_recording=record,
+            watch_input=not record,
             detection_config_path=detection_config,
             on_result_ready=on_result_ready,
             on_log_complete=on_log_complete,

@@ -42,6 +42,7 @@ def build_pipeline(
     enable_classification: bool = True,
     continuous_tracking: bool = False,
     detection_in_subprocess: bool = True,
+    watch_input: bool = False,
     detection_config_path: Path | None = None,
     on_result_ready=None,
     on_log_complete=None,
@@ -68,6 +69,7 @@ def build_pipeline(
         enable_classification=enable_classification,
         continuous_tracking=continuous_tracking,
         detection_in_subprocess=detection_in_subprocess,
+        watch_input=watch_input,
         model_metadata=provenance,
         detection_config_path=detection_config_path,
     )
