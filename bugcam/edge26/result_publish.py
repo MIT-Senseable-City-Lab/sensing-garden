@@ -52,10 +52,15 @@ def publish_result_dir(pollen, results_dir, flick_id: str, dot_ids: list[str]) -
         logger.info("result %s empty -> dropped, nothing uploaded", results_dir.name)
         return 0
     files = [p for p in sorted(results_dir.rglob("*")) if p.is_file() and p.name not in SIDECARS]
+    video_count = sum(1 for p in files if p.suffix == ".mp4")
+    try:
+        total_mb = sum(p.stat().st_size for p in files) / 1e6
+    except OSError:
+        total_mb = -1.0
     ids = pollen.enqueue_set(files, device=device, kind="result")
     shutil.rmtree(results_dir, ignore_errors=True)  # enqueued -> staged; producer is done
     logger.info(
-        "published %s: %d files (device=%s, %s) -> enqueued; local dir removed",
-        results_dir.name, len(ids), device, "flik" if is_flik else "dot",
+        "published %s: %d files, %d video(s), %.1f MB (device=%s, %s) -> enqueued; local dir removed",
+        results_dir.name, len(ids), video_count, total_mb, device, "flik" if is_flik else "dot",
     )
     return len(ids)
