@@ -94,6 +94,10 @@ class Pipeline:
         self.enable_processing = pipeline_config.get("enable_processing", True)
         self.enable_classification = pipeline_config.get("enable_classification", True)
         self.continuous_tracking = pipeline_config.get("continuous_tracking", False)
+        # With recording disabled, treat the input dir as a drop folder: keep
+        # the detection loop alive and poll for injected FLIK videos instead of
+        # exiting once the startup scan drains.
+        self.watch_input = pipeline_config.get("watch_input", False)
 
         # Run the GIL-heavy detection loop in its own subprocess so it cannot
         # starve the recorder threads (dropped-frame fix). The child is a
@@ -305,6 +309,14 @@ class Pipeline:
         
         return items
     
+    def _find_flick_videos(self) -> list:
+        """Find unprocessed FLIK videos in input_storage (chronological)."""
+        if not self.input_storage.exists():
+            return []
+
+        return [f for f in sorted(self.input_storage.iterdir())
+                if self._is_flick_video(f)]
+
     def _find_dot_directories(self) -> list:
         """Find unprocessed DOT directories in input_storage."""
         if not self.input_storage.exists() or not self.dot_ids:
@@ -518,6 +530,16 @@ class Pipeline:
                 self._maybe_sweep_stale_directories()
 
             except queue.Empty:
+                # Drop-folder mode: no recorder feeds the video queue, so pick
+                # up injected FLIK videos ourselves. Processing deletes each
+                # video, so anything found here is unprocessed. Inject with mv
+                # (atomic) -- a file mid-copy could be picked up truncated.
+                if self.watch_input:
+                    for video in self._find_flick_videos():
+                        if self.stop_event.is_set():
+                            break
+                        self._process_video_detection(video)
+
                 # Check for new DOT directories while waiting
                 for dot_dir in self._find_dot_directories():
                     if self.stop_event.is_set():
@@ -537,6 +559,11 @@ class Pipeline:
                     pending_count = self.classification_queue.count()
                     if remaining == 0 and not has_ready_tracks and pending_count == 0:
                         logger.info("Queue empty - processing complete")
+                        # Nothing sets stop_event on the drain path otherwise,
+                        # so the classification worker would keep the process
+                        # joined forever. All queues are provably empty here
+                        # (an in-flight entry still counts in pending_count).
+                        self.stop_event.set()
                         break
                 continue
             except Exception as e:
@@ -1421,9 +1448,14 @@ class Pipeline:
             )
             self.recorder_thread.start()
             logger.info("Recorder thread started")
+        elif self.watch_input:
+            # Drop-folder mode: leave recording_stopped unset so the detection
+            # loop keeps polling for injected videos instead of draining and
+            # exiting; stop_recording() (e.g. Ctrl+C) ends the watch.
+            logger.info("Recording disabled; watching %s for injected input", self.input_storage)
         else:
             self.recording_stopped.set()  # No recording
-        
+
         # Start detection worker — an in-process thread, or a dedicated
         # subprocess (separate interpreter/GIL) when detection_in_subprocess is
         # enabled, so detection can't starve the recorder threads.
