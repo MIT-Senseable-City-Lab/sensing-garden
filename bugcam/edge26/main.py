@@ -212,6 +212,7 @@ class Pipeline:
             recording_mode=pipeline_cfg.get("recording_mode", "continuous"),
             interval_minutes=pipeline_cfg.get("recording_interval_minutes", 5),
             bitrate=capture.get("bitrate", 20_000_000),
+            exposure_time=capture.get("exposure_time"),
         )
     
     def _notify_result_ready(self, output_dir: Path) -> None:

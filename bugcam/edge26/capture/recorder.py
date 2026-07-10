@@ -54,6 +54,7 @@ class VideoRecorder:
         recording_mode: str = "continuous",
         interval_minutes: float = 5,
         bitrate: int = 20_000_000,
+        exposure_time: Optional[int] = None,
     ):
         """
         Initialize the video recorder.
@@ -70,6 +71,8 @@ class VideoRecorder:
             recording_mode: "continuous" (no gaps) or "interval" (record every N minutes)
             interval_minutes: Minutes between start of recordings (interval mode only)
             bitrate: H.264 encoder bitrate in bps (picamera2 hardware encoding only)
+            exposure_time: Manual shutter in microseconds (picamera2 only). None
+                keeps auto-exposure; a value is clamped to the frame period.
         """
         self.output_dir = Path(output_dir)
         self.fps = fps
@@ -82,6 +85,7 @@ class VideoRecorder:
         self.recording_mode = recording_mode
         self.interval_minutes = interval_minutes
         self.bitrate = bitrate
+        self.exposure_time = exposure_time
         
         # Resolution is requested from config and confirmed during init.
         self.resolution: Tuple[int, int] = (0, 0)
@@ -141,32 +145,66 @@ class VideoRecorder:
         
         self.camera = Picamera2()
         
-        # Create requested video config and read final applied resolution
+        # Pin the sensor frame duration so the frame rate actually holds. Setting
+        # only FrameRate lets auto-exposure stretch the exposure past the frame
+        # period in low light, collapsing the true rate; FrameDurationLimits caps
+        # exposure at the frame period so the rate stays fixed (darker/noisier
+        # instead of slower). Applied via the config so it takes effect atomically.
+        frame_duration_us = round(1_000_000 / self.fps)
+        camera_controls = {
+            "FrameDurationLimits": (frame_duration_us, frame_duration_us),
+        }
+
+        # Optional manual exposure. When unset, auto-exposure stays on and floats
+        # the shutter freely below the frame period (no overexposure risk). When
+        # set, ExposureTime cannot exceed the frame period, so clamp it.
+        if self.exposure_time is not None:
+            exposure_us = min(int(self.exposure_time), frame_duration_us)
+            if exposure_us != self.exposure_time:
+                logger.warning(
+                    "Configured exposure_time %sus exceeds the %sus frame period "
+                    "at %dfps; clamping to %sus.",
+                    self.exposure_time, frame_duration_us, self.fps, exposure_us,
+                )
+            camera_controls["AeEnable"] = False
+            camera_controls["ExposureTime"] = exposure_us
+
         # Picamera2 "RGB888" outputs BGR order [B,G,R] which matches OpenCV expectation.
         config = self.camera.create_video_configuration(
-            main={"size": self.requested_resolution, "format": "RGB888"}
+            main={"size": self.requested_resolution, "format": "RGB888"},
+            controls=camera_controls,
         )
         self.camera.configure(config)
-        
+
         # Read resolution from the configured camera
         width = config["main"]["size"][0]
         height = config["main"]["size"][1]
         self.resolution = (width, height)
-        
-        # Set frame rate
-        self.camera.set_controls({
-            "FrameRate": float(self.fps),
-        })
-        
+
         # Create hardware H.264 encoder
         self.encoder = H264Encoder(bitrate=self.bitrate)
         self.encoder_quality = Quality.HIGH
         
         self.camera.start()
-        
-        # Allow camera to warm up
+
+        # Allow camera to warm up and AE to settle
         time.sleep(2)
-        logger.info(f"PiCamera started: {self.resolution} @ {self.fps}fps")
+
+        # The MP4 is muxed at the configured fps (see _remux_chunk '-r self.fps').
+        # Warn — but do not silently retime — if the sensor clamped below the
+        # request (e.g. 15fps on the 4608x2592 mode, ceiling ~14.35fps), which
+        # makes the configured rate slightly optimistic.
+        metadata = self.camera.capture_metadata()
+        actual_fd = metadata.get("FrameDuration")
+        if actual_fd and abs(actual_fd - frame_duration_us) > frame_duration_us * 0.05:
+            logger.warning(
+                "Sensor frame duration %sus differs from the requested %sus "
+                "(~%.1ffps vs configured %dfps); the sensor mode cannot sustain "
+                "the configured rate.",
+                actual_fd, frame_duration_us, 1_000_000 / actual_fd, self.fps,
+            )
+        logger.info(f"PiCamera started: {self.resolution} @ {self.fps}fps "
+                    f"(sensor frame duration {actual_fd}us)")
     
     def _init_camera(self) -> None:
         """Initialize the camera and read its resolution."""
