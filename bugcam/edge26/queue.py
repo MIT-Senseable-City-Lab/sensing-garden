@@ -23,7 +23,7 @@ MAX_FAILED_ENTRIES = 50
 @dataclass
 class QueueEntry:
     """Represents a track queued for classification."""
-    entry_type: str                          # "flik" or "dot"
+    entry_type: str                          # "flik", "dot", "video", or "zero_track_result"
     source_device: str
     date: str
     time: Optional[str]

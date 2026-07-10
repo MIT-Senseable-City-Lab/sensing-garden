@@ -698,8 +698,10 @@ class Pipeline:
                 meta_path.write_text(json.dumps(detection_meta, indent=2, default=str))
                 logger.info(f"  Detection metadata saved ({confirmed_count} tracks)")
             else:
-                # No confirmed tracks — write empty results and mark done so
-                # the upload thread can discover and clean up this directory
+                # No confirmed tracks — write empty results and enqueue
+                # a zero-track sentinel so the classification worker
+                # (main process) handles .done and publish, where the
+                # upload callback is wired.
                 empty_results = {
                     "source_device": self.flick_id,
                     "date": date_time[:8],
@@ -713,9 +715,18 @@ class Pipeline:
                     "tracks": [],
                 }
                 self.writer.write_results(results=empty_results, output_dir=output_dir)
-                (output_dir / ".done").write_text("classified=0\nexpected=0\n")
-                logger.info("  No confirmed tracks, marked directory done")
-                self._notify_result_ready(output_dir)
+                (output_dir / ".expected_tracks").write_text("0")
+                self.classification_queue.enqueue(
+                    entry_type="zero_track_result",
+                    source_device=self.flick_id,
+                    date=date_time[:8],
+                    time=None,
+                    track_id="__zero__",
+                    track_dir=str(output_dir),
+                    output_dir=output_dir,
+                    num_crops=0,
+                )
+                logger.info("  No confirmed tracks, enqueued for publish")
 
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
@@ -852,6 +863,8 @@ class Pipeline:
                     self._classify_flik_track(entry)
                 elif entry.entry_type == "video":
                     self._publish_dot_video(entry)
+                elif entry.entry_type == "zero_track_result":
+                    self._check_classification_complete(Path(entry.output_dir))
                 else:
                     self._classify_dot_track(entry)
                 
