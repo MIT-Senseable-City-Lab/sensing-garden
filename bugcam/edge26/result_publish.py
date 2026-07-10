@@ -7,11 +7,10 @@ archives), then deletes its own dir. The spooler does no scanning or classificat
 """
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
-
-from bugcam.pollen.upload_utils import result_is_empty
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +19,27 @@ SIDECARS = {
     ".done", ".detection.json", ".expected_tracks", ".completed_tracks",
     ".uploaded", ".archived", ".archived-aux",
 }
+
+
+def result_is_empty(results_json: Path) -> bool:
+    """True when a result has zero tracks and no crop/composite/video media."""
+    results_json = Path(results_json)
+    try:
+        payload = json.loads(results_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if payload.get("tracks"):
+        return False
+    results_dir = results_json.parent
+    for sub in ("crops", "composites", "videos"):
+        media_dir = results_dir / sub
+        if media_dir.is_dir() and any(p.is_file() for p in media_dir.rglob("*")):
+            return False
+    # The FLIK video sample lands top-level (video.mp4), not under videos/;
+    # a zero-track dir holding one is exactly the backdrop footage case.
+    if any(p.is_file() and p.suffix == ".mp4" for p in results_dir.iterdir()):
+        return False
+    return True
 
 
 def _owning_device(results_dir: Path, flick_id: str, dot_ids: list[str]):
