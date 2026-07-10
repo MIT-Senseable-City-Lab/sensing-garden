@@ -266,6 +266,18 @@ class Pipeline:
         video_path.unlink()
         logger.info("DOT video staged for upload: %s (dropped local copy)", video_path.name)
 
+    def _publish_finalized_result(self, entry: QueueEntry) -> None:
+        """Ship a finalized (.done) result dir to the upload owner. Runs in the
+        main-process classification worker (which holds Pollen); detection only
+        enqueues -- in subprocess mode it has no upload callback of its own.
+        Publish failures are not retried through the queue: the directory stays
+        on disk and the orphan sweep retries it, unlike DOT videos where the
+        queue entry is the only pointer to the file."""
+        output_dir = Path(entry.output_dir)
+        if not output_dir.exists():
+            return  # already published/cleaned: idempotent
+        self._notify_result_ready(output_dir)
+
     def _is_flick_video(self, path: Path) -> bool:
         """Check if a path is a FLICK video (matches flick_id prefix)."""
         return (path.is_file()
@@ -526,8 +538,6 @@ class Pipeline:
                         break
                     self._process_dot_media(dot_dir)
                     self._process_dot_directory_detection(dot_dir)
-                
-                self._maybe_sweep_stale_directories()
 
             except queue.Empty:
                 # Drop-folder mode: no recorder feeds the video queue, so pick
@@ -546,8 +556,6 @@ class Pipeline:
                         break
                     self._process_dot_media(dot_dir)
                     self._process_dot_directory_detection(dot_dir)
-
-                self._maybe_sweep_stale_directories()
 
                 # If recording stopped, check if we're done
                 if self.recording_stopped.is_set():
@@ -754,7 +762,21 @@ class Pipeline:
                 self.writer.write_results(results=empty_results, output_dir=output_dir)
                 (output_dir / ".done").write_text("classified=0\nexpected=0\n")
                 logger.info("  No confirmed tracks, marked directory done")
-                self._notify_result_ready(output_dir)
+                # Detection runs in a subprocess with no upload callback, so
+                # hand the finalized dir to the main-process classification
+                # worker (which owns Pollen) via the disk queue, same path as
+                # tracks. Notifying from here would strand the directory --
+                # zero-track dirs have no track entries, so nothing else ever
+                # triggers a main-process publish for them.
+                self.classification_queue.enqueue(
+                    entry_type="result",
+                    source_device=self.flick_id,
+                    date=date_time[:8],
+                    time=track_timestamp,
+                    track_id=output_dir.name,
+                    track_dir=output_dir,
+                    output_dir=output_dir,
+                )
 
         except Exception as e:
             logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
@@ -884,6 +906,15 @@ class Pipeline:
             # Nothing in this loop may propagate: an uncaught exception ends the
             # thread with the traceback going to stderr only (never the daily
             # log), and classification silently stops for the rest of the run.
+
+            # The stale sweep lives here, not in the detection worker: in
+            # subprocess mode detection has no upload callback, so its orphan
+            # publish retries could never actually publish.
+            try:
+                self._maybe_sweep_stale_directories()
+            except Exception:
+                logger.error("Stale directory sweep failed", exc_info=True)
+
             try:
                 result = self.classification_queue.get_next()
             except Exception:
@@ -902,6 +933,8 @@ class Pipeline:
                     self._classify_flik_track(entry)
                 elif entry.entry_type == "video":
                     self._publish_dot_video(entry)
+                elif entry.entry_type == "result":
+                    self._publish_finalized_result(entry)
                 else:
                     self._classify_dot_track(entry)
 
