@@ -579,22 +579,32 @@ class Pipeline:
             logger.info(f"  BugSpot: {len(result.confirmed_tracks)} confirmed / "
                        f"{len(result.track_paths)} total tracks")
             
-            # Save crops and queue for classification
-            confirmed_count = 0
+            # Pre-filter tracks that have saved crop directories on disk so
+            # we know the exact enqueue count before writing .expected_tracks.
+            # This avoids a race where the classification worker processes a
+            # track before .expected_tracks exists, silently losing the
+            # completion count (the worker returns early when the file is
+            # missing).
+            ready_tracks = []
             for track_id, track in result.confirmed_tracks.items():
-                # BugSpot saves crops using first 8 chars of track UUID
-                # track_id format: {uuid}_{timestamp} -> use first 8 chars for directory
                 base_track_id = track_id.split('-')[0]
                 track_dir = output_dir / "crops" / base_track_id
-                
-                if not track_dir.exists():
+                if track_dir.exists():
+                    ready_tracks.append((track_id, track, track_dir))
+                else:
                     logger.warning(f"Track directory not found: {track_dir}")
-                    continue
-                
-                # Extract timestamp from video filename
+            
+            confirmed_count = len(ready_tracks)
+
+            # Write expected count BEFORE enqueuing so the classification
+            # worker can track completions from the very first entry.
+            if confirmed_count > 0:
+                (output_dir / ".expected_tracks").write_text(str(confirmed_count))
+
+            # Save crops and queue for classification
+            for track_id, track, track_dir in ready_tracks:
                 track_timestamp = date_time.split('_')[-1] if '_' in date_time else None
                 
-                # Queue for classification
                 self.classification_queue.enqueue(
                     entry_type="flik",
                     source_device=self.flick_id,
@@ -605,7 +615,6 @@ class Pipeline:
                     output_dir=output_dir,
                     num_crops=len(track.crops),
                 )
-                confirmed_count += 1
             
             # Sample video: save 1 per N to output (0 = disabled)
             if self._video_sample_interval > 0:
@@ -687,9 +696,6 @@ class Pipeline:
                 }
                 meta_path = output_dir / ".detection.json"
                 meta_path.write_text(json.dumps(detection_meta, indent=2, default=str))
-                
-                # Write expected track count for completeness check
-                (output_dir / ".expected_tracks").write_text(str(confirmed_count))
                 logger.info(f"  Detection metadata saved ({confirmed_count} tracks)")
             else:
                 # No confirmed tracks — write empty results and mark done so
