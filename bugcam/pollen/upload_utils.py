@@ -42,4 +42,7 @@ def result_is_empty(results_json: Path) -> bool:
         media_dir = results_dir / sub
         if media_dir.is_dir() and any(p.is_file() for p in media_dir.rglob("*")):
             return False
+    # Check for sampled video at top level (1-in-N video sampling feature)
+    if (results_dir / "video.mp4").is_file():
+        return False
     return True
