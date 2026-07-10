@@ -292,9 +292,15 @@ class Pollen:
         logger.info("uploading %s (kind=%s, %s, attempt %d)", row.s3_key, row.kind, size, row.attempts + 1)
         try:
             self.store.record_attempt(row.id)
+            started = time.monotonic()
             self.uploader.upload(row)
+            elapsed = time.monotonic() - started
             self.store.mark_uploaded(row.id)
-            logger.info("uploaded %s (kind=%s)", row.s3_key, row.kind)
+            if row.size and elapsed > 0:
+                logger.info("uploaded %s (kind=%s, %.1f MB in %.1fs, %.2f MB/s)",
+                            row.s3_key, row.kind, row.size / 1e6, elapsed, row.size / 1e6 / elapsed)
+            else:
+                logger.info("uploaded %s (kind=%s, %.1fs)", row.s3_key, row.kind, elapsed)
             return True
         except RateLimitError:
             raise

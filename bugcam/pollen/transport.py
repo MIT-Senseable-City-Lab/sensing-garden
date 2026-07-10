@@ -7,6 +7,7 @@ resumes from where it left off rather than restarting. HTTP session is injectabl
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -133,13 +134,16 @@ class Uploader:
                         break
                     if part_number not in already_done:
                         url = self.presigner.part_url(row.s3_key, upload_id, part_number)
+                        started = time.monotonic()
                         resp = self._put(url, chunk, content_type, gone_on_404=True)
+                        elapsed = time.monotonic() - started
                         etag = resp.headers.get("ETag") or resp.headers.get("etag")
                         if not etag:
                             raise UploadError(f"missing ETag for part {part_number} of {row.s3_key}")
                         self.store.record_part(row.id, part_number, etag)
-                        logger.debug("multipart %s part %d uploaded (%.0f MB)",
-                                     row.s3_key, part_number, len(chunk) / 1e6)
+                        logger.debug("multipart %s part %d uploaded (%.0f MB in %.1fs, %.2f MB/s)",
+                                     row.s3_key, part_number, len(chunk) / 1e6, elapsed,
+                                     len(chunk) / 1e6 / elapsed if elapsed > 0 else 0.0)
                     part_number += 1
 
             parts = self.store.get(row.id).parts
