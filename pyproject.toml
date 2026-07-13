@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "bugcam"
-version = "0.7.1"
+version = "0.8.1"
 description = "detect and classify insects on a raspberry pi"
 authors = ["Deniz Aydemir <deniz@aydemir.us>"]
 license = "MIT"
@@ -29,7 +29,7 @@ setproctitle = "*"
 opencv-python = "*"
 requests = ">=2.28.0"
 pyyaml = ">=6.0"
-bugspot = "^0.4.2"
+bugspot = "^0.5.0"
 flask = ">=2.0.0"
 
 [tool.poetry.group.dev.dependencies]
