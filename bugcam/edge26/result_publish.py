@@ -11,15 +11,10 @@ import logging
 import shutil
 from pathlib import Path
 
+from bugcam.edge26 import sidecars
 from bugcam.pollen.upload_utils import result_is_empty
 
 logger = logging.getLogger(__name__)
-
-RESULTS_FILENAME = "results.json"
-SIDECARS = {
-    ".done", ".detection.json", ".expected_tracks", ".completed_tracks",
-    ".uploaded", ".archived", ".archived-aux",
-}
 
 
 def _owning_device(results_dir: Path, flick_id: str, dot_ids: list[str]):
@@ -41,7 +36,7 @@ def publish_result_dir(pollen, results_dir, flick_id: str, dot_ids: list[str]) -
     Both FLIK chunks and DOT per-track dirs are terminal units: uploaded once and
     removed (the spooler holds staged hardlinks)."""
     results_dir = Path(results_dir)
-    results_json = results_dir / RESULTS_FILENAME
+    results_json = results_dir / sidecars.RESULTS
     if not results_json.exists():
         return 0
     device, is_flik, is_dot = _owning_device(results_dir, flick_id, dot_ids)
@@ -51,7 +46,7 @@ def publish_result_dir(pollen, results_dir, flick_id: str, dot_ids: list[str]) -
         shutil.rmtree(results_dir, ignore_errors=True)  # nothing to ship: terminal, drop it
         logger.info("result %s empty -> dropped, nothing uploaded", results_dir.name)
         return 0
-    files = [p for p in sorted(results_dir.rglob("*")) if p.is_file() and p.name not in SIDECARS]
+    files = [p for p in sorted(results_dir.rglob("*")) if p.is_file() and p.name not in sidecars.UPLOAD_EXCLUDE]
     video_count = sum(1 for p in files if p.suffix == ".mp4")
     try:
         total_mb = sum(p.stat().st_size for p in files) / 1e6

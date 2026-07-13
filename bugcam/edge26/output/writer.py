@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Dict, List
 from datetime import datetime, timezone
 
+from bugcam.edge26 import sidecars
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,8 +63,8 @@ class ResultsWriter:
         output_dir.mkdir(parents=True, exist_ok=True)
         output_paths = {}
         
-        json_path = output_dir / "results.json"
-        temp_path = json_path.with_suffix(".json.tmp")
+        json_path = output_dir / sidecars.RESULTS
+        temp_path = output_dir / sidecars.RESULTS_TMP
         
         with open(temp_path, 'w') as f:
             json.dump(results, f, indent=2, default=str)
