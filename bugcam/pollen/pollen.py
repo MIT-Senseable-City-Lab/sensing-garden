@@ -24,6 +24,7 @@ from bugcam.pollen.presign import RateLimitError
 from bugcam.pollen.staging import StagingArea
 from bugcam.pollen.store import PollenStore, UploadRow
 from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SIZE, Uploader
+from bugcam.pollen.upload_utils import content_type_for
 
 logger = logging.getLogger("bugcam.pollen")
 
@@ -32,6 +33,10 @@ ARCHIVE_KIND = "archive"
 # (videos) would otherwise push a per-device tar past the multipart threshold and trap
 # the small result data inside a slow/stuck multipart upload.
 UNBATCHED_KINDS = frozenset({"video"})
+# Latency-sensitive telemetry: tiny objects that ship individually, before
+# everything else in a tick, and never inside an archive -- a heartbeat trapped
+# behind the batch cadence defeats its purpose.
+PRIORITY_KINDS = frozenset({"heartbeat"})
 MAX_RETRY_DELAY_SECONDS = 300  # matches the legacy upload loop
 STUCK_WARN_SECONDS = 3600      # warn loudly once the oldest item has waited this long
 
@@ -171,9 +176,28 @@ class Pollen:
             oldest_age = ((now or datetime.now(timezone.utc)) - oldest).total_seconds()
         return {
             "pending": summary["pending"],
+            "pending_bytes": summary["pending_bytes"],
             "oldest_age_seconds": oldest_age,
             "max_attempts": summary["max_attempts"],
         }
+
+    def stats(self, now: Optional[datetime] = None) -> dict:
+        """Upload health for the heartbeat: the pending backlog plus the bandwidth
+        window since the last call (drained -- the heartbeat is the sole consumer)."""
+        stats = self.upload_stats(now)
+        transfer = getattr(self.uploader, "transfer_stats", None)
+        if transfer is not None:
+            stats.update(transfer.drain())
+        return stats
+
+    def upload_path_now(self, path: Path | str) -> None:
+        """Immediate presigned PUT of a small producer file at its derived key,
+        bypassing the queue. For latency-sensitive telemetry (heartbeats); callers
+        fall back to ``enqueue_set`` on failure for durability."""
+        path = Path(path)
+        self.uploader.upload_bytes(
+            self._derive_key(path), path.read_bytes(), content_type_for(path.name)
+        )
 
     def _warn_if_stuck(self) -> None:
         stats = self.upload_stats()
@@ -267,7 +291,9 @@ class Pollen:
             if self.config.batch and self.archiver is not None:
                 failures = self._upload_batched(pending)
             else:
-                for row in pending:
+                # Priority kinds (heartbeats) first so telemetry never waits
+                # behind a slow video PUT within the tick.
+                for row in sorted(pending, key=lambda r: r.kind not in PRIORITY_KINDS):
                     if self._drop_if_lost(row):
                         continue
                     if not self._upload_one(row):
@@ -319,6 +345,13 @@ class Pollen:
         # A tar whose staged file is lost is dropped WITHOUT reserving: its members
         # become free to re-pack into a fresh tar this same tick.
         failures = 0
+        # Priority kinds (heartbeats) ship individually FIRST: they are tiny,
+        # latency-sensitive, and must never wait on packing or a slow video PUT.
+        for row in (r for r in pending if r.kind in PRIORITY_KINDS):
+            if self._drop_if_lost(row):
+                continue
+            if not self._upload_one(row):
+                failures += 1
         reserved: set[int] = set()
         for row in (r for r in pending if r.kind == ARCHIVE_KIND):
             if self._drop_if_lost(row):
@@ -326,7 +359,10 @@ class Pollen:
             reserved.update(row.metadata.get("members", []))
             if not self._upload_archive_row(row):
                 failures += 1
-        members = [r for r in pending if r.kind != ARCHIVE_KIND and r.id not in reserved]
+        members = [
+            r for r in pending
+            if r.kind != ARCHIVE_KIND and r.kind not in PRIORITY_KINDS and r.id not in reserved
+        ]
         # Batch and ship the result archives FIRST (small, indexed) -- the large
         # un-batched videos go last (below) so results never wait behind a slow video PUT.
         by_device: dict[str, list[UploadRow]] = defaultdict(list)

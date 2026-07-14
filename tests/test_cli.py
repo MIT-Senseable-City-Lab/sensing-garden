@@ -26,11 +26,11 @@ def test_run_subcommand_help(cli_runner):
     assert "--resolution" in strip_ansi(result.output)
 
 
-def test_run_heartbeat_interval_is_one_minute() -> None:
-    """Test run command emits heartbeat snapshots every minute by default."""
+def test_run_heartbeat_interval_is_five_minutes() -> None:
+    """Test run command emits heartbeat snapshots every five minutes by default."""
     from bugcam.commands.run import HEARTBEAT_INTERVAL_SECONDS
 
-    assert HEARTBEAT_INTERVAL_SECONDS == 60
+    assert HEARTBEAT_INTERVAL_SECONDS == 300
 
 
 def test_resolve_heartbeat_interval_cli_wins(monkeypatch) -> None:
@@ -50,11 +50,11 @@ def test_resolve_heartbeat_interval_from_config(monkeypatch) -> None:
 
 
 def test_resolve_heartbeat_interval_default(monkeypatch) -> None:
-    """With neither CLI flag nor config, falls back to 60s."""
+    """With neither CLI flag nor config, falls back to 300s."""
     from bugcam.commands import run
 
     monkeypatch.setattr(run, "load_config", lambda: {})
-    assert run._resolve_heartbeat_interval(None) == 60.0
+    assert run._resolve_heartbeat_interval(None) == 300.0
 
 
 def test_heartbeat_loop_waits_configured_interval(monkeypatch) -> None:
