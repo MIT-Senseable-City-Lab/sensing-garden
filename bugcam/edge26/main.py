@@ -1260,13 +1260,11 @@ class Pipeline:
         2. Empty directories with no results.json and no .done — created by detection
            but never populated. Remove them if older than 10 minutes.
         """
+
         stale_threshold_seconds = 30 * 60
         empty_threshold_seconds = 10 * 60
         orphan_threshold_seconds = 180 * 60
-        # Producer-owned utility dirs, not per-timestamp result directories -- treating
-        # them the same risked shutil.rmtree racing a live writer (e.g. the heartbeat
-        # loop) that finds its own directory briefly empty and mid-write.
-        NON_RESULT_SUBDIRS = {"heartbeats", "environment", "logs"}
+
         # Per-pass tallies: one summary line per sweep makes stuck-state growth
         # visible in the daily log without scanning the disk by hand.
         scanned = 0
