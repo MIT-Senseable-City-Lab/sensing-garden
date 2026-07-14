@@ -149,7 +149,7 @@ class _StubWindow:
         return False
 
 
-def _make_recorder(tmp_path: Path, window) -> "VideoRecorder":
+def _make_recorder(tmp_path: Path, window):
     from bugcam.edge26.capture.recorder import VideoRecorder
 
     return VideoRecorder(
