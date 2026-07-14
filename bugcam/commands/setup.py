@@ -264,8 +264,34 @@ def _prompt_registration_settings(existing_config: dict[str, Any]) -> dict[str, 
         "api_url": typer.prompt("API URL", default=str(existing_config.get("api_url") or DEFAULT_API_URL)),
         "flick_id": typer.prompt("Device ID (unique name for this device)", default=_existing_flick_id(existing_config)),
         "dot_count": typer.prompt("Number of DOT sensors (0 if none)", default=_existing_dot_count(existing_config), type=int),
+        "timezone": _prompt_timezone(existing_config),
         **storage_paths,
     }
+
+
+def _prompt_timezone(existing_config: dict[str, Any]) -> str:
+    """Prompt for the deployment site's IANA timezone, validated locally.
+
+    Blank keeps the device recording around the clock; a timezone enables the
+    default daytime recording window and localizes day boundaries.
+    """
+    from zoneinfo import ZoneInfo
+
+    while True:
+        value = typer.prompt(
+            "Timezone (IANA name, e.g. Europe/London or America/Toronto; blank = record 24/7)",
+            default=str(existing_config.get("timezone") or ""),
+        ).strip()
+        if not value:
+            return ""
+        try:
+            ZoneInfo(value)
+            return value
+        except Exception:
+            console.print(
+                f"[red]Unknown timezone: {value}[/red] "
+                "Use an IANA name like Europe/London, Europe/Amsterdam, or America/Toronto."
+            )
 
 
 def _register_device(api_url: str, setup_code: str, flick_id: str, dot_count: int) -> dict[str, Any]:
@@ -327,12 +353,13 @@ def _build_saved_config(
     output_dir: str,
     state_dir: str,
     pending_dir: str,
+    timezone_name: str = "",
 ) -> dict[str, Any]:
     preserved = {
         key: value
         for key, value in existing_config.items()
         if key not in {"api_url", "api_key", "device_id", "device_name", "flick_id", "dot_ids", "s3_bucket",
-                      "input_dir", "output_dir", "state_dir", "pending_dir"}
+                      "input_dir", "output_dir", "state_dir", "pending_dir", "timezone"}
     }
     return {
         **preserved,
@@ -345,6 +372,8 @@ def _build_saved_config(
         "output_dir": output_dir,
         "state_dir": state_dir,
         "pending_dir": pending_dir,
+        # Blank clears the key: no timezone means record around the clock.
+        **({"timezone": timezone_name} if timezone_name else {}),
     }
 
 
@@ -438,6 +467,7 @@ def setup() -> None:
             output_dir=settings["output_dir"],
             state_dir=settings["state_dir"],
             pending_dir=settings["pending_dir"],
+            timezone_name=settings["timezone"],
         )
         save_config(saved_config)
         console.print(f"[green]Saved config for {saved_config['flick_id']}[/green]\n")

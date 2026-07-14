@@ -16,6 +16,7 @@ from bugcam.edge26.processing import VideoProcessor, HailoClassifier
 from bugcam.edge26.output import ResultsWriter
 from bugcam.edge26.queue import ClassificationQueue, QueueEntry
 from bugcam.log_shipping import DailyLogHandler, ship_existing_logs
+from bugcam.record_window import RecordingWindow, local_video_date, video_stem_utc_iso
 
 # Producer-owned utility dirs under a device dir, not per-timestamp result
 # directories -- the sweep and inventory must never treat them as results
@@ -136,6 +137,20 @@ class Pipeline:
         device_config = config.get("device", {})
         self.flick_id = device_config.get("flick_id", "edge26")
         self.dot_ids = device_config.get("dot_ids", [])
+        # Filenames/timestamps are UTC; the configured zone localizes the
+        # recording window and day boundaries (None: UTC days, no window).
+        self.timezone_name = device_config.get("timezone") or None
+        self._local_zone = None
+        if self.timezone_name:
+            try:
+                from zoneinfo import ZoneInfo
+                self._local_zone = ZoneInfo(self.timezone_name)
+            except Exception:
+                logger.error(
+                    f"Unknown timezone {self.timezone_name!r}; "
+                    "day boundaries fall back to UTC and no recording window applies"
+                )
+                self.timezone_name = None
         self.input_storage = Path(config["paths"]["input_storage"])
         
         # Output paths
@@ -223,6 +238,9 @@ class Pipeline:
             recording_mode=pipeline_cfg.get("recording_mode", "continuous"),
             interval_minutes=pipeline_cfg.get("recording_interval_minutes", 5),
             bitrate=capture.get("bitrate", 20_000_000),
+            record_window=RecordingWindow.from_config(
+                pipeline_cfg.get("record_window"), self.timezone_name
+            ),
         )
     
     def _notify_result_ready(self, output_dir: Path) -> None:
@@ -608,8 +626,10 @@ class Pipeline:
                     self.processor.reset_tracker()
                     self._pending_tracker_reset = False
                 
-                # Day-change detection
-                video_date = date_time[:8]  # YYYYMMDD
+                # Day-change detection: stems are UTC; compare local calendar
+                # dates so the reset fires overnight, not at UTC midnight
+                # (mid-evening at western sites)
+                video_date = local_video_date(date_time, self._local_zone)
                 if self._last_video_date and video_date != self._last_video_date:
                     logger.info(f"Day changed ({self._last_video_date} → {video_date}), resetting tracker")
                     self.processor.reset_tracker()
@@ -679,11 +699,9 @@ class Pipeline:
             # Save detection metadata for classification thread to merge into results
             if confirmed_count > 0:
                 # Backend parses video_timestamp as ISO-8601; date_time is the
-                # compact YYYYMMDD_HHMMSS_micros video stem (matches processor.py).
-                date_str, time_str = date_time.split('_')[:2]
-                video_timestamp_iso = datetime.strptime(
-                    f"{date_str}_{time_str}", "%Y%m%d_%H%M%S"
-                ).isoformat()
+                # compact YYYYMMDD_HHMMSS_micros video stem (matches processor.py),
+                # stamped in UTC by the recorder, so carry the +00:00 offset.
+                video_timestamp_iso = video_stem_utc_iso(date_time)
                 detection_meta = {
                     "source_device": self.flick_id,
                     "date": date_time[:8],

@@ -46,13 +46,16 @@ def build_heartbeat_payload(
     dot_ids: list[str],
     *,
     timestamp: datetime | None = None,
+    timezone_name: str | None = None,
 ) -> dict[str, object]:
-    """Build the heartbeat payload."""
+    """Build the heartbeat payload. Timestamps are UTC; timezone_name is the
+    device's configured IANA zone, shipped as device info."""
     heartbeat_time = timestamp or datetime.now(timezone.utc)
     disk_usage = shutil.disk_usage(input_dir)
     return {
         "device_id": flick_id,
         "timestamp": heartbeat_time.isoformat(),
+        "timezone": timezone_name,
         "cpu_temperature_celsius": _read_cpu_temperature_celsius(),
         "storage_free_bytes": disk_usage.free,
         "storage_total_bytes": disk_usage.total,
@@ -61,10 +64,18 @@ def build_heartbeat_payload(
     }
 
 
-def write_heartbeat_snapshot(output_dir: Path, flick_id: str, input_dir: Path, dot_ids: list[str]) -> Path:
+def write_heartbeat_snapshot(
+    output_dir: Path,
+    flick_id: str,
+    input_dir: Path,
+    dot_ids: list[str],
+    timezone_name: str | None = None,
+) -> Path:
     """Write a heartbeat JSON document to the output directory."""
     heartbeat_time = datetime.now(timezone.utc)
-    payload = build_heartbeat_payload(flick_id, input_dir, dot_ids, timestamp=heartbeat_time)
+    payload = build_heartbeat_payload(
+        flick_id, input_dir, dot_ids, timestamp=heartbeat_time, timezone_name=timezone_name
+    )
     heartbeat_dir = output_dir / flick_id / "heartbeats"
     heartbeat_dir.mkdir(parents=True, exist_ok=True)
     heartbeat_path = heartbeat_dir / f"{heartbeat_time.strftime('%Y%m%d_%H%M%S')}.json"
@@ -111,5 +122,6 @@ def heartbeat(
         flick_id=settings["flick_id"],
         input_dir=input_dir,
         dot_ids=settings["dot_ids"],
+        timezone_name=str(load_config().get("timezone") or "") or None,
     )
     console.print(f"[green]Wrote[/green] {heartbeat_path}")

@@ -29,6 +29,7 @@ from bugcam.commands.status import _check_time_sync
 from bugcam.device_config import resolve_flick_id
 from bugcam.environment_sensor import collect_environment_reading
 from bugcam.processing import parse_capture_resolution
+from bugcam.record_window import RecordingWindow
 from bugcam.runtime import build_pipeline, resolve_bundle_provenance, select_model_reference
 from bugcam.receiver import create_app
 from bugcam.receiver.config import RECEIVER_DEFAULT_PORT, RECEIVER_DEFAULT_HOST
@@ -50,9 +51,10 @@ def _heartbeat_loop(
     stop_event: threading.Event,
     pollen: Any = None,
     interval: float = HEARTBEAT_INTERVAL_SECONDS,
+    timezone_name: str | None = None,
 ) -> None:
     while not stop_event.is_set():
-        path = write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids)
+        path = write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids, timezone_name)
         if pollen is not None:
             # Heartbeats are telemetry, not durable artifacts; shipped through the
             # spooler for now, though file-vs-real-time-POST delivery is still open.
@@ -240,6 +242,20 @@ def _resolve_heartbeat_interval(heartbeat_interval: float | None) -> float:
     return float(load_config().get("heartbeat_interval", HEARTBEAT_INTERVAL_SECONDS))
 
 
+def _resolve_recording_window(
+    timezone_name: str | None, record_window: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve timezone and record window: CLI flag wins, then config.
+
+    Config-file keys: timezone (IANA name), record_window ("HH:MM-HH:MM" local
+    or "always").
+    """
+    cfg = load_config()
+    resolved_tz = timezone_name or str(cfg.get("timezone") or "") or None
+    resolved_window = record_window or str(cfg.get("record_window") or "") or None
+    return resolved_tz, resolved_window
+
+
 @app.callback()
 def run(
     api_url: str | None = typer.Option(None, "--api-url", help="Backend API URL"),
@@ -293,10 +309,30 @@ def run(
              "folder instead, processing injected videos/DOT dirs (inject with mv, "
              "not cp: a file mid-copy can be picked up truncated)",
     ),
+    timezone_name: str | None = typer.Option(
+        None,
+        "--timezone",
+        help="IANA timezone of the deployment site, e.g. Europe/London or "
+             "America/Toronto (config: timezone); localizes the record window "
+             "and day boundaries. Timestamps stay UTC.",
+    ),
+    record_window: str | None = typer.Option(
+        None,
+        "--record-window",
+        help="Daily local-time recording window 'HH:MM-HH:MM', or 'always' "
+             "(config: record_window). With a timezone configured the default "
+             "is 05:00-22:00; processing/uploading continues outside the window.",
+    ),
 ) -> None:
     """Run recording, processing, uploading, and one-minute heartbeat emission."""
     if mode not in {"continuous", "interval"}:
         raise typer.BadParameter("mode must be 'continuous' or 'interval'")
+    resolved_timezone, resolved_window = _resolve_recording_window(timezone_name, record_window)
+    try:
+        # Validate early so a config typo fails at launch, not mid-run.
+        window = RecordingWindow.from_config(resolved_window, resolved_timezone)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     try:
         pid_path = _acquire_pid_file()
     except RuntimeError as exc:
@@ -345,7 +381,12 @@ def run(
             # on one bucket would overwrite each other.
             try:
                 manifest = json.dumps(
-                    {"flick_id": settings["flick_id"], "dot_ids": settings["dot_ids"]}, indent=2
+                    {
+                        "flick_id": settings["flick_id"],
+                        "dot_ids": settings["dot_ids"],
+                        "timezone": resolved_timezone,
+                    },
+                    indent=2,
                 ).encode("utf-8")
                 pollen_instance.upload_now(manifest, "v1/manifest.json", "application/json")
             except Exception as exc:  # noqa: BLE001
@@ -364,6 +405,9 @@ def run(
         if not record:
             console.print(f"[yellow]Recording disabled[/yellow] (--no-record); watching {input_dir} for injected input")
             logger.info("recording disabled for this run (--no-record); processing injected input only")
+        else:
+            console.print(f"[dim]Recording window[/dim] {window.describe()}")
+            logger.info("recording window: %s", window.describe())
 
         on_result_ready = None
         on_log_complete = None
@@ -395,6 +439,8 @@ def run(
             enable_recording=record,
             watch_input=not record,
             detection_config_path=detection_config,
+            timezone_name=resolved_timezone,
+            record_window=resolved_window,
             on_result_ready=on_result_ready,
             on_log_complete=on_log_complete,
             on_video_ready=on_video_ready,
@@ -412,6 +458,7 @@ def run(
                 heartbeat_stop_event,
                 pollen_instance,
                 resolved_heartbeat_interval,
+                resolved_timezone,
             ),
             daemon=True,
             name="BugCamHeartbeat",

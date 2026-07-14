@@ -174,6 +174,8 @@ def build_edge26_config(
     watch_input: bool = False,
     model_metadata: dict[str, Any] | None = None,
     detection_config_path: Path | None = None,
+    timezone_name: str | None = None,
+    record_window: str | None = None,
 ) -> dict[str, Any]:
     """Build the edge26 pipeline config from BugCam-owned settings."""
     results_dir = Path(output_dir)
@@ -192,6 +194,7 @@ def build_edge26_config(
         "device": {
             "flick_id": flick_id,
             "dot_ids": dot_ids,
+            "timezone": timezone_name,
         },
         "paths": {
             "input_storage": input_dir,
@@ -206,6 +209,7 @@ def build_edge26_config(
             "watch_input": watch_input,
             "recording_mode": recording_mode,
             "recording_interval_minutes": recording_interval,
+            "record_window": record_window,
         },
         "capture": {
             "camera_index": 0,
