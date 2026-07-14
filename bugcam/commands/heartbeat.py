@@ -40,17 +40,49 @@ def _build_dot_status(input_dir: Path, dot_ids: list[str]) -> list[dict[str, str
     return status
 
 
+def _build_incoming_status(input_dir: Path, flick_id: str, dot_ids: list[str]) -> dict[str, int]:
+    """Backlog waiting in the incoming directory: unprocessed FLIK videos (the
+    pipeline deletes them after detection, so presence means pending) and DOT
+    tracks whose done.txt marks them ready for processing."""
+    flick_videos = flick_video_bytes = dot_dirs = ready_dot_tracks = 0
+    if input_dir.exists():
+        for entry in input_dir.iterdir():
+            if entry.is_file() and entry.suffix == ".mp4" and entry.name.startswith(f"{flick_id}_"):
+                flick_videos += 1
+                flick_video_bytes += entry.stat().st_size
+            elif entry.is_dir() and any(entry.name.startswith(f"{dot_id}_") for dot_id in dot_ids):
+                dot_dirs += 1
+                crops_dir = entry / "crops"
+                if crops_dir.exists():
+                    ready_dot_tracks += sum(
+                        1 for track in crops_dir.iterdir()
+                        if track.is_dir() and (track / "done.txt").exists()
+                    )
+    return {
+        "flick_videos": flick_videos,
+        "flick_video_bytes": flick_video_bytes,
+        "dot_dirs": dot_dirs,
+        "ready_dot_tracks": ready_dot_tracks,
+    }
+
+
 def build_heartbeat_payload(
     flick_id: str,
     input_dir: Path,
     dot_ids: list[str],
     *,
     timestamp: datetime | None = None,
+    pipeline_status: dict | None = None,
+    upload_status: dict | None = None,
 ) -> dict[str, object]:
-    """Build the heartbeat payload."""
+    """Build the heartbeat payload.
+
+    ``pipeline_status`` / ``upload_status`` are supplied by ``bugcam run``
+    (pipeline health snapshot, Pollen upload stats); the standalone heartbeat
+    command has neither and omits those sections."""
     heartbeat_time = timestamp or datetime.now(timezone.utc)
     disk_usage = shutil.disk_usage(input_dir)
-    return {
+    payload: dict[str, object] = {
         "device_id": flick_id,
         "timestamp": heartbeat_time.isoformat(),
         "cpu_temperature_celsius": _read_cpu_temperature_celsius(),
@@ -58,13 +90,32 @@ def build_heartbeat_payload(
         "storage_total_bytes": disk_usage.total,
         "uptime_seconds": _read_uptime_seconds(),
         "dot_status": _build_dot_status(input_dir, dot_ids),
+        "incoming": _build_incoming_status(input_dir, flick_id, dot_ids),
     }
+    if pipeline_status is not None:
+        payload["pipeline"] = pipeline_status
+    if upload_status is not None:
+        payload["upload"] = upload_status
+    return payload
 
 
-def write_heartbeat_snapshot(output_dir: Path, flick_id: str, input_dir: Path, dot_ids: list[str]) -> Path:
+def write_heartbeat_snapshot(
+    output_dir: Path,
+    flick_id: str,
+    input_dir: Path,
+    dot_ids: list[str],
+    *,
+    pipeline_status: dict | None = None,
+    upload_status: dict | None = None,
+) -> Path:
     """Write a heartbeat JSON document to the output directory."""
     heartbeat_time = datetime.now(timezone.utc)
-    payload = build_heartbeat_payload(flick_id, input_dir, dot_ids, timestamp=heartbeat_time)
+    payload = build_heartbeat_payload(
+        flick_id, input_dir, dot_ids,
+        timestamp=heartbeat_time,
+        pipeline_status=pipeline_status,
+        upload_status=upload_status,
+    )
     heartbeat_dir = output_dir / flick_id / "heartbeats"
     heartbeat_dir.mkdir(parents=True, exist_ok=True)
     heartbeat_path = heartbeat_dir / f"{heartbeat_time.strftime('%Y%m%d_%H%M%S')}.json"

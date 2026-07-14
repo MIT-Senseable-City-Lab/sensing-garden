@@ -7,6 +7,8 @@ resumes from where it left off rather than restarting. HTTP session is injectabl
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,32 @@ class UploadError(Exception):
     """Raised when an upload fails."""
 
 
+class TransferStats:
+    """Windowed bandwidth accumulator over successful PUTs (single-shot and
+    multipart parts alike). ``drain`` reports the window since the previous
+    drain and resets it -- the heartbeat is the sole consumer."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._bytes = 0
+        self._seconds = 0.0
+
+    def record(self, nbytes: int, seconds: float) -> None:
+        with self._lock:
+            self._bytes += nbytes
+            self._seconds += seconds
+
+    def drain(self) -> dict:
+        with self._lock:
+            nbytes, seconds = self._bytes, self._seconds
+            self._bytes, self._seconds = 0, 0.0
+        return {
+            "bytes_uploaded": nbytes,
+            "upload_seconds": round(seconds, 3),
+            "avg_mbps": round(nbytes / 1e6 / seconds, 3) if nbytes and seconds > 0 else None,
+        }
+
+
 class Uploader:
     def __init__(
         self,
@@ -54,6 +82,7 @@ class Uploader:
         self.part_size = part_size
         self.connect_timeout = connect_timeout
         self.min_throughput = min_throughput
+        self.transfer_stats = TransferStats()
         self._session = session or (requests.Session() if requests else None)
 
     def _timeout_for(self, nbytes: int) -> float:
@@ -82,6 +111,7 @@ class Uploader:
         if self._session is None:
             raise UploadError("no HTTP session available")
         headers = {"Content-Type": content_type} if content_type else {}
+        started = time.monotonic()
         resp = self._session.put(url, data=data, headers=headers, timeout=self._timeout_for(len(data)))
         status = getattr(resp, "status_code", None)
         # S3 throttling comes back as 503 SlowDown; treat it like a rate limit so
@@ -92,6 +122,7 @@ class Uploader:
         if gone_on_404 and status == 404:
             raise MultipartUploadGoneError("part upload gone")
         resp.raise_for_status()
+        self.transfer_stats.record(len(data), time.monotonic() - started)
         return resp
 
     def _single(self, row: UploadRow, path: Path, content_type: str) -> None:
@@ -133,13 +164,16 @@ class Uploader:
                         break
                     if part_number not in already_done:
                         url = self.presigner.part_url(row.s3_key, upload_id, part_number)
+                        started = time.monotonic()
                         resp = self._put(url, chunk, content_type, gone_on_404=True)
+                        elapsed = time.monotonic() - started
                         etag = resp.headers.get("ETag") or resp.headers.get("etag")
                         if not etag:
                             raise UploadError(f"missing ETag for part {part_number} of {row.s3_key}")
                         self.store.record_part(row.id, part_number, etag)
-                        logger.debug("multipart %s part %d uploaded (%.0f MB)",
-                                     row.s3_key, part_number, len(chunk) / 1e6)
+                        logger.debug("multipart %s part %d uploaded (%.0f MB in %.1fs, %.2f MB/s)",
+                                     row.s3_key, part_number, len(chunk) / 1e6, elapsed,
+                                     len(chunk) / 1e6 / elapsed if elapsed > 0 else 0.0)
                     part_number += 1
 
             parts = self.store.get(row.id).parts

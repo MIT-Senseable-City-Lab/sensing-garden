@@ -14,7 +14,9 @@ import cv2
 from bugcam.edge26.capture import VideoRecorder
 from bugcam.edge26.processing import VideoProcessor, HailoClassifier
 from bugcam.edge26.output import ResultsWriter
+from bugcam.edge26.metrics import PipelineMetrics
 from bugcam.edge26.queue import ClassificationQueue, QueueEntry
+from bugcam.edge26.result_health import audit_result_dir
 from bugcam.log_shipping import DailyLogHandler, ship_existing_logs
 
 # Producer-owned utility dirs under a device dir, not per-timestamp result
@@ -81,6 +83,7 @@ class Pipeline:
         shared_video_queue=None,
         shared_stop_event=None,
         shared_recording_stopped=None,
+        shared_metrics=None,
         on_result_ready=None,
         on_video_ready=None,
     ):
@@ -126,6 +129,15 @@ class Pipeline:
             self.video_queue = queue.Queue()
             self.stop_event = threading.Event()
             self.recording_stopped = threading.Event()
+
+        # Stage timings + event counters surfaced through the heartbeat. Shared
+        # with the detection child (mp-backed) so its timings land in the
+        # parent's snapshots.
+        self.metrics = shared_metrics or PipelineMetrics(ctx=self._mp_ctx)
+        # Process-lifetime marker: the heartbeat's system uptime survives a
+        # systemd restart of the service, so a crash + quick restart would be
+        # invisible without a clock that resets with the process.
+        self._started_monotonic = time.monotonic()
 
         self.recorder_thread = None
         self.detection_thread = None
@@ -225,6 +237,24 @@ class Pipeline:
             bitrate=capture.get("bitrate", 20_000_000),
         )
     
+    def _audit_finalized_dir(self, output_dir: Path) -> None:
+        """Sanity-check a dir at the moment .done lands; one error line if unhealthy.
+
+        A .done marker only proves the completion counter reached the expected
+        count -- not that classification produced a sane result. Single
+        greppable prefix so the log ingestion side can alert on it.
+        """
+        try:
+            problems = audit_result_dir(output_dir)
+        except Exception:
+            logger.warning("result health audit failed for %s", output_dir, exc_info=True)
+            return
+        if problems:
+            self.metrics.unhealthy_results.increment()
+            logger.error("unhealthy result %s: %s", output_dir, "; ".join(problems))
+        else:
+            logger.debug(f"result health OK: {output_dir.name}")
+
     def _notify_result_ready(self, output_dir: Path) -> None:
         # Tell the upload owner (Pollen) a result dir is finalized, if wired.
         if self._on_result_ready is None:
@@ -276,6 +306,7 @@ class Pipeline:
         output_dir = Path(entry.output_dir)
         if not output_dir.exists():
             return  # already published/cleaned: idempotent
+        self._audit_finalized_dir(output_dir)
         self._notify_result_ready(output_dir)
 
     def _is_flick_video(self, path: Path) -> bool:
@@ -616,6 +647,7 @@ class Pipeline:
                 self._last_video_date = video_date
             
             # Run BugSpot detection/tracking (Phases 1-4)
+            detection_started = time.monotonic()
             result = self.processor._pipeline.process_video(
                 str(video_path),
                 extract_crops=True,
@@ -623,9 +655,12 @@ class Pipeline:
                 save_crops_dir=str(output_dir / "crops"),
                 save_composites_dir=str(output_dir / "composites") if self.processor.output_config.get("save_composites", True) else None,
             )
-            
+            detection_seconds = time.monotonic() - detection_started
+            self.metrics.detection.record(detection_seconds)
+
             logger.info(f"  BugSpot: {len(result.confirmed_tracks)} confirmed / "
-                       f"{len(result.track_paths)} total tracks")
+                       f"{len(result.track_paths)} total tracks "
+                       f"({detection_seconds:.1f}s)")
             
             # Collect confirmed tracks whose crops made it to disk. Enqueueing
             # is deferred until .expected_tracks is on disk (below): the
@@ -767,7 +802,8 @@ class Pipeline:
                 # worker (which owns Pollen) via the disk queue, same path as
                 # tracks. Notifying from here would strand the directory --
                 # zero-track dirs have no track entries, so nothing else ever
-                # triggers a main-process publish for them.
+                # triggers a main-process publish for them. The health audit
+                # runs at the consume site (_publish_finalized_result).
                 self.classification_queue.enqueue(
                     entry_type="result",
                     source_device=self.flick_id,
@@ -929,14 +965,17 @@ class Pipeline:
             filepath, entry = result
 
             try:
-                if entry.entry_type == "flik":
-                    self._classify_flik_track(entry)
-                elif entry.entry_type == "video":
+                if entry.entry_type == "video":
                     self._publish_dot_video(entry)
                 elif entry.entry_type == "result":
                     self._publish_finalized_result(entry)
                 else:
-                    self._classify_dot_track(entry)
+                    classify_started = time.monotonic()
+                    if entry.entry_type == "flik":
+                        self._classify_flik_track(entry)
+                    else:
+                        self._classify_dot_track(entry)
+                    self.metrics.classification.record(time.monotonic() - classify_started)
 
                 self.classification_queue.remove(filepath)
 
@@ -1235,6 +1274,7 @@ class Pipeline:
             completed_path.unlink(missing_ok=True)
             detection_meta_path = output_dir / ".detection.json"
             detection_meta_path.unlink(missing_ok=True)
+            self._audit_finalized_dir(output_dir)
             self._notify_result_ready(output_dir)
     
     def _maybe_sweep_stale_directories(self) -> None:
@@ -1311,6 +1351,7 @@ class Pipeline:
                         if age_seconds > stale_threshold_seconds:
                             done_path.write_text("swept=stale\n")
                             logger.info(f"Swept stale directory: {output_dir.name} (no .expected_tracks, marked done)")
+                            self._audit_finalized_dir(output_dir)
                             # Nothing scans for .done markers -- publishing only
                             # happens through this callback, so fire it or the
                             # rescue is a dead letter.
@@ -1347,6 +1388,7 @@ class Pipeline:
                                 )
                             done_path.write_text(f"swept=stale\ncompleted={completed}\nexpected={expected}\n")
                             logger.info(f"Swept stale directory: {output_dir.name} ({completed}/{expected} completed, no .done)")
+                            self._audit_finalized_dir(output_dir)
                             self._notify_result_ready(output_dir)
                             rescued += 1
                         else:
@@ -1415,6 +1457,43 @@ class Pipeline:
         except Exception:
             logger.warning("Startup inventory scan failed", exc_info=True)
 
+    def _worker_states(self) -> list[tuple[str, object, bool]]:
+        """(name, worker, required-to-be-alive) for every started worker.
+
+        Detection exits legitimately once recording has stopped and its queues
+        drain; classification only exits on stop_event, so while the pipeline
+        runs it must be alive."""
+        recording_active = not self.recording_stopped.is_set()
+        return [
+            (name, worker, required)
+            for name, worker, required in (
+                ("recorder", self.recorder_thread, recording_active),
+                ("detection", self.detection_process or self.detection_thread, recording_active),
+                ("classification", self.classification_thread, True),
+            )
+            if worker is not None
+        ]
+
+    def _video_queue_depth(self):
+        try:
+            return self.video_queue.qsize()
+        except NotImplementedError:  # e.g. macOS mp queues
+            return None
+
+    def health_snapshot(self, *, reset: bool = True) -> dict:
+        """Raw pipeline health for the heartbeat: worker liveness, backlog
+        depths, and per-stage timing windows since the last snapshot. The
+        device only measures -- thresholds and alerting live in the backend."""
+        return {
+            "uptime_seconds": round(time.monotonic() - self._started_monotonic, 1),
+            "workers": {name: worker.is_alive() for name, worker, _ in self._worker_states()},
+            "video_queue": self._video_queue_depth(),
+            "classification_queue": self.classification_queue.count(),
+            "detection": self.metrics.detection.snapshot(reset=reset),
+            "classification": self.metrics.classification.snapshot(reset=reset),
+            "unhealthy_results": self.metrics.unhealthy_results.value,
+        }
+
     def _status_loop(self) -> None:
         """Periodic liveness/backlog line in the daily log.
 
@@ -1427,27 +1506,14 @@ class Pipeline:
             try:
                 parts = []
                 dead_unexpectedly = []
-                recording_active = not self.recording_stopped.is_set()
-                for name, worker, required in (
-                    ("recorder", self.recorder_thread, recording_active),
-                    # Detection exits legitimately once recording has stopped
-                    # and its queues drain; classification only exits on
-                    # stop_event, so while we are looping it must be alive.
-                    ("detection", self.detection_process or self.detection_thread, recording_active),
-                    ("classification", self.classification_thread, True),
-                ):
-                    if worker is None:
-                        continue
+                for name, worker, required in self._worker_states():
                     alive = worker.is_alive()
                     parts.append(f"{name}={'alive' if alive else 'DEAD'}")
                     if not alive and required:
                         dead_unexpectedly.append(name)
-                try:
-                    video_backlog = self.video_queue.qsize()
-                except NotImplementedError:
-                    video_backlog = -1
+                video_backlog = self._video_queue_depth()
                 line = (
-                    f"STATUS: {' '.join(parts)} | video_queue={video_backlog} "
+                    f"STATUS: {' '.join(parts)} | video_queue={video_backlog if video_backlog is not None else -1} "
                     f"classify_queue={self.classification_queue.count()}"
                 )
                 if dead_unexpectedly:
@@ -1495,7 +1561,7 @@ class Pipeline:
                 self.detection_process = self._mp_ctx.Process(
                     target=_detection_subprocess_entry,
                     args=(self.config, self.video_queue,
-                          self.stop_event, self.recording_stopped),
+                          self.stop_event, self.recording_stopped, self.metrics),
                     name="DetectionProcess",
                     daemon=False,
                 )
@@ -1609,7 +1675,7 @@ class Pipeline:
             self.classification_thread.join()
 
 
-def _detection_subprocess_entry(config, video_queue, stop_event, recording_stopped):
+def _detection_subprocess_entry(config, video_queue, stop_event, recording_stopped, metrics=None):
     """Spawned-subprocess entrypoint for the detection loop.
 
     Runs in its own interpreter (own GIL) so the GIL-heavy detection work cannot
@@ -1630,6 +1696,7 @@ def _detection_subprocess_entry(config, video_queue, stop_event, recording_stopp
         shared_video_queue=video_queue,
         shared_stop_event=stop_event,
         shared_recording_stopped=recording_stopped,
+        shared_metrics=metrics,
     )
     try:
         detector._detection_worker()
