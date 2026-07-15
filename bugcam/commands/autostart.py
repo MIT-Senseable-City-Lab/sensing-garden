@@ -98,7 +98,7 @@ def enable(
     recording_mode: str = typer.Option("continuous", "--recording-mode", help="Recording mode: continuous or interval"),
     interval: int = typer.Option(10, "--interval", "-i", help="Minutes between recordings"),
     length: int = typer.Option(30, "--length", "-l", help="Chunk duration in seconds"),
-    resolution: str = typer.Option("3840x2160", "--resolution", help="Recording resolution in WxH format"),
+    resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
     fps: int = typer.Option(15, "--fps", help="Recording frame rate"),
     poll_interval: int = typer.Option(3600, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
