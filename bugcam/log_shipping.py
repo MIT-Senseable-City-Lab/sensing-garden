@@ -49,6 +49,12 @@ class DailyLogHandler(logging.StreamHandler):
         return self._log_dir / _dated_name(day)
 
     def _open(self, day: str):
+        # Re-create log_dir on every open, not just at construction: it can be
+        # removed out from under a live handler (e.g. an operator clearing the
+        # output tree without restarting), and an already-open stream keeps
+        # accepting writes silently in that case -- nothing surfaces the loss
+        # until the next rollover needs to open a *new* file.
+        self._log_dir.mkdir(parents=True, exist_ok=True)
         return open(self._path(day), "a", encoding="utf-8")
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -56,14 +62,27 @@ class DailyLogHandler(logging.StreamHandler):
         if day != self._day:
             completed = self._path(self._day)
             self.acquire()
+            rolled = False
             try:
                 old = self.setStream(self._open(day))  # flushes old, installs new
+            except OSError:
+                # Opening the new day's file failed even after recreating the
+                # dir (permission error, disk full, ...). This must never
+                # raise out of emit() -- doing so takes down the caller's own
+                # log call (e.g. picamera2 logging "Camera stopped" mid
+                # stop_recording()) and, since _day stays unset, every other
+                # thread's next log call would hit and re-raise the same
+                # failure too. Report it and keep writing to the old stream;
+                # the next emit() retries the rollover.
+                self.handleError(record)
+            else:
                 if old is not None:
                     old.close()
                 self._day = day
+                rolled = True
             finally:
                 self.release()
-            if self.on_complete is not None:
+            if rolled and self.on_complete is not None:
                 try:
                     self.on_complete(completed)
                 except Exception:  # shipping must never break logging
