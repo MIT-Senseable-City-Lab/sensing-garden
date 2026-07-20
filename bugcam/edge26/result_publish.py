@@ -63,9 +63,21 @@ def publish_result_dir(pollen, results_dir, flick_id: str, dot_ids: list[str]) -
     results_dir = Path(results_dir)
     results_json = results_dir / RESULTS_FILENAME
     if not results_json.exists():
+        logger.error(
+            "publish skipped for %s: no results.json (dir has %d other file(s)) -- "
+            "nothing to enqueue and this can never resolve on its own; needs manual "
+            "cleanup, not retry",
+            results_dir, sum(1 for p in results_dir.iterdir() if p.is_file()) if results_dir.is_dir() else 0,
+        )
         return 0
     device, is_flik, is_dot = _owning_device(results_dir, flick_id, dot_ids)
     if not (is_flik or is_dot):
+        logger.error(
+            "publish skipped for %s: owning device not resolved (parent=%s, "
+            "grandparent=%s) against configured flick_id=%s dot_ids=%s",
+            results_dir, results_dir.parent.name, results_dir.parent.parent.name,
+            flick_id, dot_ids,
+        )
         return 0
     if result_is_empty(results_json):
         shutil.rmtree(results_dir, ignore_errors=True)  # nothing to ship: terminal, drop it
