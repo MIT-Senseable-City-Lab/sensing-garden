@@ -12,6 +12,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from bugcam.capture_report import CAPTURES_SUBDIR, DEFAULT_REPORT_INTERVAL_SECONDS, CaptureLog
 from bugcam.commands.heartbeat import write_heartbeat_snapshot
 from bugcam.pollen.integration import build_pollen
 from bugcam.edge26.result_publish import publish_result_dir
@@ -112,6 +113,38 @@ def _heartbeat_loop(
         except Exception:
             logger.exception("heartbeat emission failed (will retry next interval)")
         stop_event.wait(interval)
+
+
+def _capture_report_loop(
+    capture_log: CaptureLog,
+    flick_id: str,
+    stop_event: threading.Event,
+    pollen: Any = None,
+    interval: float = DEFAULT_REPORT_INTERVAL_SECONDS,
+) -> None:
+    """Seal and ship sampling-effort reports every ``interval`` seconds.
+
+    Reports ride the normal upload path (kind="capture" under the device's data
+    tree), so with --archive-batch each one lands in the per-device tar next to
+    the results it describes. Without pollen, reports accumulate locally, like
+    heartbeats."""
+
+    def _ship(report_path: Path) -> None:
+        if pollen is None:
+            return
+        try:
+            pollen.enqueue_set([report_path], device=flick_id, kind="capture")  # staged; copy done
+            report_path.unlink(missing_ok=True)
+        except Exception:
+            logger.exception(
+                "capture report enqueue failed (kept; recovered next pass): %s", report_path.name
+            )
+
+    # A prior run's unsealed samples and unshipped reports go out first.
+    for leftover in capture_log.recover():
+        _ship(leftover)
+    while not stop_event.wait(interval):
+        _ship(capture_log.rotate())
 
 
 def _environment_loop(
@@ -304,6 +337,12 @@ def _resolve_recording_window(
     return resolved_tz, resolved_window
 
 
+def _resolve_capture_report_interval() -> float:
+    """Sampling-report cadence (config: capture_report_interval). The default
+    matches the default --upload-poll, so one report per archive batch."""
+    return float(load_config().get("capture_report_interval", DEFAULT_REPORT_INTERVAL_SECONDS))
+
+
 @app.callback()
 def run(
     api_url: str | None = typer.Option(None, "--api-url", help="Backend API URL"),
@@ -471,6 +510,14 @@ def run(
             def on_log_complete(path: Path) -> None:  # ship a rolled-over log, then drop our copy
                 pollen_instance.enqueue_set([path], device=settings["flick_id"], kind="log")
                 path.unlink(missing_ok=True)
+
+        # Sampling-effort tracking only makes sense when the camera runs;
+        # injected input (--no-record) is not sampling.
+        capture_log = None
+        if record:
+            capture_log = CaptureLog(
+                output_dir / settings["flick_id"] / CAPTURES_SUBDIR, settings["flick_id"]
+            )
         pipeline = build_pipeline(
             flick_id=settings["flick_id"],
             dot_ids=settings["dot_ids"],
@@ -492,9 +539,11 @@ def run(
             on_result_ready=on_result_ready,
             on_log_complete=on_log_complete,
             on_video_ready=on_video_ready,
+            on_chunk_recorded=capture_log.record_chunk if capture_log else None,
         )
         heartbeat_stop_event = threading.Event()
         environment_stop_event = threading.Event()
+        capture_report_stop_event = threading.Event()
         receiver_stop_event = threading.Event()
         heartbeat_thread = threading.Thread(
             target=_heartbeat_loop,
@@ -523,6 +572,20 @@ def run(
             daemon=True,
             name="BugCamEnvironment",
         )
+        capture_report_thread = None
+        if capture_log is not None:
+            capture_report_thread = threading.Thread(
+                target=_capture_report_loop,
+                args=(
+                    capture_log,
+                    settings["flick_id"],
+                    capture_report_stop_event,
+                    pollen_instance,
+                    _resolve_capture_report_interval(),
+                ),
+                daemon=True,
+                name="BugCamCaptureReport",
+            )
 
         receiver_thread = None
         if with_receiver:
@@ -538,6 +601,8 @@ def run(
         pipeline.start()
         heartbeat_thread.start()
         environment_thread.start()
+        if capture_report_thread:
+            capture_report_thread.start()
         if receiver_thread:
             receiver_thread.start()
             console.print(f"[dim]Receiver[/dim] http://{receiver_host}:{receiver_port}")
@@ -552,12 +617,16 @@ def run(
             heartbeat_stop_event.set()
         if "environment_stop_event" in locals():
             environment_stop_event.set()
+        if "capture_report_stop_event" in locals():
+            capture_report_stop_event.set()
         if "receiver_stop_event" in locals() and receiver_thread:
             receiver_stop_event.set()
         if "heartbeat_thread" in locals():
             heartbeat_thread.join(timeout=1)
         if "environment_thread" in locals():
             environment_thread.join(timeout=1)
+        if "capture_report_thread" in locals() and capture_report_thread:
+            capture_report_thread.join(timeout=1)
         if "receiver_thread" in locals() and receiver_thread:
             receiver_thread.join(timeout=5)
         # Stop Pollen's loop after finishing the current tick; anything still

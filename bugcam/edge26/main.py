@@ -19,11 +19,12 @@ from bugcam.edge26.queue import ClassificationQueue, QueueEntry
 from bugcam.edge26.result_health import audit_result_dir
 from bugcam.log_shipping import DailyLogHandler, ship_existing_logs
 from bugcam.record_window import RecordingWindow, local_video_date, resolve_zone, video_stem_utc_iso
+from bugcam.capture_report import CAPTURES_SUBDIR
 
 # Producer-owned utility dirs under a device dir, not per-timestamp result
 # directories -- the sweep and inventory must never treat them as results
 # (rmtree'ing one races its live writer, e.g. the heartbeat loop).
-NON_RESULT_SUBDIRS = {"heartbeats", "environment", "logs"}
+NON_RESULT_SUBDIRS = {"heartbeats", "environment", "logs", CAPTURES_SUBDIR}
 
 
 def setup_logging(log_dir: Path, *, on_log_complete=None) -> None:
@@ -87,10 +88,12 @@ class Pipeline:
         shared_metrics=None,
         on_result_ready=None,
         on_video_ready=None,
+        on_chunk_recorded=None,
     ):
         self.config = config
         self._on_result_ready = on_result_ready
         self._on_video_ready = on_video_ready
+        self._on_chunk_recorded = on_chunk_recorded
 
         # --- Pipeline mode (resolved early; queue/event types depend on it) ---
         pipeline_config = config.get("pipeline", {})
@@ -252,6 +255,7 @@ class Pipeline:
             record_window=RecordingWindow.from_config(
                 pipeline_cfg.get("record_window"), self.timezone_name
             ),
+            on_chunk_complete=self._on_chunk_recorded,
         )
     
     def _audit_finalized_dir(self, output_dir: Path) -> None:
