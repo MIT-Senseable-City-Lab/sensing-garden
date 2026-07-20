@@ -17,6 +17,7 @@ Architecture (OpenCV fallback):
 """
 
 import cv2
+import os
 import shutil
 import subprocess
 import time
@@ -32,6 +33,17 @@ from bugcam.record_window import RecordingWindow
 
 logger = logging.getLogger(__name__)
 MIN_FREE_DISK_BYTES = 500 * 1024 * 1024
+
+# Failure recovery: after a recording error the camera and encoder are torn
+# down and rebuilt from scratch. If that fails this many times in a row, the
+# picamera2/V4L2 state is assumed unrecoverable and the process exits nonzero
+# so systemd (Restart=on-failure) recreates it with a clean slate.
+MAX_CONSECUTIVE_FAILURES = 3
+RECOVERY_BACKOFF_SECONDS = 5.0
+# Wait between attempts when a chunk is skipped without an error (e.g. low
+# disk) so the continuous loop never retries in a tight spin.
+NO_CHUNK_RETRY_SECONDS = 30.0
+FATAL_EXIT_CODE = 1
 
 
 class VideoRecorder:
@@ -103,6 +115,7 @@ class VideoRecorder:
         self.stop_event = threading.Event()
         self._grabber_stop = False
         self.camera = None
+        self.encoder = None
         self.grabber_thread = None
         
         # Last completed chunk (read by Pipeline after stop)
@@ -336,6 +349,10 @@ class VideoRecorder:
 
         The encoder writes raw H.264 to a temp file, then remuxes to MP4.
         Camera stays running between chunks so there is no re-init delay.
+
+        Raises on camera/encoder failure — the caller owns recovery (teardown,
+        backoff, re-init) and escalation. Returns None only for benign skips
+        (low disk, stop requested before any data was written).
         """
         free_bytes = shutil.disk_usage(self.output_dir).free
         if free_bytes < MIN_FREE_DISK_BYTES:
@@ -361,10 +378,25 @@ class VideoRecorder:
                 time.sleep(0.1)
 
             self.camera.stop_recording()
+        except Exception:
+            # picamera2 opens the output file before starting the encoder, so
+            # a failed start (e.g. encoder still attached from an earlier
+            # failure) litters an empty .h264 on every attempt.
+            try:
+                if temp_h264.exists() and temp_h264.stat().st_size == 0:
+                    temp_h264.unlink()
+            except OSError:
+                pass
+            raise
 
-            if self.stop_event.is_set() and not temp_h264.exists():
-                return None
+        if self.stop_event.is_set() and not temp_h264.exists():
+            return None
 
+        # A good recording already happened above; a remux/rename/stat error
+        # here is a filesystem hiccup (e.g. a flaky SD-card write), not a
+        # camera/encoder fault. Keep it out of the caller's failure counter --
+        # it must not tear down or rebuild a perfectly healthy camera.
+        try:
             if temp_h264.exists():
                 has_ffmpeg = self._check_ffmpeg_available()
                 if has_ffmpeg:
@@ -383,13 +415,16 @@ class VideoRecorder:
                     f"Chunk complete: {chunk_path.name} "
                     f"(hw encoded, {size_mb:.1f}MB)"
                 )
+                self._notify_chunk_complete(chunk_path, recorded_seconds)
                 return chunk_path
-
+        except OSError:
+            logger.error(
+                f"Chunk finalize failed for {chunk_path.name} (disk error, not a camera fault)",
+                exc_info=True,
+            )
             return None
 
-        except Exception as e:
-            logger.error(f"Hardware encoding error: {e}", exc_info=True)
-            return None
+        return None
 
     def _record_chunk(self) -> Optional[Path]:
         """
@@ -490,11 +525,20 @@ class VideoRecorder:
         """Record non-stop, chunk after chunk with no gaps.
 
         Outside the recording window the camera is released and the loop
-        idles; it re-initializes the camera when the window reopens.
+        idles; it re-initializes the camera when the window reopens. Camera
+        errors are recovered in place (teardown, backoff, retry) rather than
+        ending the loop -- see _run_continuous_hardware for why.
         """
         logger.info("Starting continuous recording...")
-        camera_active = False
 
+        if self.use_picamera:
+            # Hardware-accelerated encoding (no frame queue / grabber)
+            self._run_continuous_hardware()
+            return
+
+        # Legacy OpenCV path with frame grabber + queue
+        camera_active = False
+        consecutive_failures = 0
         try:
             while not self.stop_event.is_set():
                 if not self._window_open():
@@ -505,25 +549,66 @@ class VideoRecorder:
                         break
                     continue
 
-                if not camera_active:
-                    self._init_camera()
-                    if not self.use_picamera:
-                        # Legacy OpenCV path with frame grabber + queue
+                try:
+                    if not camera_active:
+                        self._init_camera()
                         self._start_grabber()
-                    camera_active = True
-
-                if self.use_picamera:
-                    # Hardware-accelerated encoding (no frame queue / grabber)
-                    chunk_path = self._record_chunk_hardware()
-                else:
+                        camera_active = True
                     chunk_path = self._record_chunk()
+                except Exception:
+                    if self.stop_event.is_set():
+                        break
+                    consecutive_failures = self._handle_recording_failure(
+                        consecutive_failures, "Recording"
+                    )
+                    camera_active = False
+                    continue
+
                 if chunk_path:
+                    consecutive_failures = 0
                     self.last_chunk_path = chunk_path
                     if self.video_queue:
                         self.video_queue.put(chunk_path)
+                elif not self.stop_event.is_set():
+                    self.stop_event.wait(NO_CHUNK_RETRY_SECONDS)
+        finally:
+            self._cleanup(final=True)
 
-        except Exception as e:
-            logger.error(f"Recording error: {e}", exc_info=True)
+    def _run_continuous_hardware(self) -> None:
+        """Continuous hardware-encoded recording with failure recovery.
+
+        Any camera/encoder error (init or recording) tears the camera down and
+        rebuilds it fresh after a backoff; a failed stop_recording() otherwise
+        leaves the encoder attached and every retry would throw while littering
+        empty files. After MAX_CONSECUTIVE_FAILURES the process exits nonzero
+        so systemd restarts it — the library state itself is bad at that point.
+        """
+        consecutive_failures = 0
+        try:
+            while not self.stop_event.is_set():
+                if not self._window_open(): 
+                    self._cleanup(final=False)
+                    if not self._wait_for_window():
+                        break
+                try:
+                    if self.camera is None:
+                        self._init_camera()
+                    chunk_path = self._record_chunk_hardware()
+                except Exception:
+                    if self.stop_event.is_set():
+                        break
+                    consecutive_failures = self._handle_recording_failure(
+                        consecutive_failures, "Hardware recording"
+                    )
+                    continue
+
+                if chunk_path:
+                    consecutive_failures = 0
+                    self.last_chunk_path = chunk_path
+                    if self.video_queue:
+                        self.video_queue.put(chunk_path)
+                elif not self.stop_event.is_set():
+                    self.stop_event.wait(NO_CHUNK_RETRY_SECONDS)
         finally:
             self._cleanup(final=True)
     
@@ -533,7 +618,8 @@ class VideoRecorder:
         
         logger.info(f"Starting interval recording "
                     f"({self.chunk_duration}s every {self.interval_minutes} min)...")
-        
+
+        consecutive_failures = 0
         try:
             while not self.stop_event.is_set():
                 if not self._wait_for_window():
@@ -541,22 +627,30 @@ class VideoRecorder:
 
                 chunk_start = time.time()
 
-                # Init camera, record one chunk, release camera
-                self._init_camera()
-                
-                if self.use_picamera:
-                    chunk_path = self._record_chunk_hardware()
+                try:
+                    # Init camera, record one chunk, release camera
+                    self._init_camera()
+
+                    if self.use_picamera:
+                        chunk_path = self._record_chunk_hardware()
+                    else:
+                        self._start_grabber()
+                        chunk_path = self._record_chunk()
+                except Exception:
+                    if self.stop_event.is_set():
+                        break
+                    consecutive_failures = self._handle_recording_failure(
+                        consecutive_failures, "Recording iteration"
+                    )
                 else:
-                    self._start_grabber()
-                    chunk_path = self._record_chunk()
-                
-                if chunk_path:
-                    self.last_chunk_path = chunk_path
-                    if self.video_queue:
-                        self.video_queue.put(chunk_path)
-                
-                self._cleanup()
-                
+                    if chunk_path:
+                        consecutive_failures = 0
+                        self.last_chunk_path = chunk_path
+                        if self.video_queue:
+                            self.video_queue.put(chunk_path)
+
+                    self._cleanup()
+
                 if self.stop_event.is_set():
                     break
                 
@@ -576,6 +670,61 @@ class VideoRecorder:
         finally:
             self._cleanup(final=True)
     
+    def _handle_recording_failure(self, consecutive_failures: int, context: str) -> int:
+        """Log a recording failure, escalate to a fatal process exit past the
+        threshold, and tear down for a fresh retry. Shared by every recording
+        loop so the counter/backoff/escalation policy lives in one place.
+
+        Must be called from within the except block for the failure so
+        exc_info=True captures it. Returns the updated failure count.
+        """
+        consecutive_failures += 1
+        logger.error(
+            f"{context} failed (consecutive failure "
+            f"{consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})",
+            exc_info=True,
+        )
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            self._fatal_exit()
+        self._teardown_for_recovery()
+        return consecutive_failures
+
+    def _teardown_for_recovery(self) -> None:
+        """Best-effort camera/encoder teardown after a failure. Never raises.
+
+        stop_recording() detaches an encoder a failed chunk may have left
+        running — without this, every later start_recording() throws. The
+        camera object is then discarded so the next attempt builds a fresh
+        Picamera2 and H264Encoder instead of reusing possibly-bad state.
+        """
+        if self.use_picamera and self.camera is not None:
+            try:
+                self.camera.stop_recording()
+                logger.info("Released encoder left attached by the failed chunk")
+            except Exception:
+                pass
+        try:
+            self._cleanup()
+        except Exception as e:
+            logger.warning(f"Camera release during recovery failed: {e}")
+            self.camera = None
+        self.encoder = None
+        self.stop_event.wait(RECOVERY_BACKOFF_SECONDS)
+
+    def _fatal_exit(self) -> None:
+        """Exit the whole process so the service manager restarts it clean."""
+        logger.critical(
+            "Camera/encoder unrecoverable after %d consecutive failures; "
+            "exiting so systemd can restart the process",
+            MAX_CONSECUTIVE_FAILURES,
+        )
+        for handler in logging.getLogger().handlers:
+            try:
+                handler.flush()
+            except Exception:
+                pass
+        os._exit(FATAL_EXIT_CODE)
+
     def _start_grabber(self) -> None:
         """Start the frame grabber thread."""
         self.grabber_thread = threading.Thread(
