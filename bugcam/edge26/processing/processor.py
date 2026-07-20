@@ -475,11 +475,13 @@ class VideoProcessor:
         return filename_stem, None, None
 
     def _parse_timestamp(self, filename_stem: str) -> Optional[datetime]:
-        """Parse timestamp from video filename."""
+        """Parse timestamp from video filename (recorder stamps stems in UTC)."""
         try:
             _, date_str, time_str = self._parse_video_identity(filename_stem)
             if date_str and time_str:
-                return datetime.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M%S")
+                return datetime.strptime(
+                    f"{date_str}_{time_str}", "%Y%m%d_%H%M%S"
+                ).replace(tzinfo=timezone.utc)
         except (ValueError, IndexError):
             pass
         return None

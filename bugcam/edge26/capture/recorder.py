@@ -25,8 +25,10 @@ import threading
 import logging
 import numpy as np
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Tuple
+
+from bugcam.record_window import RecordingWindow
 
 logger = logging.getLogger(__name__)
 MIN_FREE_DISK_BYTES = 500 * 1024 * 1024
@@ -54,6 +56,7 @@ class VideoRecorder:
         recording_mode: str = "continuous",
         interval_minutes: float = 5,
         bitrate: int = 20_000_000,
+        record_window: Optional[RecordingWindow] = None,
     ):
         """
         Initialize the video recorder.
@@ -70,6 +73,8 @@ class VideoRecorder:
             recording_mode: "continuous" (no gaps) or "interval" (record every N minutes)
             interval_minutes: Minutes between start of recordings (interval mode only)
             bitrate: H.264 encoder bitrate in bps (picamera2 hardware encoding only)
+            record_window: Daily local-time window outside which no chunks are
+                recorded (camera released, loop idles); None records around the clock
         """
         self.output_dir = Path(output_dir)
         self.fps = fps
@@ -82,6 +87,7 @@ class VideoRecorder:
         self.recording_mode = recording_mode
         self.interval_minutes = interval_minutes
         self.bitrate = bitrate
+        self.record_window = record_window
         
         # Resolution is requested from config and confirmed during init.
         self.resolution: Tuple[int, int] = (0, 0)
@@ -111,6 +117,8 @@ class VideoRecorder:
         logger.info(f"  Requested resolution: {resolution[0]}x{resolution[1]}")
         logger.info(f"  Recording mode: {recording_mode}"
                     + (f", interval: {interval_minutes} min" if recording_mode == "interval" else ""))
+        if record_window is not None:
+            logger.info(f"  Recording window: {record_window.describe()}")
     
     def _init_camera_opencv(self) -> None:
         """Initialize camera using OpenCV and read resolution."""
@@ -273,9 +281,11 @@ class VideoRecorder:
         Generate a unique path for a new video chunk.
         
         Filename format: {device_id}_{YYYYMMDD}_{HHMMSS}_{ffffff}.mp4
-        Timestamp reflects when recording started (real-time).
+        Timestamp reflects when recording started, in UTC: the stem is the
+        pipeline's source of observation time (result dir names, S3 keys,
+        video_timestamp), so it must be unambiguous across deployment sites.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
         filename = f"{self.device_id}_{timestamp}.mp4"
         return self.output_dir / filename
@@ -454,31 +464,64 @@ class VideoRecorder:
         else:
             self._start_continuous()
     
+    def _window_open(self) -> bool:
+        """Whether the recording window currently allows recording."""
+        return self.record_window is None or self.record_window.is_open()
+
+    def _wait_for_window(self) -> bool:
+        """Block until the recording window opens or a stop is requested.
+
+        Returns True when recording may proceed, False when stopping.
+        """
+        if self._window_open():
+            return not self.stop_event.is_set()
+        logger.info(
+            f"Outside recording window ({self.record_window.describe()}); "
+            "recording paused"
+        )
+        while not self.stop_event.is_set():
+            if self._window_open():
+                logger.info("Recording window open; resuming recording")
+                return True
+            time.sleep(1.0)
+        return False
+
     def _start_continuous(self) -> None:
-        """Record non-stop, chunk after chunk with no gaps."""
+        """Record non-stop, chunk after chunk with no gaps.
+
+        Outside the recording window the camera is released and the loop
+        idles; it re-initializes the camera when the window reopens.
+        """
         logger.info("Starting continuous recording...")
-        
+        camera_active = False
+
         try:
-            self._init_camera()
-            
-            if self.use_picamera:
-                # Hardware-accelerated encoding (no frame queue / grabber)
-                while not self.stop_event.is_set():
+            while not self.stop_event.is_set():
+                if not self._window_open():
+                    if camera_active:
+                        self._cleanup()
+                        camera_active = False
+                    if not self._wait_for_window():
+                        break
+                    continue
+
+                if not camera_active:
+                    self._init_camera()
+                    if not self.use_picamera:
+                        # Legacy OpenCV path with frame grabber + queue
+                        self._start_grabber()
+                    camera_active = True
+
+                if self.use_picamera:
+                    # Hardware-accelerated encoding (no frame queue / grabber)
                     chunk_path = self._record_chunk_hardware()
-                    if chunk_path:
-                        self.last_chunk_path = chunk_path
-                        if self.video_queue:
-                            self.video_queue.put(chunk_path)
-            else:
-                # Legacy OpenCV path with frame grabber + queue
-                self._start_grabber()
-                while not self.stop_event.is_set():
+                else:
                     chunk_path = self._record_chunk()
-                    if chunk_path:
-                        self.last_chunk_path = chunk_path
-                        if self.video_queue:
-                            self.video_queue.put(chunk_path)
-                    
+                if chunk_path:
+                    self.last_chunk_path = chunk_path
+                    if self.video_queue:
+                        self.video_queue.put(chunk_path)
+
         except Exception as e:
             logger.error(f"Recording error: {e}", exc_info=True)
         finally:
@@ -493,8 +536,11 @@ class VideoRecorder:
         
         try:
             while not self.stop_event.is_set():
+                if not self._wait_for_window():
+                    break
+
                 chunk_start = time.time()
-                
+
                 # Init camera, record one chunk, release camera
                 self._init_camera()
                 

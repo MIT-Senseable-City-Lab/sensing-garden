@@ -102,10 +102,12 @@ def build_heartbeat_payload(
     dot_ids: list[str],
     *,
     timestamp: datetime | None = None,
+    timezone_name: str | None = None,
     pipeline_status: dict | None = None,
     upload_status: dict | None = None,
 ) -> dict[str, object]:
-    """Build the heartbeat payload.
+    """Build the heartbeat payload. Timestamps are UTC; timezone_name is the
+    device's configured IANA zone, shipped as device info.
 
     ``pipeline_status`` / ``upload_status`` are supplied by ``bugcam run``
     (pipeline health snapshot, Pollen upload stats); the standalone heartbeat
@@ -115,6 +117,7 @@ def build_heartbeat_payload(
     payload: dict[str, object] = {
         "device_id": flick_id,
         "timestamp": heartbeat_time.isoformat(),
+        "timezone": timezone_name,
         "cpu_temperature_celsius": _read_cpu_temperature_celsius(),
         "storage_free_bytes": disk_usage.free,
         "storage_total_bytes": disk_usage.total,
@@ -136,6 +139,7 @@ def write_heartbeat_snapshot(
     input_dir: Path,
     dot_ids: list[str],
     *,
+    timezone_name: str | None = None,
     pipeline_status: dict | None = None,
     upload_status: dict | None = None,
 ) -> Path:
@@ -144,6 +148,7 @@ def write_heartbeat_snapshot(
     payload = build_heartbeat_payload(
         flick_id, input_dir, dot_ids,
         timestamp=heartbeat_time,
+        timezone_name=timezone_name,
         pipeline_status=pipeline_status,
         upload_status=upload_status,
     )
@@ -193,5 +198,6 @@ def heartbeat(
         flick_id=settings["flick_id"],
         input_dir=input_dir,
         dot_ids=settings["dot_ids"],
+        timezone_name=str(load_config().get("timezone") or "") or None,
     )
     console.print(f"[green]Wrote[/green] {heartbeat_path}")
