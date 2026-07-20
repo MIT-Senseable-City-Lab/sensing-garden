@@ -36,10 +36,57 @@ from bugcam.receiver.tracker import PendingTrackTracker
 
 app = typer.Typer(help="Record, process, upload, and emit heartbeats", invoke_without_command=True, no_args_is_help=False)
 console = Console()
-HEARTBEAT_INTERVAL_SECONDS = 60
+HEARTBEAT_INTERVAL_SECONDS = 300
 ENVIRONMENT_INTERVAL_SECONDS = 60
 PID_FILE_PATH = get_state_dir() / "bugcam.pid"
 logger = logging.getLogger(__name__)
+
+
+def _emit_heartbeat(
+    flick_id: str,
+    input_dir: Path,
+    output_dir: Path,
+    dot_ids: list[str],
+    pollen: Any = None,
+    pipeline: Any = None,
+) -> None:
+    """Write one enriched heartbeat and ship it.
+
+    Enrichment (pipeline health, upload stats) is best-effort -- a broken
+    section must never cost the heartbeat itself. Delivery is an immediate
+    PUT so heartbeats never wait on the spool/batch cadence, falling back to
+    the durable queue (priority kind, never archived) when the PUT fails."""
+    pipeline_status = upload_status = None
+    if pipeline is not None:
+        try:
+            pipeline_status = pipeline.health_snapshot()
+        except Exception:
+            logger.exception("pipeline health snapshot failed; heartbeat continues without it")
+    if pollen is not None:
+        try:
+            upload_status = pollen.stats()
+        except Exception:
+            logger.exception("upload stats failed; heartbeat continues without them")
+    path = write_heartbeat_snapshot(
+        output_dir, flick_id, input_dir, dot_ids,
+        pipeline_status=pipeline_status, upload_status=upload_status,
+    )
+    if pollen is None:
+        return
+    try:
+        pollen.upload_path_now(path)
+        path.unlink(missing_ok=True)
+        return
+    except Exception as exc:
+        logger.warning(
+            "immediate heartbeat upload failed (%s: %s); spooling %s",
+            type(exc).__name__, exc, path.name,
+        )
+    try:
+        pollen.enqueue_set([path], device=flick_id, kind="heartbeat")  # staged; our copy is done
+        path.unlink(missing_ok=True)
+    except Exception:
+        logger.exception("heartbeat enqueue failed (will retry next interval): %s", path.name)
 
 
 def _heartbeat_loop(
@@ -50,17 +97,16 @@ def _heartbeat_loop(
     stop_event: threading.Event,
     pollen: Any = None,
     interval: float = HEARTBEAT_INTERVAL_SECONDS,
+    pipeline: Any = None,
 ) -> None:
     while not stop_event.is_set():
-        path = write_heartbeat_snapshot(output_dir, flick_id, input_dir, dot_ids)
-        if pollen is not None:
-            # Heartbeats are telemetry, not durable artifacts; shipped through the
-            # spooler for now, though file-vs-real-time-POST delivery is still open.
-            try:
-                pollen.enqueue_set([path], device=flick_id, kind="heartbeat")  # staged; our copy is done
-                path.unlink(missing_ok=True)
-            except Exception:
-                logger.exception("heartbeat enqueue failed (will retry next interval): %s", path.name)
+        try:
+            _emit_heartbeat(
+                flick_id, input_dir, output_dir, dot_ids,
+                pollen=pollen, pipeline=pipeline,
+            )
+        except Exception:
+            logger.exception("heartbeat emission failed (will retry next interval)")
         stop_event.wait(interval)
 
 
@@ -257,7 +303,7 @@ def run(
     bitrate: int = typer.Option(20_000_000, "--bitrate", help="H.264 encoder bitrate in bps (hardware encoding only)"),
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
     upload_poll: int = typer.Option(3600, "--upload-poll", help="Seconds between upload polls; with --archive-batch this is also the batch cadence (one tar per device per poll) (config: upload_poll_interval)"),
-    heartbeat_interval: float | None = typer.Option(None, "--heartbeat-interval", help="Seconds between heartbeat snapshots (config: heartbeat_interval, default 60)"),
+    heartbeat_interval: float | None = typer.Option(None, "--heartbeat-interval", help="Seconds between heartbeat snapshots (config: heartbeat_interval, default 300)"),
     with_receiver: bool = typer.Option(
         True,
         "--with-receiver/--no-receiver",
@@ -294,7 +340,7 @@ def run(
              "not cp: a file mid-copy can be picked up truncated)",
     ),
 ) -> None:
-    """Run recording, processing, uploading, and one-minute heartbeat emission."""
+    """Run recording, processing, uploading, and periodic heartbeat emission."""
     if mode not in {"continuous", "interval"}:
         raise typer.BadParameter("mode must be 'continuous' or 'interval'")
     try:
@@ -412,6 +458,7 @@ def run(
                 heartbeat_stop_event,
                 pollen_instance,
                 resolved_heartbeat_interval,
+                pipeline,
             ),
             daemon=True,
             name="BugCamHeartbeat",
