@@ -34,19 +34,27 @@ class FakePollen:
     def stats(self):
         return {"pending": 7}
 
+    def video_stats(self):
+        return {"uploaded_total": 5}
+
 
 class FakePipeline:
     def health_snapshot(self):
         return {"video_queue": 3}
 
 
-def _emit(tmp_path, pollen, pipeline=None):
+class FakeCaptureLog:
+    captured_total = 8
+
+
+def _emit(tmp_path, pollen, pipeline=None, capture_log=None):
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
     input_dir.mkdir(exist_ok=True)
     output_dir.mkdir(exist_ok=True)
     run_mod._emit_heartbeat(
-        "flick01", input_dir, output_dir, ["dot01"], pollen=pollen, pipeline=pipeline
+        "flick01", input_dir, output_dir, ["dot01"],
+        pollen=pollen, pipeline=pipeline, capture_log=capture_log,
     )
     return list((output_dir / "flick01" / "heartbeats").glob("*.json"))
 
@@ -84,3 +92,19 @@ def test_without_pollen_keeps_local_snapshot(tmp_path):
     payload = json.loads(leftover[0].read_text())
     assert "incoming" in payload
     assert "upload" not in payload
+
+
+def test_videos_section_included_with_pollen_and_capture_log(tmp_path):
+    pollen = FakePollen()
+    leftover = _emit(tmp_path, pollen, capture_log=FakeCaptureLog())
+    assert leftover == []  # dropped after successful immediate PUT
+
+    payload = pollen.immediate[0]
+    assert payload["videos"] == {"captured_total": 8, "uploaded_total": 5}
+
+
+def test_videos_section_absent_without_capture_log(tmp_path):
+    pollen = FakePollen()
+    leftover = _emit(tmp_path, pollen)
+    assert "videos" not in pollen.immediate[0]
+    assert leftover == []

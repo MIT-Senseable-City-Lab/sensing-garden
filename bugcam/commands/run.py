@@ -52,14 +52,16 @@ def _emit_heartbeat(
     pollen: Any = None,
     pipeline: Any = None,
     timezone_name: str | None = None,
+    capture_log: Any = None,
 ) -> None:
     """Write one enriched heartbeat and ship it.
 
-    Enrichment (pipeline health, upload stats) is best-effort -- a broken
-    section must never cost the heartbeat itself. Delivery is an immediate
-    PUT so heartbeats never wait on the spool/batch cadence, falling back to
-    the durable queue (priority kind, never archived) when the PUT fails."""
-    pipeline_status = upload_status = None
+    Enrichment (pipeline health, upload stats, video captured/uploaded counts)
+    is best-effort -- a broken section must never cost the heartbeat itself.
+    Delivery is an immediate PUT so heartbeats never wait on the spool/batch
+    cadence, falling back to the durable queue (priority kind, never archived)
+    when the PUT fails."""
+    pipeline_status = upload_status = video_status = None
     if pipeline is not None:
         try:
             pipeline_status = pipeline.health_snapshot()
@@ -70,10 +72,15 @@ def _emit_heartbeat(
             upload_status = pollen.stats()
         except Exception:
             logger.exception("upload stats failed; heartbeat continues without them")
+    if pollen is not None and capture_log is not None:
+        try:
+            video_status = {"captured_total": capture_log.captured_total, **pollen.video_stats()}
+        except Exception:
+            logger.exception("video stats failed; heartbeat continues without them")
     path = write_heartbeat_snapshot(
         output_dir, flick_id, input_dir, dot_ids,
         timezone_name=timezone_name,
-        pipeline_status=pipeline_status, upload_status=upload_status,
+        pipeline_status=pipeline_status, upload_status=upload_status, video_status=video_status,
     )
     if pollen is None:
         return
@@ -103,12 +110,14 @@ def _heartbeat_loop(
     interval: float = HEARTBEAT_INTERVAL_SECONDS,
     timezone_name: str | None = None,
     pipeline: Any = None,
+    capture_log: Any = None,
 ) -> None:
     while not stop_event.is_set():
         try:
             _emit_heartbeat(
                 flick_id, input_dir, output_dir, dot_ids,
                 pollen=pollen, pipeline=pipeline, timezone_name=timezone_name,
+                capture_log=capture_log,
             )
         except Exception:
             logger.exception("heartbeat emission failed (will retry next interval)")
@@ -557,6 +566,7 @@ def run(
                 resolved_heartbeat_interval,
                 resolved_timezone,
                 pipeline,
+                capture_log,
             ),
             daemon=True,
             name="BugCamHeartbeat",

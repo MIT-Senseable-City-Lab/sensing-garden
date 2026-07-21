@@ -90,6 +90,8 @@ class Pollen:
         self._source = enqueue_source  # called each tick to enqueue ready outputs
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._counter_lock = threading.Lock()
+        self._videos_uploaded_total = 0
 
     # ------------------------------------------------------------------ #
     # enqueue
@@ -189,6 +191,14 @@ class Pollen:
         if transfer is not None:
             stats.update(transfer.drain())
         return stats
+
+    def video_stats(self) -> dict:
+        """Lifetime count of video-kind uploads, for the heartbeat's video-backlog
+        check (captured vs. uploaded/cleared) -- a separate top-level heartbeat
+        section from ``stats()``'s generic upload backlog, so a video-specific
+        problem (e.g. a false-trigger storm) shows up on its own."""
+        with self._counter_lock:
+            return {"uploaded_total": self._videos_uploaded_total}
 
     def upload_path_now(self, path: Path | str) -> None:
         """Immediate presigned PUT of a small producer file at its derived key,
@@ -322,6 +332,9 @@ class Pollen:
             self.uploader.upload(row)
             elapsed = time.monotonic() - started
             self.store.mark_uploaded(row.id)
+            if row.kind == "video":
+                with self._counter_lock:
+                    self._videos_uploaded_total += 1
             if row.size and elapsed > 0:
                 logger.info("uploaded %s (kind=%s, %.1f MB in %.1fs, %.2f MB/s)",
                             row.s3_key, row.kind, row.size / 1e6, elapsed, row.size / 1e6 / elapsed)

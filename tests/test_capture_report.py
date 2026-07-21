@@ -73,6 +73,15 @@ class TestCaptureLogRecord:
         assert entry["size_bytes"] is None
         assert entry["duration_seconds"] == 12.5
 
+    def test_captured_total_counts_every_chunk_and_survives_rotate(self, tmp_path):
+        log = CaptureLog(tmp_path / "captures", "edge26", clock=_clock(_dt(10), _dt(11)))
+        assert log.captured_total == 0
+        log.record_chunk(_chunk(tmp_path, "a.mp4"), 60.0)
+        log.record_chunk(_chunk(tmp_path, "b.mp4"), 60.0)
+        assert log.captured_total == 2
+        log.rotate()  # rotate empties current.jsonl; the lifetime counter must not reset
+        assert log.captured_total == 2
+
 
 class TestCaptureLogRotate:
     def test_rotate_seals_period_report(self, tmp_path):

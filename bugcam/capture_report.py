@@ -44,10 +44,20 @@ class CaptureLog:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = threading.Lock()
         self._period_start = self._clock()
+        self._chunks_captured_total = 0
 
     @property
     def _current_path(self) -> Path:
         return self.captures_dir / CURRENT_FILENAME
+
+    @property
+    def captured_total(self) -> int:
+        """Lifetime count of completed chunks this process has seen -- for the
+        heartbeat's video-backlog check (captured vs. uploaded). Process-lifetime,
+        like uptime_seconds: it does not survive a restart, and the backend
+        already treats a drop in a lifetime counter as a reboot, not negative usage."""
+        with self._lock:
+            return self._chunks_captured_total
 
     def record_chunk(self, video_path: Path, duration_seconds: float) -> None:
         """Append one completed chunk. Never raises past logging: a sampling-log
@@ -65,6 +75,10 @@ class CaptureLog:
         }
         try:
             with self._lock:
+                # Counted here, ahead of the write, so it reflects a chunk having
+                # been captured (the caller already has the file) regardless of
+                # whether the sampling-log append itself succeeds below.
+                self._chunks_captured_total += 1
                 self.captures_dir.mkdir(parents=True, exist_ok=True)
                 with open(self._current_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry) + "\n")

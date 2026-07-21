@@ -105,13 +105,15 @@ def build_heartbeat_payload(
     timezone_name: str | None = None,
     pipeline_status: dict | None = None,
     upload_status: dict | None = None,
+    video_status: dict | None = None,
 ) -> dict[str, object]:
     """Build the heartbeat payload. Timestamps are UTC; timezone_name is the
     device's configured IANA zone, shipped as device info.
 
-    ``pipeline_status`` / ``upload_status`` are supplied by ``bugcam run``
-    (pipeline health snapshot, Pollen upload stats); the standalone heartbeat
-    command has neither and omits those sections."""
+    ``pipeline_status`` / ``upload_status`` / ``video_status`` are supplied by
+    ``bugcam run`` (pipeline health snapshot, Pollen upload stats, video
+    captured/uploaded counts); the standalone heartbeat command has none and
+    omits those sections."""
     heartbeat_time = timestamp or datetime.now(timezone.utc)
     disk_usage = shutil.disk_usage(input_dir)
     payload: dict[str, object] = {
@@ -130,6 +132,8 @@ def build_heartbeat_payload(
         payload["pipeline"] = pipeline_status
     if upload_status is not None:
         payload["upload"] = upload_status
+    if video_status is not None:
+        payload["videos"] = video_status
     return payload
 
 
@@ -142,6 +146,7 @@ def write_heartbeat_snapshot(
     timezone_name: str | None = None,
     pipeline_status: dict | None = None,
     upload_status: dict | None = None,
+    video_status: dict | None = None,
 ) -> Path:
     """Write a heartbeat JSON document to the output directory."""
     heartbeat_time = datetime.now(timezone.utc)
@@ -151,6 +156,7 @@ def write_heartbeat_snapshot(
         timezone_name=timezone_name,
         pipeline_status=pipeline_status,
         upload_status=upload_status,
+        video_status=video_status,
     )
     heartbeat_dir = output_dir / flick_id / "heartbeats"
     heartbeat_dir.mkdir(parents=True, exist_ok=True)

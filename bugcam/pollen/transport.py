@@ -41,26 +41,33 @@ class UploadError(Exception):
 class TransferStats:
     """Windowed bandwidth accumulator over successful PUTs (single-shot and
     multipart parts alike). ``drain`` reports the window since the previous
-    drain and resets it -- the heartbeat is the sole consumer."""
+    drain and resets it -- the heartbeat is the sole consumer. ``bytes_uploaded_total``
+    is a separate lifetime counter that ``drain`` never resets, for the backend's
+    cumulative daily/monthly data-cap tracking (process-lifetime, like uptime_seconds --
+    it does not survive a restart, and the backend already treats a drop as one)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._bytes = 0
         self._seconds = 0.0
+        self._lifetime_bytes = 0
 
     def record(self, nbytes: int, seconds: float) -> None:
         with self._lock:
             self._bytes += nbytes
             self._seconds += seconds
+            self._lifetime_bytes += nbytes
 
     def drain(self) -> dict:
         with self._lock:
             nbytes, seconds = self._bytes, self._seconds
             self._bytes, self._seconds = 0, 0.0
+            lifetime_bytes = self._lifetime_bytes
         return {
             "bytes_uploaded": nbytes,
             "upload_seconds": round(seconds, 3),
             "avg_mbps": round(nbytes / 1e6 / seconds, 3) if nbytes and seconds > 0 else None,
+            "bytes_uploaded_total": lifetime_bytes,
         }
 
 

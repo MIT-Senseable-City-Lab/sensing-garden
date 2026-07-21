@@ -77,6 +77,16 @@ class TestTransferStats:
         assert empty["bytes_uploaded"] == 0
         assert empty["avg_mbps"] is None
 
+    def test_bytes_uploaded_total_is_a_lifetime_counter_drain_does_not_reset(self):
+        stats = TransferStats()
+        stats.record(1_500_000, 1.0)
+        assert stats.drain()["bytes_uploaded_total"] == 1_500_000
+
+        stats.record(500_000, 1.0)
+        window = stats.drain()
+        assert window["bytes_uploaded"] == 500_000  # windowed count did reset
+        assert window["bytes_uploaded_total"] == 2_000_000  # lifetime count did not
+
     def test_uploader_put_records_transfer(self):
         uploader = Uploader(FakePresigner(), store=None, session=FakeSession())
         uploader.upload_bytes("v1/flick01/heartbeats/h.json", b"abcdef")
@@ -114,6 +124,7 @@ class TestStats:
         assert stats["pending"] == 0
         assert stats["pending_bytes"] == 0
         assert stats["bytes_uploaded"] == 1_000_000
+        assert stats["bytes_uploaded_total"] == 1_000_000
         assert stats["avg_mbps"] == pytest.approx(1.0)
 
     def test_stats_tolerates_uploader_without_transfer_stats(self, tmp_path):
@@ -121,6 +132,35 @@ class TestStats:
         stats = pol.stats()
         assert stats["pending"] == 0
         assert "bytes_uploaded" not in stats
+
+
+class TestVideoStats:
+    def test_video_stats_counts_only_video_kind_uploads(self, tmp_path):
+        cfg = _config(tmp_path)
+        pol = Pollen(cfg, uploader=FakeUploader())
+        assert pol.video_stats() == {"uploaded_total": 0}
+
+        video = _write(cfg.output_root, "flick1/a.mp4")
+        result = _write(cfg.output_root, "flick1/b/results.json")
+        pol.enqueue_set([video], device="flick1", kind="video")
+        pol.enqueue_set([result], device="flick1", kind="result")
+
+        pol._tick()
+
+        assert pol.video_stats() == {"uploaded_total": 1}
+
+    def test_video_stats_survives_multiple_ticks(self, tmp_path):
+        cfg = _config(tmp_path)
+        pol = Pollen(cfg, uploader=FakeUploader())
+        v1 = _write(cfg.output_root, "flick1/a.mp4")
+        pol.enqueue_set([v1], device="flick1", kind="video")
+        pol._tick()
+
+        v2 = _write(cfg.output_root, "flick1/b.mp4")
+        pol.enqueue_set([v2], device="flick1", kind="video")
+        pol._tick()
+
+        assert pol.video_stats() == {"uploaded_total": 2}
 
 
 class TestHeartbeatPriorityLane:

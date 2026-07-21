@@ -115,12 +115,15 @@ class TestOptionalSections:
         payload = _payload(tmp_path)
         assert "pipeline" not in payload
         assert "upload" not in payload
+        assert "videos" not in payload
 
     def test_included_when_supplied(self, tmp_path):
         payload = _payload(
             tmp_path,
             pipeline_status={"video_queue": 3},
             upload_status={"pending": 7},
+            video_status={"captured_total": 12, "uploaded_total": 10},
         )
         assert payload["pipeline"] == {"video_queue": 3}
         assert payload["upload"] == {"pending": 7}
+        assert payload["videos"] == {"captured_total": 12, "uploaded_total": 10}
