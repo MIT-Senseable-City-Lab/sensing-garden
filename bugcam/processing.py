@@ -176,6 +176,7 @@ def build_edge26_config(
     detection_config_path: Path | None = None,
     timezone_name: str | None = None,
     record_window: str | None = None,
+    video_sample_interval: int = 10,
 ) -> dict[str, Any]:
     """Build the edge26 pipeline config from BugCam-owned settings."""
     results_dir = Path(output_dir)
@@ -210,6 +211,7 @@ def build_edge26_config(
             "recording_mode": recording_mode,
             "recording_interval_minutes": recording_interval,
             "record_window": record_window,
+            "video_sample_interval": video_sample_interval,
         },
         "capture": {
             "camera_index": 0,

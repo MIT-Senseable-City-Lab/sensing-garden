@@ -46,6 +46,7 @@ def build_pipeline(
     detection_config_path: Path | None = None,
     timezone_name: str | None = None,
     record_window: str | None = None,
+    video_sample_interval: int = 10,
     on_result_ready=None,
     on_log_complete=None,
     on_video_ready=None,
@@ -77,6 +78,7 @@ def build_pipeline(
         detection_config_path=detection_config_path,
         timezone_name=timezone_name,
         record_window=record_window,
+        video_sample_interval=video_sample_interval,
     )
     setup_logging(Path(config["paths"]["logs_dir"]), on_log_complete=on_log_complete)
     return Pipeline(

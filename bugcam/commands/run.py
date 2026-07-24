@@ -39,6 +39,7 @@ from bugcam.receiver.tracker import PendingTrackTracker
 app = typer.Typer(help="Record, process, upload, and emit heartbeats", invoke_without_command=True, no_args_is_help=False)
 console = Console()
 HEARTBEAT_INTERVAL_SECONDS = 300
+DEFAULT_VIDEO_SAMPLE_INTERVAL = 10
 ENVIRONMENT_INTERVAL_SECONDS = 60
 PID_FILE_PATH = get_state_dir() / "bugcam.pid"
 logger = logging.getLogger(__name__)
@@ -343,6 +344,18 @@ def _resolve_capture_report_interval() -> float:
     return float(load_config().get("capture_report_interval", DEFAULT_REPORT_INTERVAL_SECONDS))
 
 
+def _resolve_video_sample_interval(video_sample_interval: int | None) -> int:
+    """Resolve the FLIK sample-video cadence: CLI flag wins, then config, then
+    default (config: video_sample_interval, default 10). Saves 1 processed
+    video per N to the upload queue; 0 disables sample-video saving entirely."""
+    resolved = video_sample_interval if video_sample_interval is not None else int(
+        load_config().get("video_sample_interval", DEFAULT_VIDEO_SAMPLE_INTERVAL)
+    )
+    if resolved < 0:
+        raise typer.BadParameter("video_sample_interval must be >= 0")
+    return resolved
+
+
 @app.callback()
 def run(
     api_url: str | None = typer.Option(None, "--api-url", help="Backend API URL"),
@@ -361,6 +374,7 @@ def run(
     bucket: str | None = typer.Option(None, "--bucket", help="Configured output bucket"),
     upload_poll: int = typer.Option(3600, "--upload-poll", help="Seconds between upload polls; with --archive-batch this is also the batch cadence (one tar per device per poll) (config: upload_poll_interval)"),
     heartbeat_interval: float | None = typer.Option(None, "--heartbeat-interval", help="Seconds between heartbeat snapshots (config: heartbeat_interval, default 300)"),
+    video_sample_interval: int | None = typer.Option(None, "--video-sample-interval", help="Save 1 processed video per N to the upload queue; 0 disables sample-video saving (config: video_sample_interval, default 10)"),
     with_receiver: bool = typer.Option(
         True,
         "--with-receiver/--no-receiver",
@@ -420,6 +434,7 @@ def run(
         window = RecordingWindow.from_config(resolved_window, resolved_timezone)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    resolved_video_sample_interval = _resolve_video_sample_interval(video_sample_interval)
     try:
         pid_path = _acquire_pid_file()
     except RuntimeError as exc:
@@ -536,6 +551,7 @@ def run(
             detection_config_path=detection_config,
             timezone_name=resolved_timezone,
             record_window=resolved_window,
+            video_sample_interval=resolved_video_sample_interval,
             on_result_ready=on_result_ready,
             on_log_complete=on_log_complete,
             on_video_ready=on_video_ready,
