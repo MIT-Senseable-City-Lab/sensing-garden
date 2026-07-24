@@ -1,5 +1,6 @@
 """Tests for the main bugcam CLI structure."""
 import pytest
+import typer
 from bugcam.cli import app
 from tests.helpers import strip_ansi
 
@@ -78,6 +79,63 @@ def test_heartbeat_loop_waits_configured_interval(monkeypatch) -> None:
 
     run._heartbeat_loop("FLIK4", None, None, [], _StopAfterOne(), None, 5)
     assert waited == [5]
+
+
+def test_run_video_sample_interval_default_is_ten() -> None:
+    """Test the FLIK sample-video default is 1 saved per 10 processed videos."""
+    from bugcam.commands.run import DEFAULT_VIDEO_SAMPLE_INTERVAL
+
+    assert DEFAULT_VIDEO_SAMPLE_INTERVAL == 10
+
+
+def test_resolve_video_sample_interval_cli_wins(monkeypatch) -> None:
+    """An explicit --video-sample-interval overrides config and default."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {"video_sample_interval": 99})
+    assert run._resolve_video_sample_interval(5) == 5
+
+
+def test_resolve_video_sample_interval_from_config(monkeypatch) -> None:
+    """With no CLI flag, the config key is used."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {"video_sample_interval": 15})
+    assert run._resolve_video_sample_interval(None) == 15
+
+
+def test_resolve_video_sample_interval_default(monkeypatch) -> None:
+    """With neither CLI flag nor config, falls back to 10."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {})
+    assert run._resolve_video_sample_interval(None) == 10
+
+
+def test_resolve_video_sample_interval_zero_disables_sampling(monkeypatch) -> None:
+    """0 is a valid value (disables sample-video saving), not rejected."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {})
+    assert run._resolve_video_sample_interval(0) == 0
+
+
+def test_resolve_video_sample_interval_rejects_negative_cli(monkeypatch) -> None:
+    """A negative --video-sample-interval is invalid and rejected at resolve time."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {})
+    with pytest.raises(typer.BadParameter):
+        run._resolve_video_sample_interval(-1)
+
+
+def test_resolve_video_sample_interval_rejects_negative_config(monkeypatch) -> None:
+    """A negative config-file value is invalid and rejected at resolve time."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {"video_sample_interval": -3})
+    with pytest.raises(typer.BadParameter):
+        run._resolve_video_sample_interval(None)
 
 
 def test_process_subcommand_help(cli_runner):
