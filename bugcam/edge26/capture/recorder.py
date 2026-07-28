@@ -184,7 +184,7 @@ class VideoRecorder:
         })
         
         # Create hardware H.264 encoder
-        self.encoder = H264Encoder(bitrate=self.bitrate)
+        self.encoder = H264Encoder(bitrate=self.bitrate, framerate=self.fps)
         self.encoder_quality = Quality.HIGH
         
         self.camera.start()
