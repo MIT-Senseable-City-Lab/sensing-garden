@@ -60,6 +60,11 @@ markers = [
 target-version = "py311"
 extend-exclude = ["time-lapse"]  # standalone experiment, not part of the bugcam package
 
+[tool.ruff.lint]
+# Pre-0.16 default rules, pinned explicitly: ruff 0.16.0 grew the default set
+# from 59 to 413 rules, and CI installs the latest ruff (ruff-action@v3 unpinned).
+select = ["E4", "E7", "E9", "F"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["F841"]   # `with patch(...) as m` handles are kept for the patch side-effect
 "scripts/**" = ["E402"]  # helper scripts adjust sys.path before importing
