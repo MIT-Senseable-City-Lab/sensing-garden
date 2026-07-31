@@ -1,4 +1,8 @@
 """StagingArea hardlinks sources into a same-mount staging dir."""
+import errno
+import os
+import shutil
+
 import pytest
 
 from bugcam.pollen.staging import STAGING_SUBDIR, CrossMountError, StagingArea
@@ -69,6 +73,163 @@ class TestLink:
         dst = area.link(src)
         area.unlink(dst)
         assert not dst.exists()
+
+
+def _deny_hardlinks(monkeypatch):
+    """Make os.link fail like a filesystem without hardlink support (vfat)."""
+
+    def eperm_link(src, dst, **kwargs):
+        raise OSError(errno.EPERM, "Operation not permitted", str(src))
+
+    monkeypatch.setattr(os, "link", eperm_link)
+
+
+def _part_files(root):
+    return [p for p in root.rglob("*.part") if p.is_file()]
+
+
+class TestCopyFallback:
+    """os.link raising EPERM (vfat) falls back to an atomic same-dir copy."""
+
+    def test_eperm_falls_back_to_copy_with_content_and_mtime(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "payload")
+        os.utime(src, (1_000_000_000, 1_000_000_000))
+        _deny_hardlinks(monkeypatch)
+        dst = area.link(src)
+        assert dst.exists()
+        assert dst.read_text() == "payload"
+        assert dst.stat().st_ino != src.stat().st_ino  # a copy, not a link
+        assert dst.stat().st_mtime == src.stat().st_mtime  # copy2 semantics
+
+    def test_no_part_file_left_after_successful_copy(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "payload")
+        _deny_hardlinks(monkeypatch)
+        area.link(src)
+        assert _part_files(out / STAGING_SUBDIR) == []
+
+    def test_reenqueue_of_unchanged_copy_does_not_recopy(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "payload")
+        _deny_hardlinks(monkeypatch)
+        copies = []
+        real_copy2 = shutil.copy2
+
+        def counting_copy2(s, d, **kwargs):
+            copies.append(str(d))
+            return real_copy2(s, d, **kwargs)
+
+        monkeypatch.setattr(shutil, "copy2", counting_copy2)
+        first = area.link(src)
+        assert len(copies) == 1
+        second = area.link(src)
+        assert second == first
+        assert len(copies) == 1  # unchanged src: no re-copy
+
+    def test_changed_source_replaces_copy_via_temp_rename(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "v1")
+        _deny_hardlinks(monkeypatch)
+        copies = []
+        real_copy2 = shutil.copy2
+
+        def counting_copy2(s, d, **kwargs):
+            copies.append(str(d))
+            return real_copy2(s, d, **kwargs)
+
+        monkeypatch.setattr(shutil, "copy2", counting_copy2)
+        dst = area.link(src)
+        _write(src, "v2-longer")  # different size
+        dst = area.link(src)
+        assert dst.read_text() == "v2-longer"
+        assert len(copies) == 2
+        assert all(d.endswith(".part") for d in copies)  # never copied straight to dst
+
+    def test_same_size_newer_mtime_replaces_copy(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "v1")
+        os.utime(src, (1_000_000_000, 1_000_000_000))
+        _deny_hardlinks(monkeypatch)
+        dst = area.link(src)
+        src.write_text("v2")  # same size, different content
+        os.utime(src, (1_000_000_500, 1_000_000_500))
+        dst = area.link(src)
+        assert dst.read_text() == "v2"
+
+    def test_stale_part_file_is_consumed_by_next_link(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "payload")
+        dst = area.staged_path(src)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        stale = dst.with_name(dst.name + ".part")
+        stale.write_text("truncated-junk")  # left by a crash mid-copy
+        _deny_hardlinks(monkeypatch)
+        result = area.link(src)
+        assert result == dst
+        assert dst.read_text() == "payload"
+        assert _part_files(out / STAGING_SUBDIR) == []
+
+    def test_interrupted_copy_never_exposes_partial_dst(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "payload")
+        _deny_hardlinks(monkeypatch)
+        real_copy2 = shutil.copy2
+
+        def dying_copy2(s, d, **kwargs):
+            with open(d, "w") as fh:
+                fh.write("par")  # partial write, then the power goes
+            raise OSError(errno.EIO, "I/O error")
+
+        monkeypatch.setattr(shutil, "copy2", dying_copy2)
+        with pytest.raises(OSError):
+            area.link(src)
+        assert not area.staged_path(src).exists()  # dst absent, never partial
+        monkeypatch.setattr(shutil, "copy2", real_copy2)
+        dst = area.link(src)  # retry succeeds and consumes the stale temp
+        assert dst.read_text() == "payload"
+        assert _part_files(out / STAGING_SUBDIR) == []
+
+    def test_exdev_still_raises_crossmount(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json")
+
+        def exdev_link(s, d, **kwargs):
+            raise OSError(errno.EXDEV, "Invalid cross-device link", str(s))
+
+        monkeypatch.setattr(os, "link", exdev_link)
+        with pytest.raises(CrossMountError):
+            area.link(src)
+
+    def test_other_oserror_still_propagates(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json")
+
+        def eacces_link(s, d, **kwargs):
+            raise OSError(errno.EACCES, "Permission denied", str(s))
+
+        monkeypatch.setattr(os, "link", eacces_link)
+        with pytest.raises(OSError):
+            area.link(src)
+
+    def test_unlink_removes_copied_file(self, tmp_path, monkeypatch):
+        out = tmp_path / "out"
+        area = StagingArea([out])
+        src = _write(out / "a" / "results.json", "payload")
+        _deny_hardlinks(monkeypatch)
+        dst = area.link(src)
+        area.unlink(dst)
+        assert not dst.exists()
+        assert not (out / STAGING_SUBDIR / "a").exists()  # dirs still pruned
 
 
 class TestPruneEmptyDirs:

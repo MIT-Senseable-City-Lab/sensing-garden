@@ -61,14 +61,20 @@ class StagingArea:
         return staging / rel
 
     def link(self, src: Path) -> Path:
-        """Hardlink ``src`` into staging and return the staged path. Idempotent:
-        re-linking the same inode is a no-op; a changed source replaces the link."""
+        """Hardlink ``src`` into staging and return the staged path. On filesystems
+        without hardlink support (vfat: os.link raises EPERM) fall back to an atomic
+        copy. Idempotent: re-linking the same inode -- or an up-to-date copy, matched
+        by size+mtime -- is a no-op; a changed source replaces the staged file."""
         src = Path(src)
         dst = self.staged_path(src)
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.exists():
-            if dst.stat().st_ino == src.stat().st_ino:
+            src_stat = src.stat()
+            dst_stat = dst.stat()
+            if dst_stat.st_ino == src_stat.st_ino:
                 return dst
+            if (dst_stat.st_size, dst_stat.st_mtime) == (src_stat.st_size, src_stat.st_mtime):
+                return dst  # up-to-date copy from a previous no-hardlink fallback
             dst.unlink()
         try:
             os.link(src, dst)
@@ -78,10 +84,22 @@ class StagingArea:
             if exc.errno == errno.EXDEV:
                 raise CrossMountError(f"{src} and {dst} are on different mounts") from exc
             if exc.errno == errno.EPERM:
-                shutil.copy2(src, dst)
+                self._copy_atomic(src, dst)
             else:
                 raise
         return dst
+
+    @staticmethod
+    def _copy_atomic(src: Path, dst: Path) -> None:
+        """Copy ``src`` into place without ever exposing a partial file at ``dst``:
+        copy2 (preserving mtime, so the idempotency check above holds) to a fixed
+        same-directory temp name, then atomically rename over ``dst``. A stale temp
+        left by a crash mid-copy is overwritten by the next attempt; racing enqueues
+        of the same src write identical content, so last-writer-wins via os.replace
+        mirrors the tolerated FileExistsError race on the hardlink path."""
+        tmp = dst.with_name(dst.name + ".part")
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
 
     def unlink(self, staged_path: Path) -> None:
         staged_path = Path(staged_path)
