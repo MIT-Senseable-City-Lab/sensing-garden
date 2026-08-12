@@ -252,6 +252,7 @@ class Pipeline:
             recording_mode=pipeline_cfg.get("recording_mode", "continuous"),
             interval_minutes=pipeline_cfg.get("recording_interval_minutes", 5),
             bitrate=capture.get("bitrate", 20_000_000),
+            max_exposure_us=capture.get("max_exposure_us", 1000),
             record_window=RecordingWindow.from_config(
                 pipeline_cfg.get("record_window"), self.timezone_name
             ),

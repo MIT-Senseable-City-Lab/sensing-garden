@@ -68,6 +68,7 @@ class VideoRecorder:
         recording_mode: str = "continuous",
         interval_minutes: float = 5,
         bitrate: int = 20_000_000,
+        max_exposure_us: int = 1000,
         record_window: Optional[RecordingWindow] = None,
         on_chunk_complete=None,
     ):
@@ -86,6 +87,9 @@ class VideoRecorder:
             recording_mode: "continuous" (no gaps) or "interval" (record every N minutes)
             interval_minutes: Minutes between start of recordings (interval mode only)
             bitrate: H.264 encoder bitrate in bps (picamera2 hardware encoding only)
+            max_exposure_us: Longest exposure time allowed in microseconds (AE stays
+                automatic and may use shorter). Equivalent to a minimum shutter speed
+                of 1/max_exposure_us seconds.
             record_window: Daily local-time window outside which no chunks are
                 recorded (camera released, loop idles); None records around the clock
             on_chunk_complete: Callback (path, duration_seconds) invoked for every
@@ -102,6 +106,7 @@ class VideoRecorder:
         self.recording_mode = recording_mode
         self.interval_minutes = interval_minutes
         self.bitrate = bitrate
+        self.max_exposure_us = max_exposure_us
         self.record_window = record_window
         self.on_chunk_complete = on_chunk_complete
 
@@ -132,6 +137,7 @@ class VideoRecorder:
         logger.info(f"  Output: {self.output_dir}")
         logger.info(f"  Target FPS: {fps}, Chunk duration: {chunk_duration}s")
         logger.info(f"  Requested resolution: {resolution[0]}x{resolution[1]}")
+        logger.info(f"  Max exposure: {max_exposure_us} us (shutter never slower than 1/{max_exposure_us}s)")
         logger.info(f"  Recording mode: {recording_mode}"
                     + (f", interval: {interval_minutes} min" if recording_mode == "interval" else ""))
         if record_window is not None:
@@ -181,6 +187,10 @@ class VideoRecorder:
         # Set frame rate
         self.camera.set_controls({
             "FrameRate": float(self.fps),
+            # Caps the AE exposure time at max_exposure_us: with AE enabled this
+            # control acts as the maximum the AE algorithm may use, so the shutter
+            # never gets slower than 1/max_exposure_us while gain stays automatic.
+            "ExposureTime": self.max_exposure_us,
         })
         
         # Create hardware H.264 encoder
@@ -192,6 +202,37 @@ class VideoRecorder:
         # Allow camera to warm up
         time.sleep(2)
         logger.info(f"PiCamera started: {self.resolution} @ {self.fps}fps")
+        self._check_exposure_cap()
+    
+    def _check_exposure_cap(self) -> None:
+        """Log the applied exposure and warn if it exceeds the configured cap.
+
+        Read-only verification: the cap itself is enforced by libcamera's AE.
+        A small tolerance covers sensor exposure quantization. Only meaningful
+        with picamera2 (the OpenCV fallback exposes no metadata).
+        """
+        if not self.use_picamera or self.camera is None:
+            return
+        try:
+            metadata = self.camera.capture_metadata()
+        except Exception:
+            logger.debug("Exposure cap check skipped (metadata unavailable)", exc_info=True)
+            return
+        exposure_us = metadata.get("ExposureTime")
+        gain = metadata.get("AnalogueGain")
+        if exposure_us is None:
+            logger.warning("Exposure cap check: metadata has no ExposureTime")
+            return
+        if exposure_us > self.max_exposure_us * 1.05:
+            logger.warning(
+                "Exposure %d us exceeded cap %d us (shutter slower than 1/%d)",
+                exposure_us, self.max_exposure_us, self.max_exposure_us,
+            )
+        else:
+            logger.info(
+                "Exposure cap active: applied %d us (max %d us), analogue gain %s",
+                exposure_us, self.max_exposure_us, gain,
+            )
     
     def _init_camera(self) -> None:
         """Initialize the camera and read its resolution."""
@@ -385,6 +426,8 @@ class VideoRecorder:
             self.camera.stop_recording()
             # Measured, not nominal: an early stop shortens the chunk.
             recorded_seconds = time.monotonic() - recording_started
+            # Verify the exposure cap once per chunk (read-only alarm).
+            self._check_exposure_cap()
         except Exception:
             # picamera2 opens the output file before starting the encoder, so
             # a failed start (e.g. encoder still attached from an earlier

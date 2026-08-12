@@ -141,6 +141,25 @@ Stream live logs from the running service (like `tail -f`).
 **Options:**
 - `--follow` / `-f` - Follow log output in real-time
 
+## Run (continuous record + process)
+
+### Cap the maximum exposure time ✓
+```bash
+bugcam run --max-exposure-us 1000
+```
+Longest exposure time allowed; auto-exposure stays automatic and may use
+shorter times. Equivalent to a minimum shutter speed of `1/1000s` — the
+shutter never gets slower than this. `bugcam autostart enable` accepts the
+same flag.
+
+## Record (single video)
+
+### Cap the maximum exposure time ✓
+```bash
+bugcam record single --max-exposure-us 1000
+```
+Same semantics as `run --max-exposure-us`.
+
 ## Configuration
 
 ### Model Storage

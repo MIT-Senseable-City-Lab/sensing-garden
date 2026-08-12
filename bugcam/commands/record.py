@@ -93,7 +93,13 @@ def _remux_video(path: Path) -> bool:
         return False
 
 
-def _record_single_video(output_path: Path, length: int, quiet: bool, resolution: tuple[int, int]) -> bool:
+def _record_single_video(
+    output_path: Path,
+    length: int,
+    quiet: bool,
+    resolution: tuple[int, int],
+    max_exposure_us: int = 1000,
+) -> bool:
     # Import here to avoid import errors on non-Pi systems
     try:
         from picamera2 import Picamera2
@@ -111,10 +117,20 @@ def _record_single_video(output_path: Path, length: int, quiet: bool, resolution
 
         # Try to set autofocus controls (only available on Camera Module 3)
         try:
-            picam2.set_controls({"AfMode": 0, "LensPosition": 0.5})
+            picam2.set_controls({
+                "AfMode": 0,
+                "LensPosition": 0.5,
+                # Caps the AE exposure time: with AE enabled this acts as the
+                # maximum the AE may use, so the shutter never gets slower than
+                # 1/max_exposure_us while gain stays automatic.
+                "ExposureTime": max_exposure_us,
+            })
         except Exception:
             # Camera doesn't support autofocus (e.g., Camera Module 2, HQ Camera)
-            pass
+            try:
+                picam2.set_controls({"ExposureTime": max_exposure_us})
+            except Exception:
+                pass
 
         picam2.start()
 
@@ -144,6 +160,7 @@ def single(
     length: int = typer.Option(60, "--length", "-l", help="Length of video in seconds"),
     flick_id: Optional[str] = typer.Option(None, "--flick-id", help="FLICK device ID for generated filenames"),
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
+    max_exposure_us: int = typer.Option(1000, "--max-exposure-us", help="Longest exposure time allowed; AE stays automatic and may use shorter. Shutter never slower than 1/max_exposure_us"),
 ) -> None:
     """Record a single video.
 
@@ -174,7 +191,7 @@ def single(
 
     console.print(f"[cyan]Recording {length}s video to {output}[/cyan]")
 
-    if _record_single_video(output, length, quiet=False, resolution=parsed_resolution):
+    if _record_single_video(output, length, quiet=False, resolution=parsed_resolution, max_exposure_us=max_exposure_us):
         _remux_video(output)
         console.print(f"[green]Video saved: {output}[/green]")
     else:
