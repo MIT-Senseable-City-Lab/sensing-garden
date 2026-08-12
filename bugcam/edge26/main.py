@@ -27,6 +27,33 @@ from bugcam.capture_report import CAPTURES_SUBDIR
 NON_RESULT_SUBDIRS = {"heartbeats", "environment", "logs", CAPTURES_SUBDIR}
 
 
+def _video_sample_decision(
+    *, sample_saved: bool, is_last_in_batch: bool, confirmed_count: int, random_sampling: bool,
+) -> tuple[bool, str | None]:
+    """Decide whether to save this FLIK video as the batch's uploaded sample.
+
+    Default mode prioritizes the first video in the batch with confirmed
+    tracks over a later plain one, falling back to the batch's last video if
+    none had confirmed tracks -- the sample is "best of N". ``random_sampling``
+    disables that bias: the saved sample is always the batch's actual Nth
+    (last) video, regardless of what any video in the batch contained.
+
+    Returns (should_save, reason) where reason is one of "detections"
+    (default mode, a confirmed track triggered the save), "fallback"
+    (default mode, batch ended with no confirmed tracks), "interval"
+    (random-sampling mode, batch simply ended), or None if not saving.
+    """
+    if sample_saved:
+        return False, None
+    if random_sampling:
+        return (True, "interval") if is_last_in_batch else (False, None)
+    if confirmed_count > 0:
+        return True, "detections"
+    if is_last_in_batch:
+        return True, "fallback"
+    return False, None
+
+
 def setup_logging(log_dir: Path, *, on_log_complete=None) -> None:
     """Configure logging to console and a daily-rotating file.
 
@@ -179,6 +206,9 @@ class Pipeline:
         self._video_batch_count = 0
         self._video_sample_saved = False
         self._video_sample_interval = pipeline_config.get("video_sample_interval", 10)
+        # --random-sampling: disable the confirmed-track priority above so the
+        # saved sample is the batch's actual Nth video, not "best of N".
+        self._random_sampling = pipeline_config.get("random_sampling", False)
         
         # --- Tracker reset signals (continuous_tracking mode) ---
         self._last_sweep_monotonic = time.monotonic()
@@ -710,13 +740,18 @@ class Pipeline:
             if self._video_sample_interval > 0:
                 self._video_batch_count += 1
                 is_last_in_batch = self._video_batch_count >= self._video_sample_interval
-                
-                if not self._video_sample_saved and (confirmed_count > 0 or is_last_in_batch):
+
+                should_save, reason = _video_sample_decision(
+                    sample_saved=self._video_sample_saved,
+                    is_last_in_batch=is_last_in_batch,
+                    confirmed_count=confirmed_count,
+                    random_sampling=self._random_sampling,
+                )
+                if should_save:
                     shutil.copy2(video_path, output_dir / "video.mp4")
                     self._video_sample_saved = True
-                    reason = "detections" if confirmed_count > 0 else "fallback"
                     logger.info(f"  Sample video saved ({reason})")
-                
+
                 if is_last_in_batch:
                     self._video_batch_count = 0
                     self._video_sample_saved = False
