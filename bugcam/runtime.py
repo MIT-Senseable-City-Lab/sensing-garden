@@ -47,6 +47,7 @@ def build_pipeline(
     timezone_name: str | None = None,
     record_window: str | None = None,
     video_sample_interval: int = 10,
+    random_sampling: bool = False,
     on_result_ready=None,
     on_log_complete=None,
     on_video_ready=None,
@@ -79,6 +80,7 @@ def build_pipeline(
         timezone_name=timezone_name,
         record_window=record_window,
         video_sample_interval=video_sample_interval,
+        random_sampling=random_sampling,
     )
     setup_logging(Path(config["paths"]["logs_dir"]), on_log_complete=on_log_complete)
     return Pipeline(

@@ -58,6 +58,33 @@ def test_build_edge26_config_video_sample_interval_custom(tmp_path: Path) -> Non
     assert config["pipeline"]["video_sample_interval"] == 25
 
 
+def test_build_edge26_config_random_sampling_default_false(tmp_path: Path) -> None:
+    config = build_edge26_config(
+        flick_id="flick01",
+        dot_ids=[],
+        input_dir=str(tmp_path / "input"),
+        output_dir=str(tmp_path / "outputs"),
+        model_path=str(tmp_path / "bundle" / "model.hef"),
+        labels_path=str(tmp_path / "bundle" / "labels.txt"),
+    )
+
+    assert config["pipeline"]["random_sampling"] is False
+
+
+def test_build_edge26_config_random_sampling_enabled(tmp_path: Path) -> None:
+    config = build_edge26_config(
+        flick_id="flick01",
+        dot_ids=[],
+        input_dir=str(tmp_path / "input"),
+        output_dir=str(tmp_path / "outputs"),
+        model_path=str(tmp_path / "bundle" / "model.hef"),
+        labels_path=str(tmp_path / "bundle" / "labels.txt"),
+        random_sampling=True,
+    )
+
+    assert config["pipeline"]["random_sampling"] is True
+
+
 def test_video_processor_passes_ratio_config_to_bugspot() -> None:
     from bugcam.edge26.processing.processor import VideoProcessor
 

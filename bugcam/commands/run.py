@@ -375,6 +375,13 @@ def run(
     upload_poll: int = typer.Option(3600, "--upload-poll", help="Seconds between upload polls; with --archive-batch this is also the batch cadence (one tar per device per poll) (config: upload_poll_interval)"),
     heartbeat_interval: float | None = typer.Option(None, "--heartbeat-interval", help="Seconds between heartbeat snapshots (config: heartbeat_interval, default 300)"),
     video_sample_interval: int | None = typer.Option(None, "--video-sample-interval", help="Save 1 processed video per N to the upload queue; 0 disables sample-video saving (config: video_sample_interval, default 10)"),
+    random_sampling: bool = typer.Option(
+        False,
+        "--random-sampling",
+        help="Disable the confirmed-track priority in sample-video selection: always upload the "
+             "batch's actual Nth video (per --video-sample-interval), not whichever one in the "
+             "batch had confirmed tracks",
+    ),
     with_receiver: bool = typer.Option(
         True,
         "--with-receiver/--no-receiver",
@@ -552,6 +559,7 @@ def run(
             timezone_name=resolved_timezone,
             record_window=resolved_window,
             video_sample_interval=resolved_video_sample_interval,
+            random_sampling=random_sampling,
             on_result_ready=on_result_ready,
             on_log_complete=on_log_complete,
             on_video_ready=on_video_ready,
