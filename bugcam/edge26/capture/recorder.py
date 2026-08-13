@@ -213,6 +213,9 @@ class VideoRecorder:
         """
         if not self.use_picamera or self.camera is None:
             return
+        if not self.camera.started:
+            logger.debug("Exposure cap check skipped (camera not started)")
+            return
         try:
             metadata = self.camera.capture_metadata()
         except Exception:
@@ -413,6 +416,8 @@ class VideoRecorder:
 
         try:
             recording_started = time.monotonic()
+            # Verify the exposure cap once per chunk (read-only alarm).
+            self._check_exposure_cap()
             self.camera.start_recording(
                 self.encoder,
                 str(temp_h264),
@@ -426,8 +431,7 @@ class VideoRecorder:
             self.camera.stop_recording()
             # Measured, not nominal: an early stop shortens the chunk.
             recorded_seconds = time.monotonic() - recording_started
-            # Verify the exposure cap once per chunk (read-only alarm).
-            self._check_exposure_cap()
+            
         except Exception:
             # picamera2 opens the output file before starting the encoder, so
             # a failed start (e.g. encoder still attached from an earlier
