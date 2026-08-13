@@ -417,6 +417,7 @@ class VideoRecorder:
         try:
             recording_started = time.monotonic()
             # Verify the exposure cap once per chunk (read-only alarm).
+            self.camera.start()
             self._check_exposure_cap()
             self.camera.start_recording(
                 self.encoder,
