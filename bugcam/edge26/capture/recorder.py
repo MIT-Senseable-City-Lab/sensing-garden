@@ -87,9 +87,12 @@ class VideoRecorder:
             recording_mode: "continuous" (no gaps) or "interval" (record every N minutes)
             interval_minutes: Minutes between start of recordings (interval mode only)
             bitrate: H.264 encoder bitrate in bps (picamera2 hardware encoding only)
-            max_exposure_us: Longest exposure time allowed in microseconds (AE stays
-                automatic and may use shorter). Equivalent to a minimum shutter speed
-                of 1/max_exposure_us seconds.
+            max_exposure_us: Hard cap on the AE shutter in microseconds: AE stays
+                automatic, but the shutter never gets slower than 1/max_exposure_us
+                seconds (0 disables the cap). Enforced by patching the sensor
+                tuning file's exposure-mode table, not the ExposureTime control.
+                In dim light the AGC raises gain up to its ceiling instead; beyond
+                that frames darken.
             record_window: Daily local-time window outside which no chunks are
                 recorded (camera released, loop idles); None records around the clock
             on_chunk_complete: Callback (path, duration_seconds) invoked for every
@@ -137,7 +140,7 @@ class VideoRecorder:
         logger.info(f"  Output: {self.output_dir}")
         logger.info(f"  Target FPS: {fps}, Chunk duration: {chunk_duration}s")
         logger.info(f"  Requested resolution: {resolution[0]}x{resolution[1]}")
-        logger.info(f"  Max exposure: {max_exposure_us} us (shutter never slower than 1/{max_exposure_us}s)")
+        logger.info(f"  Max exposure: {max_exposure_us} us cap (AE auto, shutter never slower than 1/{max_exposure_us}s; 0 = uncapped)")
         logger.info(f"  Recording mode: {recording_mode}"
                     + (f", interval: {interval_minutes} min" if recording_mode == "interval" else ""))
         if record_window is not None:
@@ -169,8 +172,19 @@ class VideoRecorder:
         """Initialize camera using picamera2 (Raspberry Pi) and read resolution."""
         from picamera2 import Picamera2
         from picamera2.encoders import H264Encoder, Quality
-        
-        self.camera = Picamera2()
+
+        from .exposure import build_capped_tuning
+
+        # Cap the AE shutter at max_exposure_us by patching the sensor tuning
+        # file's exposure-mode table (AE stays automatic). A None return means
+        # the cap could not be applied; record with the stock tuning instead.
+        tuning = build_capped_tuning(self.max_exposure_us)
+        if tuning is None and self.max_exposure_us:
+            logger.warning(
+                "Running uncapped: could not apply 1/%d s shutter cap",
+                self.max_exposure_us,
+            )
+        self.camera = Picamera2(tuning=tuning)
         
         # Create requested video config and read final applied resolution
         # Picamera2 "RGB888" outputs BGR order [B,G,R] which matches OpenCV expectation.
@@ -184,13 +198,11 @@ class VideoRecorder:
         height = config["main"]["size"][1]
         self.resolution = (width, height)
         
-        # Set frame rate
+        # Set frame rate. Note: the AE shutter cap is applied via the tuning
+        # file above, not via the ExposureTime control (which would pin the
+        # shutter to manual and defeat automatic adjustments in bright light).
         self.camera.set_controls({
             "FrameRate": float(self.fps),
-            # Caps the AE exposure time at max_exposure_us: with AE enabled this
-            # control acts as the maximum the AE algorithm may use, so the shutter
-            # never gets slower than 1/max_exposure_us while gain stays automatic.
-            "ExposureTime": self.max_exposure_us,
         })
         
         # Create hardware H.264 encoder
@@ -223,8 +235,8 @@ class VideoRecorder:
             return
         exposure_us = metadata.get("ExposureTime")
         gain = metadata.get("AnalogueGain")
-        if exposure_us is None:
-            logger.warning("Exposure cap check: metadata has no ExposureTime")
+        if not isinstance(exposure_us, (int, float)):
+            logger.warning("Exposure cap check: metadata has no numeric ExposureTime")
             return
         if exposure_us > self.max_exposure_us * 1.05:
             logger.warning(

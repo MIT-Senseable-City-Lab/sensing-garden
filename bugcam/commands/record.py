@@ -108,29 +108,35 @@ def _record_single_video(
         console.print("[red]picamera2 not available. Run on Raspberry Pi.[/red]")
         return False
 
+    # Cap the AE shutter at max_exposure_us by patching the sensor tuning
+    # file's exposure-mode table (AE stays automatic). A None return means
+    # the cap could not be applied; record with the stock tuning instead.
+    from ..edge26.capture.exposure import build_capped_tuning
+
+    tuning = build_capped_tuning(max_exposure_us)
+    if tuning is None and max_exposure_us:
+        console.print(
+            f"[yellow]Warning: could not apply 1/{max_exposure_us}s shutter cap; recording uncapped[/yellow]"
+        )
+
     try:
-        picam2 = Picamera2()
+        picam2 = Picamera2(tuning=tuning)
         camera_config = picam2.create_video_configuration(
             main={"format": 'RGB888', "size": resolution}
         )
         picam2.configure(camera_config)
 
-        # Try to set autofocus controls (only available on Camera Module 3)
+        # Try to set autofocus controls (only available on Camera Module 3).
+        # The AE shutter cap is applied via the tuning file above, not via the
+        # ExposureTime control (which would pin the shutter to manual).
         try:
             picam2.set_controls({
                 "AfMode": 0,
                 "LensPosition": 0.5,
-                # Caps the AE exposure time: with AE enabled this acts as the
-                # maximum the AE may use, so the shutter never gets slower than
-                # 1/max_exposure_us while gain stays automatic.
-                "ExposureTime": max_exposure_us,
             })
         except Exception:
             # Camera doesn't support autofocus (e.g., Camera Module 2, HQ Camera)
-            try:
-                picam2.set_controls({"ExposureTime": max_exposure_us})
-            except Exception:
-                pass
+            pass
 
         picam2.start()
 
@@ -160,7 +166,7 @@ def single(
     length: int = typer.Option(60, "--length", "-l", help="Length of video in seconds"),
     flick_id: Optional[str] = typer.Option(None, "--flick-id", help="FLICK device ID for generated filenames"),
     resolution: str = typer.Option("1080x1080", "--resolution", help="Recording resolution in WxH format"),
-    max_exposure_us: int = typer.Option(1000, "--max-exposure-us", help="Longest exposure time allowed; AE stays automatic and may use shorter. Shutter never slower than 1/max_exposure_us"),
+    max_exposure_us: int = typer.Option(1000, "--max-exposure-us", help="Hard cap on AE shutter: auto-exposure stays automatic, but the shutter never gets slower than 1/max_exposure_us s (0 = uncapped)"),
 ) -> None:
     """Record a single video.
 

@@ -147,10 +147,14 @@ Stream live logs from the running service (like `tail -f`).
 ```bash
 bugcam run --max-exposure-us 1000
 ```
-Longest exposure time allowed; auto-exposure stays automatic and may use
-shorter times. Equivalent to a minimum shutter speed of `1/1000s` — the
-shutter never gets slower than this. `bugcam autostart enable` accepts the
-same flag.
+Hard cap on the auto-exposure shutter: AE stays fully automatic, but the
+shutter never gets slower than `1/1000s`. In bright light the camera uses
+short shutters as normal; as light drops the shutter rises to the cap and the
+AGC compensates with gain (up to the sensor ceiling), so frames stay sharp —
+and only darken when gain is exhausted. The cap is applied by patching the
+sensor tuning file's AE exposure-mode table (not the `ExposureTime` control,
+which pins the shutter to manual). `0` disables the cap. `bugcam autostart
+enable` accepts the same flag.
 
 ## Record (single video)
 

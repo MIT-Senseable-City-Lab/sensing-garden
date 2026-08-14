@@ -100,7 +100,7 @@ def enable(
     length: int = typer.Option(30, "--length", "-l", help="Chunk duration in seconds"),
     resolution: str = typer.Option("3840x2160", "--resolution", help="Recording resolution in WxH format"),
     fps: int = typer.Option(15, "--fps", help="Recording frame rate"),
-    max_exposure_us: int = typer.Option(1000, "--max-exposure-us", help="Longest exposure time allowed; AE stays automatic and may use shorter. Shutter never slower than 1/max_exposure_us"),
+    max_exposure_us: int = typer.Option(1000, "--max-exposure-us", help="Hard cap on AE shutter: auto-exposure stays automatic, but the shutter never gets slower than 1/max_exposure_us s (0 = uncapped)"),
     poll_interval: int = typer.Option(3600, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
         True,
