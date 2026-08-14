@@ -401,13 +401,17 @@ class VideoRecorder:
 
         try:
             recording_started = time.monotonic()
-            # Log the AE's current shutter speed for this chunk (read-only).
-            self._log_current_exposure()
             self.camera.start_recording(
                 self.encoder,
                 str(temp_h264),
                 quality=self.encoder_quality,
             )
+            # Log the AE's current shutter speed for this chunk (read-only).
+            # After the first chunk the camera is only restarted by
+            # start_recording() above (picamera2's stop_recording() stops the
+            # whole camera), so reading here -- never before it -- guarantees
+            # fresh metadata from the first frame of this chunk.
+            self._log_current_exposure()
 
             chunk_end = time.time() + self.chunk_duration
             while time.time() < chunk_end and not self.stop_event.is_set():
