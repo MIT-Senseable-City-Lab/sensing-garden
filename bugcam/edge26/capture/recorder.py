@@ -347,6 +347,35 @@ class VideoRecorder:
             logger.error(f"Remux error: {e}")
             return False
 
+    def _log_current_exposure(self) -> None:
+        """Log the camera's current exposure state (read-only observation).
+
+        Reads fresh metadata via capture_metadata(), which returns the most
+        recently completed frame's metadata (waiting for the next frame if the
+        queue is momentarily empty). AE recomputes exposure every frame, so
+        each chunk logs the current adaptation to light conditions -- never a
+        cached startup value. Diagnostic only: must never raise.
+        """
+        try:
+            if not self.use_picamera or self.camera is None or not self.camera.started:
+                return
+            metadata = self.camera.capture_metadata()
+            exposure_us = metadata.get("ExposureTime")
+            if exposure_us is None:
+                logger.debug("Exposure log: metadata has no ExposureTime")
+                return
+            gain = metadata.get("AnalogueGain")
+            lux = metadata.get("Lux")
+            logger.info(
+                "Shutter speed: 1/%.0fs (%d us), gain %s, lux %s",
+                1e6 / exposure_us,
+                exposure_us,
+                f"{gain:.2f}" if isinstance(gain, (int, float)) else "n/a",
+                f"{lux:.1f}" if isinstance(lux, (int, float)) else "n/a",
+            )
+        except Exception:
+            logger.debug("Exposure log skipped (metadata unavailable)", exc_info=True)
+
     def _record_chunk_hardware(self) -> Optional[Path]:
         """
         Record a single chunk using picamera2's hardware H.264 encoder.
@@ -372,6 +401,8 @@ class VideoRecorder:
 
         try:
             recording_started = time.monotonic()
+            # Log the AE's current shutter speed for this chunk (read-only).
+            self._log_current_exposure()
             self.camera.start_recording(
                 self.encoder,
                 str(temp_h264),
