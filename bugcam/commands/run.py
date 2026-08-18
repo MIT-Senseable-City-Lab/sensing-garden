@@ -17,7 +17,7 @@ from bugcam.commands.heartbeat import write_heartbeat_snapshot
 from bugcam.pollen.integration import build_pollen
 from bugcam.edge26.result_publish import publish_result_dir
 from bugcam.pollen.transport import DEFAULT_MULTIPART_THRESHOLD, DEFAULT_PART_SIZE
-from bugcam.config import (
+from bugcam.settings import (
     DEFAULT_API_URL,
     DEFAULT_S3_BUCKET,
     get_input_storage_dir,
@@ -25,9 +25,9 @@ from bugcam.config import (
     get_state_dir,
     load_config,
     parse_dot_ids,
+    resolve_flick_id,
 )
 from bugcam.commands.status import _check_time_sync
-from bugcam.device_config import resolve_flick_id
 from bugcam.environment_sensor import collect_environment_reading
 from bugcam.processing import parse_capture_resolution
 from bugcam.record_window import RecordingWindow
