@@ -214,8 +214,6 @@ def build_edge26_config(
             "video_sample_interval": video_sample_interval,
         },
         "capture": {
-            "camera_index": 0,
-            "use_picamera": True,
             "fps": fps,
             "chunk_duration_seconds": chunk_duration,
             "resolution": list(resolution),
