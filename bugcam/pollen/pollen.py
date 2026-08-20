@@ -41,6 +41,19 @@ MAX_RETRY_DELAY_SECONDS = 300  # matches the legacy upload loop
 STUCK_WARN_SECONDS = 3600      # warn loudly once the oldest item has waited this long
 
 
+def _exists_safe(path: Path) -> Optional[bool]:
+    """Like Path.exists(), but doesn't let an ambiguous OSError pass through.
+    Path.exists() already swallows ENOENT/ENOTDIR/ELOOP and returns False; it
+    re-raises anything else (e.g. ESTALE on a disconnected mount, EACCES on a
+    dead automount stub). Callers checking a path recorded on a mount that may
+    no longer exist need to tell "confirmed gone" (False) apart from "couldn't
+    tell" (None) rather than crash on the latter."""
+    try:
+        return path.exists()
+    except OSError:
+        return None
+
+
 @dataclass(frozen=True)
 class KindPolicy:
     """Per-kind retention. ``keep_after_upload`` retains a local copy (in retained/) plus
@@ -226,13 +239,26 @@ class Pollen:
     def reconcile(self) -> None:
         """Crash-recovery GC. Drop pending rows whose staged copy vanished (a lost
         upload), prune shipped rows whose file is gone, and unlink staged files no
-        row references (orphaned by a crash between link and enqueue)."""
+        row references (orphaned by a crash between link and enqueue).
+
+        A row's staging_path is whatever mount was current when it was enqueued;
+        redirecting to a new drive leaves old rows pointing at a mount that may no
+        longer be there at all. ``_exists_safe`` tells a confirmed-gone path (drop
+        it) apart from an unreachable one (stale/disconnected mount raising
+        something Path.exists() doesn't swallow) -- the latter is left alone rather
+        than guessed at."""
         for row in self.store.claim_pending():
-            if not Path(row.staging_path).exists():
+            exists = _exists_safe(Path(row.staging_path))
+            if exists is False:
                 logger.error(
                     "pollen: staged file gone for pending %s; dropping (lost upload)", row.s3_key
                 )
                 self.store.delete(row.id)
+            elif exists is None:
+                logger.warning(
+                    "pollen: could not check staged file for pending %s (mount unavailable?); "
+                    "leaving pending", row.s3_key
+                )
         self.store.prune_missing()
         known = self.store.all_staging_paths()
         now = time.time()
@@ -247,7 +273,15 @@ class Pollen:
                 self._staging.unlink(link)
 
     def _loop(self) -> None:
-        self.reconcile()  # recover orphans/lost uploads left by a previous run
+        try:
+            self.reconcile()  # recover orphans/lost uploads left by a previous run
+        except Exception:
+            # An uncaught exception here would kill this thread before the tick
+            # loop's own try/except ever runs -- and since it's a thread exception,
+            # not a logging call, it goes to stderr via threading.excepthook and
+            # never reaches the log file. Log it through the normal pipeline and
+            # keep going: a failed startup reconcile is recoverable, a dead loop is not.
+            logger.exception("pollen: startup reconcile failed; continuing without it")
         consecutive_failures = 0
         while not self._stop.is_set():
             try:

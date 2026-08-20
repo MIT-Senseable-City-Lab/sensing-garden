@@ -129,6 +129,23 @@ class TestLifecycle:
             pol.stop()
         assert up.uploaded == ["v1/flick1/c/results.json"]
 
+    def test_startup_reconcile_failure_does_not_kill_the_loop(self, tmp_path):
+        """A crashing startup reconcile() must not take the whole upload thread
+        down with it -- ticks (and thus uploads) must still happen afterwards."""
+        cfg = _config(tmp_path)
+        up = FakeUploader()
+        pol = _pollen(cfg, up)
+        pol.reconcile = lambda: (_ for _ in ()).throw(RuntimeError("mount unavailable"))
+        pol.start()
+        try:
+            pol.enqueue_set([_write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')], device="flick1", kind="result")
+            deadline = time.time() + 3.0
+            while not up.uploaded and time.time() < deadline:
+                time.sleep(0.01)
+        finally:
+            pol.stop()
+        assert up.uploaded == ["v1/flick1/c/results.json"]
+
 
 class TestEnqueueSource:
     def test_source_fires_on_tick(self, tmp_path):
@@ -358,6 +375,27 @@ class TestReconcile:
         Path(pol.store.get(rid).staging_path).unlink()  # staged copy vanishes
         pol.reconcile()
         assert pol.store.get(rid) is None
+
+    def test_pending_row_with_unreachable_staging_left_alone(self, tmp_path, monkeypatch):
+        """A row from a redirected/removed drive whose old mount raises something
+        other than ENOENT (a stale/disconnected mount) must not be treated as a
+        confirmed-lost upload -- and reconcile() itself must not blow up."""
+        cfg = _config(tmp_path)
+        pol = _pollen(cfg)
+        path = _write(cfg.output_root, "flick1/c/results.json", b'{"tracks":[{"track_id":"t"}]}')
+        rid = pol.enqueue_set([path], device="flick1", kind="result")[0]
+        staged = Path(pol.store.get(rid).staging_path)
+
+        real_exists = Path.exists
+
+        def flaky_exists(self):
+            if self == staged:
+                raise OSError("stale NFS file handle")
+            return real_exists(self)
+
+        monkeypatch.setattr(Path, "exists", flaky_exists)
+        pol.reconcile()  # must not raise
+        assert pol.store.get(rid) is not None  # left pending, not guessed at
 
 
 def test_read_timeout_scales_with_payload():
