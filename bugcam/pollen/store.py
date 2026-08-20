@@ -66,6 +66,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _exists_safe(path: Path) -> Optional[bool]:
+    """Like Path.exists(), but doesn't let an ambiguous OSError pass through.
+    Path.exists() already swallows ENOENT/ENOTDIR/ELOOP and returns False; it
+    re-raises anything else (e.g. ESTALE on a disconnected mount, EACCES on a
+    dead automount stub). A path recorded on a mount that's since gone away
+    needs "confirmed gone" (False) told apart from "couldn't tell" (None)."""
+    try:
+        return path.exists()
+    except OSError:
+        return None
+
+
 class PollenStore:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -212,8 +224,13 @@ class PollenStore:
                 (UploadStatus.UPLOADED.value, UploadStatus.DONE.value),
             ).fetchall()
             # A tombstone tracks its retained producer file; fall back to the
-            # staging path for rows that never had one (e.g. archives).
-            gone = [r["id"] for r in rows if not Path(r["producer_name"] or r["staging_path"]).exists()]
+            # staging path for rows that never had one (e.g. archives). A path
+            # we can't even check (stale/disconnected mount) is left alone --
+            # see _exists_safe -- rather than treated as gone.
+            gone = [
+                r["id"] for r in rows
+                if _exists_safe(Path(r["producer_name"] or r["staging_path"])) is False
+            ]
             for row_id in gone:
                 self._conn.execute("DELETE FROM uploads WHERE id = ?", (row_id,))
             if gone:
