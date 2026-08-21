@@ -23,7 +23,7 @@ Type=simple
 User={user}
 Group=video
 WorkingDirectory={workdir}
-ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --resolution {resolution} --fps {fps} --upload-poll {poll_interval}{delete_after_upload_arg}{no_upload_arg}
+ExecStart={bugcam_path} run --model {model} --mode {recording_mode} --interval {interval} --chunk-duration {chunk_duration} --resolution {resolution} --fps {fps} --max-exposure-us {max_exposure_us} --upload-poll {poll_interval}{delete_after_upload_arg}{no_upload_arg}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -100,6 +100,7 @@ def enable(
     length: int = typer.Option(30, "--length", "-l", help="Chunk duration in seconds"),
     resolution: str = typer.Option("3840x2160", "--resolution", help="Recording resolution in WxH format"),
     fps: int = typer.Option(15, "--fps", help="Recording frame rate"),
+    max_exposure_us: int = typer.Option(1000, "--max-exposure-us", help="Hard cap on AE shutter: auto-exposure stays automatic, but the shutter never gets slower than 1/max_exposure_us s (0 = uncapped)"),
     poll_interval: int = typer.Option(3600, "--poll-interval", help="Upload poll interval in seconds"),
     delete_after_upload: bool = typer.Option(
         True,
@@ -152,6 +153,7 @@ def enable(
             chunk_duration=length,
             resolution=resolution,
             fps=fps,
+            max_exposure_us=max_exposure_us,
             poll_interval=poll_interval,
             delete_after_upload_arg="" if delete_after_upload else " --no-delete-after-upload",
             no_upload_arg="" if enable_upload else " --no-upload",

@@ -141,6 +141,29 @@ Stream live logs from the running service (like `tail -f`).
 **Options:**
 - `--follow` / `-f` - Follow log output in real-time
 
+## Run (continuous record + process)
+
+### Cap the maximum exposure time ✓
+```bash
+bugcam run --max-exposure-us 1000
+```
+Hard cap on the auto-exposure shutter: AE stays fully automatic, but the
+shutter never gets slower than `1/1000s`. In bright light the camera uses
+short shutters as normal; as light drops the shutter rises to the cap and the
+AGC compensates with gain (up to the sensor ceiling), so frames stay sharp —
+and only darken when gain is exhausted. The cap is applied by patching the
+sensor tuning file's AE exposure-mode table (not the `ExposureTime` control,
+which pins the shutter to manual). `0` disables the cap. `bugcam autostart
+enable` accepts the same flag.
+
+## Record (single video)
+
+### Cap the maximum exposure time ✓
+```bash
+bugcam record single --max-exposure-us 1000
+```
+Same semantics as `run --max-exposure-us`.
+
 ## Configuration
 
 ### Model Storage
