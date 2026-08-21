@@ -279,33 +279,25 @@ class TestMissingStagedFiles:
         assert pol.store.pending_count() == 0
 
 
-# --- spec 6b / V4: at most videos_per_tick videos, attempts-first order -------
+# --- spec 6b (revised): video rows batch like any other kind -----------------
+#
+# Previously "video" rows were excluded from archives (UNBATCHED_KINDS) and
+# shipped individually, capped per tick. That exclusion never covered FLIK's
+# video.mp4 (enqueued as kind="result", riding the rest of its result set) so
+# it was already ineffective for the case it mattered most for; it was also
+# unused (--archive-batch defaults off) and added a second upload lane to
+# maintain. Removed: every non-priority, non-archive kind batches uniformly.
 
-class TestVideoCapPerTick:
-    def test_cap_limits_to_one_video_per_tick(self, tmp_path):
-        cfg = _config(tmp_path, batch=True, videos_per_tick=1)
-        up = FakeUploader(fail={"v1/flick1/a/": True})
+class TestVideoBatchesLikeAnyKind:
+    def test_video_kind_rides_the_device_archive(self, tmp_path):
+        cfg = _config(tmp_path, batch=True)
+        up = FakeUploader()
         pol = _pollen(cfg, up, archiver=TarArchiver(), clock=TickClock())
         a = _write(cfg.output_root, "flick1/a/vid.mp4", b"A")
-        b = _write(cfg.output_root, "flick1/b/vid.mp4", b"B")
-        pol.enqueue_set([a, b], device="flick1", kind="video")
+        rid = pol.enqueue_set([a], device="flick1", kind="video")[0]
 
         pol._tick()
 
-        # only the first video was attempted; the cap held B back
-        assert up.attempts == ["v1/flick1/a/vid.mp4"]
-
-    def test_failing_video_does_not_starve_the_lane(self, tmp_path):
-        cfg = _config(tmp_path, batch=True, videos_per_tick=1)
-        up = FakeUploader(fail={"v1/flick1/a/": True})
-        pol = _pollen(cfg, up, archiver=TarArchiver(), clock=TickClock())
-        a = _write(cfg.output_root, "flick1/a/vid.mp4", b"A")
-        b = _write(cfg.output_root, "flick1/b/vid.mp4", b"B")
-        pol.enqueue_set([a, b], device="flick1", kind="video")
-
-        pol._tick()  # attempts A (fails)
-        pol._tick()  # A has attempts=1, B has 0 -> B goes next
-
-        assert up.uploaded == ["v1/flick1/b/vid.mp4"]
-        pending = {r.s3_key for r in pol.store.claim_pending()}
-        assert pending == {"v1/flick1/a/vid.mp4"}
+        # shipped as part of the device's tar, not as an individual v1/ PUT
+        assert up.uploaded and up.uploaded[0].startswith("v2/archives/flick1/")
+        assert pol.store.get(rid) is None  # member cleaned up once the tar shipped

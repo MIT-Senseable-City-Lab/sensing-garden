@@ -167,10 +167,9 @@ class TestEnqueueSource:
 
 
 class TestBatched:
-    def test_batched_uploads_videos_individually(self, tmp_path):
-        # Videos must NOT be bundled into the per-device tar (they bloat it past the
-        # multipart threshold and trap the small result data); they ship as their own
-        # objects while results still batch.
+    def test_batched_videos_ride_the_same_device_archive_as_results(self, tmp_path):
+        # Videos batch like any other kind: no UNBATCHED_KINDS special case. A
+        # device's result and video rows from the same tick land in one tar.
         cfg = _config(tmp_path, batch=True)
         up = FakeUploader()
         pol = _pollen(cfg, up, archiver=TarArchiver(), clock=lambda: datetime(2026, 2, 4, 13, 0, 0))
@@ -181,12 +180,8 @@ class TestBatched:
 
         pol._tick()
 
-        assert "v1/dot1/20260204/videos/clip.mp4" in up.uploaded   # shipped individually
-        assert any(k.endswith(".tar") for k in up.uploaded)        # results still tarred
+        assert up.uploaded == ["v2/archives/dot1/20260204_130000.tar"]
         assert pol.store.pending_count() == 0
-        # result archive must ship BEFORE the large video, not after
-        tar_idx = next(i for i, k in enumerate(up.uploaded) if k.endswith(".tar"))
-        assert tar_idx < up.uploaded.index("v1/dot1/20260204/videos/clip.mp4")
 
     def test_batched_packs_uploads_and_cleans_members(self, tmp_path):
         cfg = _config(tmp_path, batch=True)
