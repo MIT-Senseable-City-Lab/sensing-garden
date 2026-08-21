@@ -29,10 +29,6 @@ from bugcam.pollen.upload_utils import content_type_for
 logger = logging.getLogger("bugcam.pollen")
 
 ARCHIVE_KIND = "archive"
-# Kinds that are uploaded individually even in batch mode: large, un-indexed artifacts
-# (videos) would otherwise push a per-device tar past the multipart threshold and trap
-# the small result data inside a slow/stuck multipart upload.
-UNBATCHED_KINDS = frozenset({"video"})
 # Latency-sensitive telemetry: tiny objects that ship individually, before
 # everything else in a tick, and never inside an archive -- a heartbeat trapped
 # behind the batch cadence defeats its purpose.
@@ -71,7 +67,6 @@ class PollenConfig:
     multipart_threshold: int = DEFAULT_MULTIPART_THRESHOLD
     part_size: int = DEFAULT_PART_SIZE
     batch: bool = False
-    videos_per_tick: int = 10  # max un-batched videos per tick, so a backlog can't starve archives
     delete_after_upload: bool = True
     retain_uploaded: bool = False  # keep a local copy (in retained/) after upload
     retention_by_kind: dict[str, KindPolicy] = field(default_factory=dict)  # per-kind override
@@ -397,10 +392,8 @@ class Pollen:
             r for r in pending
             if r.kind != ARCHIVE_KIND and r.kind not in PRIORITY_KINDS and r.id not in reserved
         ]
-        # Batch and ship the result archives FIRST (small, indexed) -- the large
-        # un-batched videos go last (below) so results never wait behind a slow video PUT.
         by_device: dict[str, list[UploadRow]] = defaultdict(list)
-        for row in (r for r in members if r.kind not in UNBATCHED_KINDS):
+        for row in members:
             if self._drop_if_lost(row):  # a lost member must not crash pack()
                 continue
             by_device[self._device_of(row)].append(row)
@@ -435,30 +428,6 @@ class Pollen:
                 logger.info("uploaded archive %s (%d members, device=%s)",
                             artifact.s3_key, len(items), device)
             else:
-                failures += 1
-
-        # Un-batched kinds (videos) ship individually and LAST, capped per tick so a
-        # backlog cannot starve archive retries or delay cleanup for hours. Attempts-
-        # first ordering keeps one failing video from monopolising the capped lane.
-        def _video_order(r: UploadRow) -> tuple[int, int]:
-            return (r.attempts, r.id)
-        videos = sorted(
-            (r for r in members if r.kind in UNBATCHED_KINDS),
-            key=_video_order,
-        )
-        deferred = len(videos) - min(len(videos), self.config.videos_per_tick)
-        if deferred:
-            # The cap otherwise makes a growing backlog invisible: pending_count()
-            # keeps climbing but nothing in a per-tick log says why videos aren't
-            # draining -- one waits per tick regardless of how many pile up behind it.
-            logger.info(
-                "%d video(s) waiting behind the %d-per-tick cap (oldest: %s, %d attempt(s))",
-                deferred, self.config.videos_per_tick, videos[0].s3_key, videos[0].attempts,
-            )
-        for row in videos[: self.config.videos_per_tick]:
-            if self._drop_if_lost(row):
-                continue
-            if not self._upload_one(row):
                 failures += 1
         return failures
 
