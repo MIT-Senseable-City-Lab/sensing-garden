@@ -355,6 +355,18 @@ def _resolve_video_sample_interval(video_sample_interval: int | None) -> int:
     return resolved
 
 
+def _resolve_interval_release_camera() -> bool:
+    """Whether interval mode releases the camera between chunks (config:
+    interval_release_camera, default true). false keeps the camera warm across
+    chunks -- no per-chunk teardown/warmup; see VideoRecorder."""
+    value = load_config().get("interval_release_camera", True)
+    if not isinstance(value, bool):
+        raise typer.BadParameter(
+            "interval_release_camera must be a JSON boolean (true or false)"
+        )
+    return value
+
+
 @app.callback()
 def run(
     api_url: str | None = typer.Option(None, "--api-url", help="Backend API URL"),
@@ -441,6 +453,7 @@ def run(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     resolved_video_sample_interval = _resolve_video_sample_interval(video_sample_interval)
+    resolved_interval_release_camera = _resolve_interval_release_camera()
     try:
         pid_path = _acquire_pid_file()
     except RuntimeError as exc:
@@ -546,6 +559,7 @@ def run(
             model_reference=selected_model,
             recording_mode=mode,
             recording_interval=interval,
+            interval_release_camera=resolved_interval_release_camera,
             chunk_duration=chunk_duration,
             fps=fps,
             resolution=parsed_resolution,

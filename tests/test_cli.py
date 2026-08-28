@@ -178,3 +178,36 @@ def test_invalid_command(cli_runner):
     """Test invalid command returns error."""
     result = cli_runner.invoke(app, ["invalid_command"])
     assert result.exit_code != 0
+
+
+def test_resolve_interval_release_camera_default(monkeypatch) -> None:
+    """Without a config key, interval mode releases the camera (historical
+    behavior)."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {})
+    assert run._resolve_interval_release_camera() is True
+
+
+def test_resolve_interval_release_camera_from_config(monkeypatch) -> None:
+    """interval_release_camera: false in config keeps the camera warm."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {"interval_release_camera": False})
+    assert run._resolve_interval_release_camera() is False
+
+
+def test_resolve_interval_release_camera_true_in_config(monkeypatch) -> None:
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {"interval_release_camera": True})
+    assert run._resolve_interval_release_camera() is True
+
+
+def test_resolve_interval_release_camera_rejects_non_bool(monkeypatch) -> None:
+    """A string like "false" must fail at launch, not coerce to truthy."""
+    from bugcam.commands import run
+
+    monkeypatch.setattr(run, "load_config", lambda: {"interval_release_camera": "false"})
+    with pytest.raises(typer.BadParameter):
+        run._resolve_interval_release_camera()

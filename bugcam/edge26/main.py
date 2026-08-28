@@ -261,7 +261,10 @@ class Pipeline:
             rec_mode = pipeline_config.get("recording_mode", "continuous")
             logger.info(f"Chunk duration: {config['capture']['chunk_duration_seconds']}s")
             logger.info(f"Recording mode: {rec_mode}"
-                       + (f" (every {pipeline_config.get('recording_interval_minutes', 5)} min)"
+                       + (f" (every {pipeline_config.get('recording_interval_minutes', 5)} min"
+                          + ("" if pipeline_config.get("interval_release_camera", True)
+                             else ", camera kept warm")
+                          + ")"
                           if rec_mode == "interval" else ""))
     
     def _init_recorder(self) -> VideoRecorder:
@@ -281,6 +284,7 @@ class Pipeline:
             use_picamera=capture["use_picamera"],
             recording_mode=pipeline_cfg.get("recording_mode", "continuous"),
             interval_minutes=pipeline_cfg.get("recording_interval_minutes", 5),
+            release_camera_between_chunks=pipeline_cfg.get("interval_release_camera", True),
             bitrate=capture.get("bitrate", 20_000_000),
             record_window=RecordingWindow.from_config(
                 pipeline_cfg.get("record_window"), self.timezone_name

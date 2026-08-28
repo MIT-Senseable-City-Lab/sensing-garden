@@ -70,6 +70,7 @@ class VideoRecorder:
         bitrate: int = 20_000_000,
         record_window: Optional[RecordingWindow] = None,
         on_chunk_complete=None,
+        release_camera_between_chunks: bool = True,
     ):
         """
         Initialize the video recorder.
@@ -90,6 +91,14 @@ class VideoRecorder:
                 recorded (camera released, loop idles); None records around the clock
             on_chunk_complete: Callback (path, duration_seconds) invoked for every
                 completed chunk, e.g. to log sampling effort
+            release_camera_between_chunks: Interval mode only. True (default)
+                releases the camera after every chunk and re-initializes it for
+                the next one (saves power during long gaps, costs a warmup per
+                chunk). False keeps the camera warm between chunks on the
+                picamera path; it is still released when the recording window
+                closes, on failure recovery, and at shutdown. The OpenCV path
+                always releases -- its frame queue would otherwise feed stale
+                buffered frames into the start of the next chunk.
         """
         self.output_dir = Path(output_dir)
         self.fps = fps
@@ -104,6 +113,7 @@ class VideoRecorder:
         self.bitrate = bitrate
         self.record_window = record_window
         self.on_chunk_complete = on_chunk_complete
+        self.release_camera_between_chunks = release_camera_between_chunks
 
         # Resolution is requested from config and confirmed during init.
         self.resolution: Tuple[int, int] = (0, 0)
@@ -631,23 +641,38 @@ class VideoRecorder:
             self._cleanup(final=True)
     
     def _start_interval(self) -> None:
-        """Record one chunk, wait, repeat."""
+        """Record one chunk, wait, repeat.
+
+        By default the camera is released after every chunk and re-initialized
+        for the next. With release_camera_between_chunks=False (picamera only)
+        it stays warm across chunks -- no per-chunk teardown or warmup -- and
+        is released only when the recording window closes, on failure recovery,
+        or at shutdown. The OpenCV path always releases: its grabber queue
+        would otherwise carry stale frames into the next chunk.
+        """
         interval_seconds = self.interval_minutes * 60
-        
+        release_between = self.release_camera_between_chunks or not self.use_picamera
+
         logger.info(f"Starting interval recording "
-                    f"({self.chunk_duration}s every {self.interval_minutes} min)...")
+                    f"({self.chunk_duration}s every {self.interval_minutes} min"
+                    + ("" if release_between else ", camera kept warm")
+                    + ")...")
 
         consecutive_failures = 0
         try:
             while not self.stop_event.is_set():
+                if not self._window_open() and self.camera is not None:
+                    # A warm camera must not idle through a closed window --
+                    # window gaps can span hours.
+                    self._cleanup()
                 if not self._wait_for_window():
                     break
 
                 chunk_start = time.time()
 
                 try:
-                    # Init camera, record one chunk, release camera
-                    self._init_camera()
+                    if self.camera is None:
+                        self._init_camera()
 
                     if self.use_picamera:
                         chunk_path = self._record_chunk_hardware()
@@ -667,7 +692,8 @@ class VideoRecorder:
                         if self.video_queue:
                             self.video_queue.put(chunk_path)
 
-                    self._cleanup()
+                    if release_between:
+                        self._cleanup()
 
                 if self.stop_event.is_set():
                     break
