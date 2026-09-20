@@ -136,7 +136,7 @@ def test_record_single_uses_resolved_flick_id_for_generated_filename(tmp_path: P
              patch('bugcam.commands.record.resolve_flick_id', return_value='flick-config'), \
              patch('bugcam.commands.record._remux_video', return_value=True), \
              patch('bugcam.commands.record._record_single_video') as mock_record:
-            mock_record.side_effect = lambda output, length, quiet, resolution: captured.setdefault("name", output.name) or True
+            mock_record.side_effect = lambda output, length, quiet, resolution, max_exposure_us: captured.setdefault("name", output.name) or True
             record.single(output=None, length=1, flick_id=None, resolution="1080x1080")
     finally:
         record.DEFAULT_OUTPUT_DIR = original_output_dir
