@@ -13,11 +13,6 @@ bugcam requires system-level Hailo packages that are not available via PyPI. Ins
 sudo apt update && sudo apt install python3-hailo-tappas hailo-tappas-core
 ```
 
-If you encounter sudo password prompts during setup, enable passwordless sudo:
-```bash
-echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$USER
-```
-
 ## Quick Start
 
 ```bash
